@@ -319,17 +319,57 @@ roots = [os.path.realpath(root) for root in request["roots"]]
 target = os.path.realpath(request["path"] or roots[0])
 def inside(value, root):
     return value == root or value.startswith(root.rstrip("/") + "/")
+def allowed(value):
+    return any(inside(value, root) for root in roots)
+def protected(value):
+    return any(inside(root, value) for root in roots)
 if not any(inside(target, root) for root in roots):
     raise ValueError("This path is outside the allowed locations")
 if request["action"] == "delete":
-    if not request["path"] or any(inside(root, target) for root in roots):
+    if not request["path"] or protected(target):
         raise ValueError("Allowed locations and their parents cannot be deleted")
     if os.path.islink(request["path"]):
         raise ValueError("Deleting symbolic links is not supported")
-    if not os.path.isdir(target):
-        raise ValueError("Folder not found")
-    shutil.rmtree(target)
+    if os.path.isdir(target):
+        shutil.rmtree(target)
+    elif os.path.isfile(target):
+        os.unlink(target)
+    else:
+        raise ValueError("File or folder not found")
     print(json.dumps({"ok": True}))
+elif request["action"] in ("copy", "move", "rename"):
+    source = os.path.realpath(request.get("source") or "")
+    if not source or not allowed(source) or protected(source):
+        raise ValueError("The selected file or folder cannot be changed")
+    if os.path.islink(request.get("source") or ""):
+        raise ValueError("Symbolic links are not supported")
+    if not (os.path.isfile(source) or os.path.isdir(source)):
+        raise ValueError("File or folder not found")
+    if request["action"] == "rename":
+        name = request.get("name") or ""
+        if not name or name in (".", "..") or "/" in name or "\\" in name or len(name) > 255:
+            raise ValueError("Enter a valid name")
+        destination = os.path.dirname(source)
+        output = os.path.realpath(os.path.join(destination, name))
+    else:
+        destination = os.path.realpath(request.get("destination") or "")
+        if not allowed(destination) or not os.path.isdir(destination):
+            raise ValueError("Choose an allowed destination folder")
+        output = os.path.realpath(os.path.join(destination, os.path.basename(source)))
+    if not allowed(output) or output == source:
+        raise ValueError("Choose a different allowed destination")
+    if os.path.exists(output):
+        raise ValueError("A file or folder with this name already exists there")
+    if os.path.isdir(source) and inside(destination, source):
+        raise ValueError("A folder cannot be pasted inside itself")
+    if request["action"] == "copy":
+        if os.path.isdir(source):
+            shutil.copytree(source, output, symlinks=True)
+        else:
+            shutil.copy2(source, output, follow_symlinks=False)
+    else:
+        shutil.move(source, output)
+    print(json.dumps({"ok": True, "path": output}))
 else:
     entries = []
     with os.scandir(target) as items:
@@ -376,6 +416,22 @@ export function browseFiles(requested = "") {
 export async function deleteFolder(requested: string) {
   await remoteFileOperation({ path: requested, action: "delete" });
   audit("deleted folder " + requested);
+}
+export async function changeFile(
+  action: "delete" | "copy" | "move" | "rename",
+  source: string,
+  destination = "",
+  name = "",
+) {
+  const result = await remoteFileOperation({
+    path: source,
+    action,
+    source,
+    destination,
+    name,
+  });
+  audit(`${action} ${source}${result.path ? " -> " + result.path : ""}`);
+  return result;
 }
 export function addScript(input: Record<string, string>) {
   const name = (input.name || "").trim().slice(0, 80),

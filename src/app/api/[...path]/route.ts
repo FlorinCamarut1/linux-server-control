@@ -5,8 +5,7 @@ import {
   audit,
   browseScripts,
   browseFiles,
-  deleteFolder,
-  deleteEditableFile,
+  changeFile,
   cron,
   digest,
   folders,
@@ -339,18 +338,23 @@ async function handle(
       return NextResponse.json(await browseScripts(body.path || ""));
     if (route === "file/browse" && body)
       return NextResponse.json(await browseFiles(body.path || ""));
-    if (route === "file/delete-folder" && body) {
-      await deleteFolder(body.path || "");
-      return NextResponse.json({ ok: true });
+    if (route === "file/operation" && body) {
+      const action = body.action;
+      if (!["delete", "copy", "move", "rename"].includes(action))
+        throw Error("Invalid file operation");
+      return NextResponse.json(
+        await changeFile(
+          action as "delete" | "copy" | "move" | "rename",
+          body.source || "",
+          body.destination || "",
+          body.name || "",
+        ),
+      );
     }
     if (route === "file/read" && body)
       return NextResponse.json(readEditableFile(body.path || ""));
     if (route === "file/save" && body) {
       saveEditableFile(body.path || "", body.content || "");
-      return NextResponse.json({ ok: true });
-    }
-    if (route === "file/delete" && body) {
-      deleteEditableFile(body.path || "");
       return NextResponse.json({ ok: true });
     }
     if (route === "script/save" && body) {

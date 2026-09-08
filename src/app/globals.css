@@ -740,6 +740,18 @@ input:focus {
   padding: 0 20px;
   border-bottom: 1px solid var(--line);
 }
+.file-explorer-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  padding: 8px 0;
+}
+.file-explorer-actions .button {
+  min-height: 30px;
+  padding: 6px 8px;
+  font-size: 12px;
+}
 .file-explorer-open {
   display: grid;
   grid-template-columns: 24px minmax(0, 1fr) auto;
@@ -1209,6 +1221,19 @@ input:focus {
   }
   .file-explorer-open {
     grid-template-columns: 22px minmax(0, 1fr);
+  }
+  .file-explorer-row {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 0;
+  }
+  .file-explorer-actions {
+    width: 100%;
+    justify-content: stretch;
+  }
+  .file-explorer-actions .button {
+    flex: 1 1 auto;
+    justify-content: center;
   }
   .file-explorer-open small {
     display: none;

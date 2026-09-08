@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Box,
   CalendarPlus,
+  ClipboardPaste,
   ChevronLeft,
   ChevronDown,
   Circle,
@@ -19,6 +20,7 @@ import {
   Play,
   RefreshCw,
   RotateCcw,
+  Scissors,
   Server,
   Square,
   Terminal,
@@ -1082,17 +1084,41 @@ function currentLocation(data: FileBrowserData | ScriptBrowserData | null, direc
 function FileExplorer() {
   const [directory, setDirectory] = useState(""),
     [editor, setEditor] = useState<{ path: string; content: string } | null>(null),
-    [opening, setOpening] = useState("");
+    [opening, setOpening] = useState(""),
+    [clipboard, setClipboard] = useState<{
+      path: string;
+      action: "copy" | "move";
+      name: string;
+    } | null>(null);
   const { data, error, setError, loading, load } = useDirectory<FileBrowserData>("file/browse", directory);
-  async function removeFolder(target: string) {
-    if (!window.confirm(`Delete folder ${target} and ALL its contents? This permanently deletes files from the server.`)) return;
+  async function operate(
+    action: "delete" | "copy" | "move" | "rename",
+    source: string,
+    destination = "",
+    name = "",
+  ) {
     try {
-      setOpening(target);
-      await api("file/delete-folder", { path: target });
+      setOpening(source);
+      await api("file/operation", { action, source, destination, name });
+      if (action === "move" || action === "delete") setClipboard(null);
       await load();
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not delete folder");
+      setError(reason instanceof Error ? reason.message : "Could not change file");
     } finally { setOpening(""); }
+  }
+  async function removeEntry(entry: FileBrowserData["entries"][number]) {
+    const description = entry.type === "directory"
+      ? `Delete folder ${entry.path} and ALL its contents? This permanently deletes files from the server.`
+      : `Delete file ${entry.path}? This cannot be undone.`;
+    if (window.confirm(description)) await operate("delete", entry.path);
+  }
+  async function renameEntry(entry: FileBrowserData["entries"][number]) {
+    const name = window.prompt(`Rename ${entry.name} to:`, entry.name)?.trim();
+    if (name && name !== entry.name) await operate("rename", entry.path, "", name);
+  }
+  async function paste() {
+    if (!clipboard || !data) return;
+    await operate(clipboard.action, clipboard.path, data.path);
   }
   async function openFile(path: string) {
     try {
@@ -1117,6 +1143,9 @@ function FileExplorer() {
                 {data?.roots.map((root) => <option key={root} value={root}>{root}</option>)}
               </select>
             )}
+            <Btn disabled={!clipboard || !!opening || !data} onClick={paste} title={clipboard ? `Paste ${clipboard.name}` : "Copy or cut a file first"}>
+              <ClipboardPaste size={16} />Paste
+            </Btn>
             <Btn onClick={load}><RefreshCw size={16} />Refresh</Btn>
           </div>
         }
@@ -1140,17 +1169,26 @@ function FileExplorer() {
               <span>{entry.name}</span>
               <small>{entry.type === "directory" ? "Folder" : "File"}</small>
             </button>
-            {entry.type === "directory" && (
-              <Btn className="danger" disabled={!!opening} onClick={() => removeFolder(entry.path)}>
+            <div className="file-explorer-actions">
+              {entry.type === "file" && (
+                <Btn disabled={!!opening} onClick={() => openFile(entry.path)}>
+                  {opening === entry.path ? <Loader2 className="spin" size={15} /> : <FilePenLine size={15} />}
+                  Edit
+                </Btn>
+              )}
+              <Btn disabled={!!opening} onClick={() => setClipboard({ path: entry.path, action: "copy", name: entry.name })}>
+                <Copy size={15} />Copy
+              </Btn>
+              <Btn disabled={!!opening} onClick={() => setClipboard({ path: entry.path, action: "move", name: entry.name })}>
+                <Scissors size={15} />Cut
+              </Btn>
+              <Btn disabled={!!opening} onClick={() => renameEntry(entry)}>
+                <FilePenLine size={15} />Rename
+              </Btn>
+              <Btn className="danger" disabled={!!opening} onClick={() => removeEntry(entry)}>
                 <Trash2 size={15} />Delete
               </Btn>
-            )}
-            {entry.type === "file" && (
-              <Btn disabled={opening === entry.path} onClick={() => openFile(entry.path)}>
-                {opening === entry.path ? <Loader2 className="spin" size={15} /> : <FilePenLine size={15} />}
-                Edit
-              </Btn>
-            )}
+            </div>
           </div>
         ))}
         {!loading && !error && data && !data.entries.length && <div className="empty-state"><Folder size={22} /><b>This folder is empty</b></div>}
@@ -1195,7 +1233,7 @@ function FileEditor({
     if (!window.confirm(`Delete ${file.path}? This cannot be undone.`)) return;
     try {
       setSaving(true);
-      await api("file/delete", { path: file.path });
+      await api("file/operation", { action: "delete", source: file.path });
       changed();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not delete file");
