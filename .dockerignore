@@ -1,0 +1,14 @@
+.git
+.env
+data
+ssh
+__pycache__
+install-local.sh
+seed-local.py
+ACCESS.txt
+tests
+next-app
+node_modules
+.next
+server.py
+index.html

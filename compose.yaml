@@ -1,0 +1,43 @@
+services:
+  dashboard:
+    build: .
+    restart: unless-stopped
+    environment:
+      SSH_TARGET: ${SSH_TARGET}
+      SCRIPT_ROOT: ${SCRIPT_ROOT}
+      ALLOWED_PATHS: ${ALLOWED_PATHS:-${SCRIPT_ROOT}}
+      REMOTE_LOGS: ${REMOTE_LOGS}
+      LAN_CIDR: ${LAN_CIDR}
+      DASHBOARD_USER: ${DASHBOARD_USER:-admin}
+      DATA_DIR: /app/data
+    volumes:
+      - ./data:/app/data
+      - ./ssh:/run/ssh:ro
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /app/.next/cache
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+  proxy:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    depends_on: [dashboard]
+    environment:
+      LAN_IP: ${LAN_IP}
+      LAN_CIDR: ${LAN_CIDR}
+    ports:
+      - "${LAN_IP}:8443:8443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./data:/certs:ro
+    read_only: true
+    tmpfs: [/data, /config]
+    security_opt: [no-new-privileges:true]

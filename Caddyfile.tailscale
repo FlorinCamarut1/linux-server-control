@@ -1,0 +1,26 @@
+:8443 {
+  tls /certs/cert.pem /certs/key.pem
+  @outside_lan not remote_ip {$LAN_CIDR}
+  respond @outside_lan "Forbidden" 403
+  reverse_proxy dashboard:3000
+  header {
+    X-Content-Type-Options nosniff
+    X-Frame-Options DENY
+    Referrer-Policy no-referrer
+    Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+  }
+}
+
+https://{$TAILSCALE_HOST}:8443 {
+  tls /certs/tailscale.crt /certs/tailscale.key
+  @outside_tailnet not remote_ip 100.64.0.0/10
+  respond @outside_tailnet "Forbidden" 403
+  reverse_proxy dashboard:3000
+  header {
+    X-Content-Type-Options nosniff
+    X-Frame-Options DENY
+    Referrer-Policy no-referrer
+    Strict-Transport-Security "max-age=31536000"
+    Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+  }
+}

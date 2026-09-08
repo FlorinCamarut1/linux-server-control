@@ -1,0 +1,12 @@
+.env
+data/
+ssh/
+__pycache__/
+install-local.sh
+ACCESS.txt
+tests/smoke_live.py
+seed-local.py
+next-app/
+node_modules/
+.next/
+HANDOVER.md

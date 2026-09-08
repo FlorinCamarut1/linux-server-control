@@ -1,0 +1,26 @@
+#!/bin/sh
+set -eu
+
+case "${1-}" in
+  list)
+    [ "$#" -eq 1 ] || exit 64
+    /usr/bin/crontab -u root -l 2>/dev/null || true
+    ;;
+  install)
+    [ "$#" -eq 1 ] || exit 64
+    exec /usr/bin/crontab -u root -
+    ;;
+  system-list)
+    [ "$#" -eq 1 ] || exit 64
+    printf '%s\n' '--- /etc/crontab ---'
+    cat /etc/crontab
+    for file in /etc/cron.d/*; do
+      [ -f "$file" ] || continue
+      printf '%s\n' "--- $file ---"
+      cat "$file"
+    done
+    ;;
+  *)
+    exit 64
+    ;;
+esac
