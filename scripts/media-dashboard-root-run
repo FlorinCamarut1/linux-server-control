@@ -1,0 +1,35 @@
+#!/bin/sh
+set -eu
+
+paths_file=/etc/media-dashboard/root-script-paths
+
+inside_allowed_path() {
+  script_path=$1
+  while IFS= read -r root_path || [ -n "$root_path" ]; do
+    [ -n "$root_path" ] || continue
+    case "$script_path" in
+      "$root_path"/*.sh) return 0 ;;
+    esac
+  done < "$paths_file"
+  return 1
+}
+
+case "${1-}" in
+  status)
+    [ "$#" -eq 1 ] && [ -s "$paths_file" ]
+    ;;
+  run)
+    [ "$#" -ge 2 ] || exit 64
+    requested=$2
+    shift 2
+    case "$requested" in /*.sh) ;; *) exit 64 ;; esac
+    [ ! -L "$requested" ] || exit 64
+    script_path=$(realpath -e -- "$requested")
+    [ -f "$script_path" ] || exit 64
+    inside_allowed_path "$script_path" || exit 77
+    exec /bin/bash "$script_path" "$@"
+    ;;
+  *)
+    exit 64
+    ;;
+esac

@@ -34,6 +34,7 @@ export type Script = {
   path: string;
   cron: string;
   folder?: string;
+  runAs?: "user" | "root";
   argumentHint?: string;
   runOptions?: RunOption[];
 };
@@ -99,6 +100,7 @@ export function runInput(args: string[], input: string, timeout = 30000) {
 }
 type CronUser = "user" | "root";
 const rootCronHelper = "/usr/local/sbin/media-dashboard-root-cron";
+const rootScriptHelper = "/usr/local/sbin/media-dashboard-root-run";
 export function cron(user: CronUser = "user") {
   try {
     return user === "root"
@@ -117,6 +119,14 @@ export function rootCronStatus() {
     };
   } catch {
     return { available: false, cron: "", system: "" };
+  }
+}
+export function rootScriptStatus() {
+  try {
+    run(["sudo", "-n", rootScriptHelper, "status"]);
+    return { available: true };
+  } catch {
+    return { available: false };
   }
 }
 export function scripts() {
@@ -297,8 +307,14 @@ export function runScript(s: Script, rawArguments = "", selectedFile = "") {
       resolveSelectedFile(selectedFile),
     );
   }
-  const log = path.join(DATA, s.id + ".log"),
-    [cmd, args] = ssh(["/bin/bash", s.path, ...scriptArguments]);
+  if (s.runAs === "root" && !rootScriptStatus().available)
+    throw Error("Root script access has not been enabled on this server");
+  const command =
+      s.runAs === "root"
+        ? ["sudo", "-n", rootScriptHelper, "run", s.path, ...scriptArguments]
+        : ["/bin/bash", s.path, ...scriptArguments],
+    log = path.join(DATA, s.id + ".log"),
+    [cmd, args] = ssh(command);
   const out = openSync(log, "a");
   const child = spawn(cmd, args, {
     detached: true,
@@ -437,7 +453,8 @@ export function addScript(input: Record<string, string>) {
   const name = (input.name || "").trim().slice(0, 80),
     requested = input.path || "",
     folder = (input.folder || "").trim().replace(/\s+/g, " ").slice(0, 60),
-    expr = "";
+    expr = "",
+    runAs: "user" | "root" = input.runAs === "root" ? "root" : "user";
   if (!name) throw Error("Enter a name");
   if (/[\r\n]/.test(folder)) throw Error("The folder name must be one line");
   let runOptions: RunOption[] = [];
@@ -456,6 +473,8 @@ export function addScript(input: Record<string, string>) {
     throw Error("Each run option needs a name and an argument value");
   }
   if (folder && !folders().includes(folder)) throw Error("Choose an existing folder");
+  if (runAs === "root" && !rootScriptStatus().available)
+    throw Error("Root script access has not been enabled on this server");
   const resolved = run(["realpath", "-e", requested]).trim();
   if (
     !isAllowedPath(resolved) ||
@@ -469,7 +488,7 @@ export function addScript(input: Record<string, string>) {
     ? input.id
     : randomUUID();
   const all = scripts().filter((x) => x.id !== id);
-  all.push({ id, name, path: resolved, cron: expr, folder, runOptions });
+  all.push({ id, name, path: resolved, cron: expr, folder, runAs, runOptions });
   save("scripts", all);
 }
 export function createCustomScript(input: Record<string, string>) {

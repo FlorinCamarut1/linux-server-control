@@ -133,7 +133,20 @@ sudo -n /usr/local/sbin/media-dashboard-root-cron list
 
 Replace `serveradmin` with the user from `SSH_TARGET`. This permission allows the dashboard to replace root's crontab and therefore grants root-level command execution. Enable it only for a trusted administrator.
 
-## 9. Optional Tailscale access with trusted HTTPS
+## 9. Optional root script support
+
+The Scripts form can run a registered script as root, but only after installing the separate root-script helper. List each directory from which root scripts may run:
+
+```bash
+sudo ./scripts/install-root-script-access.sh serveradmin \
+  /home/serveradmin/scripts \
+  /home/serveradmin/services
+sudo -n /usr/local/sbin/media-dashboard-root-run status
+```
+
+After this, select **root** in the script's **Run as** field. The helper accepts only existing non-symlink `.sh` files under the listed directories. It does not grant generic sudo access.
+
+## 10. Optional Tailscale access with trusted HTTPS
 
 Skip this section for a LAN-only installation.
 

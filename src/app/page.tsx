@@ -39,7 +39,7 @@ type C = {
   Size: string;
 };
 type RunOption = { label: string; value: string; description: string; needsFile?: boolean };
-type S = { id: string; name: string; path: string; cron: string; folder?: string; argumentHint?: string; runOptions?: RunOption[] };
+type S = { id: string; name: string; path: string; cron: string; folder?: string; runAs?: "user" | "root"; argumentHint?: string; runOptions?: RunOption[] };
 type Schedule = {
   id: string;
   scriptId: string;
@@ -59,6 +59,7 @@ type St = {
   host: string;
   time: string;
   root: { available: boolean; cron: string; system: string };
+  rootScript: { available: boolean };
 };
 type ScriptBrowserData = {
   path: string;
@@ -368,6 +369,7 @@ export default function Home() {
                       <div className="grow">
                         <b>{s.name}</b>
                         <small>{s.path}</small>
+                        {s.runAs === "root" && <span className="badge root">root</span>}
                       </div>
                       <div className="actions">
                         <Btn
@@ -550,6 +552,7 @@ export default function Home() {
         <ScriptForm
           initial={edit}
           folders={state.folders}
+          rootAccess={state.rootScript.available}
           close={() => setEdit(undefined)}
           done={async () => {
             setEdit(undefined);
@@ -560,6 +563,7 @@ export default function Home() {
       {customScriptEditor && (
         <CustomScriptForm
           folders={state.folders}
+          rootAccess={state.rootScript.available}
           close={() => setCustomScriptEditor(false)}
           done={async () => {
             setCustomScriptEditor(false);
@@ -847,11 +851,13 @@ function LiveLogViewer({
 function ScriptForm({
   initial,
   folders,
+  rootAccess,
   close,
   done,
 }: {
   initial: S | null;
   folders: string[];
+  rootAccess: boolean;
   close: () => void;
   done: () => void;
 }) {
@@ -923,6 +929,14 @@ function ScriptForm({
             ))}
           </select>
           <small>Create folders from the Scripts page.</small>
+        </label>
+        <label>
+          Run as
+          <select name="runAs" defaultValue={initial?.runAs || "user"}>
+            <option value="user">SSH user</option>
+            <option value="root" disabled={!rootAccess}>root{rootAccess ? "" : " (not enabled)"}</option>
+          </select>
+          <small>Root is available only for script folders approved by the server helper.</small>
         </label>
         <input type="hidden" name="runOptions" value={hasRunOptions ? JSON.stringify(runOptions) : "[]"} />
         <label className="option-toggle">
@@ -1000,10 +1014,12 @@ function ScriptForm({
 }
 function CustomScriptForm({
   folders,
+  rootAccess,
   close,
   done,
 }: {
   folders: string[];
+  rootAccess: boolean;
   close: () => void;
   done: () => void;
 }) {
@@ -1058,6 +1074,14 @@ function CustomScriptForm({
             <option value="">Unfiled</option>
             {folders.map((folder) => <option key={folder} value={folder}>{folder}</option>)}
           </select>
+        </label>
+        <label>
+          Run as
+          <select name="runAs" defaultValue="user">
+            <option value="user">SSH user</option>
+            <option value="root" disabled={!rootAccess}>root{rootAccess ? "" : " (not enabled)"}</option>
+          </select>
+          <small>Root scripts must be created inside a folder approved by the server helper.</small>
         </label>
         <label>
           Script content

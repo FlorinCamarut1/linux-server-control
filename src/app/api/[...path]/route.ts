@@ -16,6 +16,7 @@ import {
   run,
   runScript,
   rootCronStatus,
+  rootScriptStatus,
   save,
   saveEditableFile,
   schedules,
@@ -233,6 +234,8 @@ async function handle(
           devices: {
             demo: { name: "Personal laptop", created: "08.09.2026, 14:00" },
           },
+          root: { available: false, cron: "", system: "" },
+          rootScript: { available: false },
           containers: [
             {
               ID: "a91b2c3d4e5f",
@@ -290,7 +293,8 @@ async function handle(
         folders: folders(),
         schedules: schedules(),
         cron: cron(),
-        root: rootCronStatus(),
+          root: rootCronStatus(),
+          rootScript: rootScriptStatus(),
         devices,
         host: process.env.SSH_TARGET,
         time: run(["date", "+%d.%m.%Y %H:%M:%S %Z"]).trim(),
