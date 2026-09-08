@@ -7,9 +7,10 @@ Linux Server Control is a self-hosted dashboard for administering one Linux serv
 - View running and stopped Docker containers
 - Start, stop, restart, and inspect container logs
 - Register shell scripts and organize them into folders
+- Create executable custom shell scripts inside approved directories
 - Define safe dropdown arguments and file selections for scripts
 - Run scripts and follow their logs live
-- Create, edit, pause, and delete guided cron schedules
+- Create, edit, pause, and delete guided cron schedules or one-line custom commands
 - Browse, edit, and delete files inside explicitly allowed directories
 - Authorize and revoke individual browsers
 - Restrict access to a LAN subnet, with optional Tailscale access

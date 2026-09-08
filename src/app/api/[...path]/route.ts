@@ -6,6 +6,7 @@ import {
   browseScripts,
   browseFiles,
   changeFile,
+  createCustomScript,
   cron,
   digest,
   folders,
@@ -361,6 +362,10 @@ async function handle(
       addScript(body);
       return NextResponse.json({ ok: true });
     }
+    if (route === "script/create-custom" && body) {
+      createCustomScript(body);
+      return NextResponse.json({ ok: true });
+    }
     if (route === "folder/create" && body) {
       addFolder(body.name || "");
       audit("folder created " + (body.name || "").trim());
@@ -370,7 +375,8 @@ async function handle(
       const script = scripts().find((item) => item.id === body.scriptId);
       const command = (body.command || "").trim();
       if (!script && !command) throw Error("Select an existing script");
-      if (/[\r\n]/.test(command)) throw Error("The command must be one line");
+      if (command.length > 2000 || /[\r\n]/.test(command))
+        throw Error("The command must be one line shorter than 2,000 characters");
       const expression = (body.expression || "").trim();
       validCron(expression);
       const runAs: "user" | "root" =

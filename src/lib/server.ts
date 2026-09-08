@@ -472,3 +472,34 @@ export function addScript(input: Record<string, string>) {
   all.push({ id, name, path: resolved, cron: expr, folder, runOptions });
   save("scripts", all);
 }
+export function createCustomScript(input: Record<string, string>) {
+  const directory = resolveAllowedDirectory(input.directory || "");
+  const filename = (input.filename || "").trim();
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*\.sh$/.test(filename))
+    throw Error("Use a shell-script filename ending in .sh");
+  const target = path.posix.join(directory, filename);
+  if (!isAllowedPath(target)) throw Error("Choose an allowed script folder");
+  try {
+    run(["test", "!", "-e", target]);
+  } catch {
+    throw Error("A file or folder with this name already exists");
+  }
+  const content = input.content || "";
+  if (!content.trim() || content.includes("\0") || Buffer.byteLength(content, "utf8") > 128 * 1024)
+    throw Error("Enter a shell script up to 128 KB");
+  const program = content.startsWith("#!")
+    ? content
+    : "#!/usr/bin/env bash\nset -eu\n\n" + content;
+  runInput(
+    ["sh", "-c", 'umask 077; cat > "$1"; chmod 700 "$1"', "sh", target],
+    program,
+    15000,
+  );
+  try {
+    addScript({ ...input, path: target });
+  } catch (error) {
+    run(["rm", "-f", "--", target]);
+    throw error;
+  }
+  audit("created custom script " + target);
+}

@@ -43,6 +43,8 @@ Use the server's real LAN IP in `LAN_IP` and `SSH_TARGET`. `LAN_CIDR` is the sub
 
 `ALLOWED_PATHS` is the comma-separated allowlist used by the Files page and script selectors. Add only directories that the dashboard should read, edit, or delete. Do not allow `/`, `/home`, an entire home directory, `.ssh`, or this project's `data` and `ssh` directories.
 
+The **New custom script** action writes an executable `.sh` file only to a folder selected from this allowlist. Custom cron commands are also available from the Scheduled jobs page; they run as the selected SSH user or, when enabled, root.
+
 ## 4. Create the dashboard SSH key
 
 Generate a dedicated key without a passphrase because the container must use it unattended:

@@ -106,6 +106,7 @@ export default function Home() {
     >("all"),
     [logs, setLogs] = useState<{ title: string; path: string; request: unknown } | null>(null),
     [edit, setEdit] = useState<S | null | undefined>(),
+    [customScriptEditor, setCustomScriptEditor] = useState(false),
     [runPrompt, setRunPrompt] = useState<S | null>(null),
     [scheduleEditor, setScheduleEditor] = useState<Schedule | null | undefined>(),
     [folderEditor, setFolderEditor] = useState(false),
@@ -342,6 +343,9 @@ export default function Home() {
                 <Btn className="primary" onClick={() => setEdit(null)}>
                   Add script
                 </Btn>
+                <Btn onClick={() => setCustomScriptEditor(true)}>
+                  New custom script
+                </Btn>
               </div>
             }
           >
@@ -549,6 +553,16 @@ export default function Home() {
           close={() => setEdit(undefined)}
           done={async () => {
             setEdit(undefined);
+            await refresh();
+          }}
+        />
+      )}
+      {customScriptEditor && (
+        <CustomScriptForm
+          folders={state.folders}
+          close={() => setCustomScriptEditor(false)}
+          done={async () => {
+            setCustomScriptEditor(false);
             await refresh();
           }}
         />
@@ -984,6 +998,78 @@ function ScriptForm({
     </Modal>
   );
 }
+function CustomScriptForm({
+  folders,
+  close,
+  done,
+}: {
+  folders: string[];
+  close: () => void;
+  done: () => void;
+}) {
+  const [directory, setDirectory] = useState(""),
+    [showBrowser, setShowBrowser] = useState(false),
+    [error, setError] = useState("");
+  return (
+    <Modal title="New custom script" close={close}>
+      <form
+        onSubmit={async (event) => {
+          event.preventDefault();
+          try {
+            await api(
+              "script/create-custom",
+              Object.fromEntries(new FormData(event.currentTarget)),
+            );
+            done();
+          } catch (reason) {
+            setError(reason instanceof Error ? reason.message : "Could not create script");
+          }
+        }}
+      >
+        <label>
+          Name
+          <input name="name" required maxLength={80} placeholder="My maintenance task" />
+        </label>
+        <label>
+          Script filename
+          <input name="filename" required pattern="[A-Za-z0-9][A-Za-z0-9._-]*\\.sh" placeholder="maintenance.sh" />
+          <small>Only letters, numbers, dots, dashes, and underscores. The filename must end in .sh.</small>
+        </label>
+        <label>
+          Server folder
+          <div className="path-input">
+            <input name="directory" required value={directory} onChange={(event) => setDirectory(event.target.value)} placeholder="Choose an allowed folder" />
+            <Btn type="button" onClick={() => setShowBrowser((open) => !open)}>
+              <FolderOpen size={16} />Browse
+            </Btn>
+          </div>
+        </label>
+        {showBrowser && (
+          <DirectoryBrowser
+            choose={(path) => {
+              setDirectory(path);
+              setShowBrowser(false);
+            }}
+          />
+        )}
+        <label>
+          Dashboard folder
+          <select name="folder" defaultValue="">
+            <option value="">Unfiled</option>
+            {folders.map((folder) => <option key={folder} value={folder}>{folder}</option>)}
+          </select>
+        </label>
+        <label>
+          Script content
+          <textarea name="content" required spellCheck={false} defaultValue={'#!/usr/bin/env bash\nset -eu\n\n# Add commands here\n'} />
+          <small>The script runs as the dashboard SSH user. It is saved as an executable file inside the selected allowed folder.</small>
+        </label>
+        {error && <div className="alert">{error}</div>}
+        <Btn className="primary">Create script</Btn>
+      </form>
+    </Modal>
+  );
+}
 function RunScriptForm({
   script,
   close,
@@ -1285,6 +1371,36 @@ function FileBrowser({ choose }: { choose: (path: string) => void }) {
     </section>
   );
 }
+function DirectoryBrowser({ choose }: { choose: (path: string) => void }) {
+  const [directory, setDirectory] = useState("");
+  const { data, error, loading } = useDirectory<FileBrowserData>("file/browse", directory);
+  return (
+    <section className="file-browser" aria-label="Folder browser">
+      <div className="file-browser-head">
+        <div><b>Choose a folder</b><small>{data?.path || "Loading folderâ€¦"}</small></div>
+        {(data?.roots.length || 0) > 1 && (
+          <select className="file-browser-roots" aria-label="Location" value={currentLocation(data, directory)} onChange={(event) => setDirectory(event.target.value)}>
+            {data?.roots.map((root) => <option key={root} value={root}>{root}</option>)}
+          </select>
+        )}
+        <Btn type="button" disabled={!data?.parent} onClick={() => data?.parent && setDirectory(data.parent)}><ChevronLeft size={16} />Up</Btn>
+      </div>
+      <div className="file-browser-list">
+        {loading && !error && <div className="file-browser-empty"><Loader2 className="spin" size={18} /> Loading foldersâ€¦</div>}
+        {error && <div className="file-browser-empty">{error}</div>}
+        {!loading && !error && data?.entries.filter((entry) => entry.type === "directory").map((entry) => (
+          <button key={entry.path} type="button" className="file-browser-row" onClick={() => setDirectory(entry.path)}>
+            <Folder size={17} /><span>{entry.name}</span><small>Folder</small>
+          </button>
+        ))}
+      </div>
+      <div className="file-browser-footer">
+        <small>{data?.path || "Select a folder"}</small>
+        <Btn type="button" className="primary" disabled={!data?.path} onClick={() => data?.path && choose(data.path)}>Use this folder</Btn>
+      </div>
+    </section>
+  );
+}
 function ScriptBrowser({ choose }: { choose: (path: string) => void }) {
   const [directory, setDirectory] = useState(""),
     [selected, setSelected] = useState<string | null>(null);
@@ -1395,6 +1511,9 @@ function ScheduleForm({
   done: () => void;
 }) {
   const [frequency, setFrequency] = useState(initial ? "custom" : "daily"),
+    [targetKind, setTargetKind] = useState<"script" | "command">(
+      initial?.command ? "command" : "script",
+    ),
     [error, setError] = useState("");
   return (
     <Modal title={initial ? "Edit schedule" : "New schedule"} close={close}>
@@ -1450,16 +1569,23 @@ function ScheduleForm({
         }}
       >
         <input type="hidden" name="id" defaultValue={initial?.id} />
-        {initial?.command ? (
+        <label>
+          Run
+          <select value={targetKind} onChange={(event) => setTargetKind(event.target.value as "script" | "command")}>
+            <option value="script">An approved script</option>
+            <option value="command">A custom command</option>
+          </select>
+        </label>
+        {targetKind === "command" ? (
           <label>
-            Command
-            <input name="command" defaultValue={initial.command} required />
-            <small>This command runs through cron as the selected user.</small>
+            Custom command
+            <input name="command" defaultValue={initial?.command} required maxLength={2000} placeholder="/usr/local/bin/task --option" />
+            <small>This one-line command runs through cron as the selected user.</small>
           </label>
         ) : (
           <label>
             Script
-            <select name="scriptId" required defaultValue={initial?.scriptId}>
+            <select name="scriptId" required={targetKind === "script"} defaultValue={initial?.scriptId}>
               {scripts.map((script) => (
                 <option key={script.id} value={script.id}>
                   {script.name}
