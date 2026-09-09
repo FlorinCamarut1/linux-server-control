@@ -14,9 +14,14 @@ import {
   FilePenLine,
   Folder,
   FolderOpen,
+  Gauge,
+  HardDrive,
   KeyRound,
+  LayoutGrid,
+  LayoutList,
   Loader2,
   LogOut,
+  MoreHorizontal,
   Play,
   RefreshCw,
   RotateCcw,
@@ -24,6 +29,7 @@ import {
   Server,
   Square,
   Terminal,
+  Thermometer,
   Trash2,
 } from "lucide-react";
 type C = {
@@ -60,6 +66,24 @@ type St = {
   time: string;
   root: { available: boolean; cron: string; system: string };
   rootScript: { available: boolean };
+  stats: {
+    temperatureC: number | null;
+    memoryUsedBytes: number;
+    memoryTotalBytes: number;
+    memoryAvailableBytes: number;
+    diskUsedBytes: number;
+    diskTotalBytes: number;
+    diskUsedPercent: number;
+    storage: {
+      path: string;
+      usedBytes: number | null;
+      totalBytes: number | null;
+      usedPercent: number | null;
+    }[];
+    uptimeSeconds: number;
+    cpuUsagePercent: number;
+    cpuCores: number;
+  };
 };
 type ScriptBrowserData = {
   path: string;
@@ -71,7 +95,7 @@ type FileBrowserData = {
   path: string;
   parent: string | null;
   roots: string[];
-  entries: { name: string; path: string; type: "directory" | "file" }[];
+  entries: { name: string; path: string; type: "directory" | "file"; size: number | null }[];
 };
 async function api(path: string, body?: unknown, silent = false) {
   if (!silent && typeof window !== "undefined")
@@ -281,9 +305,49 @@ export default function Home() {
         {tab === "containers" && (
           <>
             <section className="metrics">
-              <Metric label="Total containers" value={String(state.containers.length)} icon={<Container />} />
-              <Metric label="Running" value={String(active)} icon={<Play />} />
-              <Metric label="Stopped" value={String(stopped)} icon={<Square />} />
+              <Metric
+                label="Temperature"
+                value={state.stats.temperatureC === null ? "Unavailable" : `${state.stats.temperatureC.toFixed(1)} °C`}
+                icon={<Thermometer />}
+              />
+              <Metric
+                label="RAM"
+                value={`${formatBytes(state.stats.memoryUsedBytes)} / ${formatBytes(state.stats.memoryTotalBytes)}`}
+                note={formatPercent(state.stats.memoryUsedBytes, state.stats.memoryTotalBytes)}
+                icon={<Gauge />}
+              />
+              <Metric
+                label="System disk"
+                value={`${formatBytes(state.stats.diskTotalBytes - state.stats.diskUsedBytes)} free`}
+                note={`${state.stats.diskUsedPercent}% used · ${formatBytes(state.stats.diskTotalBytes)} total`}
+                icon={<HardDrive />}
+              />
+              {state.stats.storage.map((drive) => (
+                <Metric
+                  key={drive.path}
+                  label={`Storage (${drive.path})`}
+                  value={drive.usedPercent === null || drive.usedBytes === null || drive.totalBytes === null
+                    ? "Unavailable"
+                    : `${formatBytes(drive.totalBytes - drive.usedBytes)} free`}
+                  note={drive.usedBytes === null || drive.totalBytes === null
+                    ? "Check MONITORED_PATHS"
+                    : `${drive.usedPercent}% used · ${formatBytes(drive.totalBytes)} total`}
+                  icon={<HardDrive />}
+                />
+              ))}
+              <Metric
+                label="CPU usage"
+                value={`${state.stats.cpuUsagePercent.toFixed(1)}%`}
+                note={`${state.stats.cpuCores} logical cores`}
+                icon={<Gauge />}
+              />
+              <Metric label="Uptime" value={formatUptime(state.stats.uptimeSeconds)} icon={<Clock3 />} />
+              <Metric
+                label="Containers"
+                value={`${active} running`}
+                note={`${state.containers.length} total · ${stopped} stopped`}
+                icon={<Container />}
+              />
             </section>
             <Panel
               title="All containers"
@@ -661,10 +725,12 @@ function Panel({
 function Metric({
   label,
   value,
+  note,
   icon,
 }: {
   label: string;
   value: string;
+  note?: string;
   icon: React.ReactNode;
 }) {
   return (
@@ -673,9 +739,27 @@ function Metric({
       <div>
         <small>{label}</small>
         <strong>{value}</strong>
+        {note && <em>{note}</em>}
       </div>
     </div>
   );
+}
+function formatBytes(bytes: number) {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB", "PB"];
+  const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+  return `${(bytes / 1024 ** index).toFixed(index > 1 ? 1 : 0)} ${units[index]}`;
+}
+function formatPercent(used: number, total: number) {
+  return total > 0 ? `${Math.round((used / total) * 100)}% used` : "Unavailable";
+}
+function formatUptime(seconds: number) {
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  if (days) return `${days}d ${hours}h`;
+  if (hours) return `${hours}h ${minutes}m`;
+  return `${minutes}m`;
 }
 function ContainerRow({
   c,
@@ -1193,14 +1277,20 @@ function currentLocation(data: FileBrowserData | ScriptBrowserData | null, direc
 }
 function FileExplorer() {
   const [directory, setDirectory] = useState(""),
+    [view, setView] = useState<"grid" | "list">("list"),
     [editor, setEditor] = useState<{ path: string; content: string } | null>(null),
     [opening, setOpening] = useState(""),
+    [menuPath, setMenuPath] = useState<string | null>(null),
     [clipboard, setClipboard] = useState<{
       path: string;
       action: "copy" | "move";
       name: string;
     } | null>(null);
   const { data, error, setError, loading, load } = useDirectory<FileBrowserData>("file/browse", directory);
+  function navigate(path: string) {
+    setMenuPath(null);
+    setDirectory(path);
+  }
   async function operate(
     action: "delete" | "copy" | "move" | "rename",
     source: string,
@@ -1209,6 +1299,7 @@ function FileExplorer() {
   ) {
     try {
       setOpening(source);
+      setMenuPath(null);
       await api("file/operation", { action, source, destination, name });
       if (action === "move" || action === "delete") setClipboard(null);
       await load();
@@ -1245,14 +1336,36 @@ function FileExplorer() {
     <>
       <Panel
         title="File explorer"
-        note="Browse and edit text files in approved locations"
+        note="Browse and edit files under /home and /mnt"
         extra={
           <div className="actions">
             {(data?.roots.length || 0) > 1 && (
-              <select className="file-explorer-roots" aria-label="Location" value={currentLocation(data, directory)} onChange={(event) => setDirectory(event.target.value)}>
+              <select className="file-explorer-roots" aria-label="Location" value={currentLocation(data, directory)} onChange={(event) => navigate(event.target.value)}>
                 {data?.roots.map((root) => <option key={root} value={root}>{root}</option>)}
               </select>
             )}
+            <div className="file-view-toggle" aria-label="File view">
+              <button
+                type="button"
+                className={view === "grid" ? "active" : ""}
+                aria-label="Grid view"
+                aria-pressed={view === "grid"}
+                title="Grid view"
+                onClick={() => setView("grid")}
+              >
+                <LayoutGrid size={16} />
+              </button>
+              <button
+                type="button"
+                className={view === "list" ? "active" : ""}
+                aria-label="List view"
+                aria-pressed={view === "list"}
+                title="List view"
+                onClick={() => setView("list")}
+              >
+                <LayoutList size={16} />
+              </button>
+            </div>
             <Btn disabled={!clipboard || !!opening || !data} onClick={paste} title={clipboard ? `Paste ${clipboard.name}` : "Copy or cut a file first"}>
               <ClipboardPaste size={16} />Paste
             </Btn>
@@ -1260,47 +1373,85 @@ function FileExplorer() {
           </div>
         }
       >
-        <div className="file-explorer-path">{data?.path || "Loading folder…"}</div>
+        <form
+          className="file-explorer-path"
+          onSubmit={(event) => {
+            event.preventDefault();
+            const requested = String(new FormData(event.currentTarget).get("path") || "").trim();
+            if (requested) navigate(requested);
+          }}
+        >
+          <input
+            aria-label="Folder path"
+            key={data?.path}
+            name="path"
+            defaultValue={data?.path || ""}
+            placeholder="/home/folder or /mnt/folder"
+            spellCheck={false}
+          />
+          <Btn disabled={loading}>Go</Btn>
+        </form>
         {data?.parent && (
-          <button type="button" className="file-explorer-up" onClick={() => setDirectory(data.parent!)}>
+          <button type="button" className="file-explorer-up" onClick={() => navigate(data.parent!)}>
             <ChevronLeft size={16} /> Up one folder
           </button>
         )}
         {loading && !error && <div className="empty-state"><Loader2 className="spin" /><b>Loading files…</b></div>}
         {error && <div className="alert">{error}</div>}
-        {!loading && !error && data?.entries.map((entry) => (
-          <div className="file-explorer-row" key={entry.path}>
+        {!loading && !error && data?.entries.length ? (
+          <div className={`file-explorer-grid ${view}`}>
+          {data.entries.map((entry) => (
+          <article className={`file-explorer-card ${entry.type}`} key={entry.path}>
             <button
               type="button"
               className="file-explorer-open"
-              onClick={() => entry.type === "directory" ? setDirectory(entry.path) : openFile(entry.path)}
+              onClick={() => entry.type === "directory" ? navigate(entry.path) : openFile(entry.path)}
             >
-              {entry.type === "directory" ? <Folder size={18} /> : <FileTerminal size={18} />}
-              <span>{entry.name}</span>
-              <small>{entry.type === "directory" ? "Folder" : "File"}</small>
+              {entry.type === "directory" ? <Folder size={34} /> : <FileTerminal size={30} />}
+              <span title={entry.name}>{entry.name}</span>
+              <small>
+                {entry.size === null
+                  ? "Size unavailable"
+                  : `${entry.type === "directory" ? "Folder uses" : "File size"}: ${formatBytes(entry.size)}`}
+              </small>
             </button>
-            <div className="file-explorer-actions">
-              {entry.type === "file" && (
-                <Btn disabled={!!opening} onClick={() => openFile(entry.path)}>
-                  {opening === entry.path ? <Loader2 className="spin" size={15} /> : <FilePenLine size={15} />}
-                  Edit
-                </Btn>
+            <div className="file-explorer-menu">
+              <button
+                type="button"
+                className="file-explorer-menu-trigger"
+                aria-label={`Actions for ${entry.name}`}
+                aria-expanded={menuPath === entry.path}
+                disabled={!!opening}
+                onClick={() => setMenuPath((open) => open === entry.path ? null : entry.path)}
+              >
+                <MoreHorizontal size={18} />
+              </button>
+              {menuPath === entry.path && (
+                <div className="file-explorer-menu-items">
+                  {entry.type === "file" && (
+                    <button type="button" onClick={() => openFile(entry.path)}>
+                      <FilePenLine size={15} /> Edit
+                    </button>
+                  )}
+                  <button type="button" onClick={() => { setClipboard({ path: entry.path, action: "copy", name: entry.name }); setMenuPath(null); }}>
+                    <Copy size={15} /> Copy
+                  </button>
+                  <button type="button" onClick={() => { setClipboard({ path: entry.path, action: "move", name: entry.name }); setMenuPath(null); }}>
+                    <Scissors size={15} /> Cut
+                  </button>
+                  <button type="button" onClick={() => renameEntry(entry)}>
+                    <FilePenLine size={15} /> Rename
+                  </button>
+                  <button type="button" className="danger" onClick={() => removeEntry(entry)}>
+                    <Trash2 size={15} /> Delete
+                  </button>
+                </div>
               )}
-              <Btn disabled={!!opening} onClick={() => setClipboard({ path: entry.path, action: "copy", name: entry.name })}>
-                <Copy size={15} />Copy
-              </Btn>
-              <Btn disabled={!!opening} onClick={() => setClipboard({ path: entry.path, action: "move", name: entry.name })}>
-                <Scissors size={15} />Cut
-              </Btn>
-              <Btn disabled={!!opening} onClick={() => renameEntry(entry)}>
-                <FilePenLine size={15} />Rename
-              </Btn>
-              <Btn className="danger" disabled={!!opening} onClick={() => removeEntry(entry)}>
-                <Trash2 size={15} />Delete
-              </Btn>
             </div>
+          </article>
+          ))}
           </div>
-        ))}
+        ) : null}
         {!loading && !error && data && !data.entries.length && <div className="empty-state"><Folder size={22} /><b>This folder is empty</b></div>}
       </Panel>
       {editor && (

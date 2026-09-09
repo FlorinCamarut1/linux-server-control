@@ -24,6 +24,7 @@ import {
   secureEqual,
   sessions,
   syncCron,
+  systemStats,
   token,
   validCron,
   DATA,
@@ -236,6 +237,26 @@ async function handle(
           },
           root: { available: false, cron: "", system: "" },
           rootScript: { available: false },
+          stats: {
+            temperatureC: 46.2,
+            memoryUsedBytes: 6940667904,
+            memoryTotalBytes: 16777216000,
+            memoryAvailableBytes: 9835475100,
+            diskUsedBytes: 128849018880,
+            diskTotalBytes: 499289948160,
+            diskUsedPercent: 26,
+            storage: [
+              {
+                path: "/mnt/storage",
+                usedBytes: 1649267441664,
+                totalBytes: 3999688294400,
+                usedPercent: 41,
+              },
+            ],
+            uptimeSeconds: 196560,
+            cpuUsagePercent: 18.4,
+            cpuCores: 8,
+          },
           containers: [
             {
               ID: "a91b2c3d4e5f",
@@ -298,6 +319,7 @@ async function handle(
         devices,
         host: process.env.SSH_TARGET,
         time: run(["date", "+%d.%m.%Y %H:%M:%S %Z"]).trim(),
+        stats: systemStats(),
       });
     }
     if (route === "logout") {

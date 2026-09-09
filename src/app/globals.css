@@ -236,7 +236,7 @@ header p,
 }
 .metrics {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
   margin-bottom: 18px;
 }
@@ -266,6 +266,13 @@ header p,
 }
 .metric strong {
   font-size: 20px;
+}
+.metric em {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 11px;
+  font-style: normal;
 }
 .panel {
   border: 1px solid var(--line);
@@ -716,12 +723,43 @@ input:focus {
   padding: 7px 28px 7px 9px;
   font-size: 12px;
 }
-.file-explorer-path {
-  padding: 11px 20px;
-  border-bottom: 1px solid var(--line);
-  overflow-wrap: anywhere;
+.file-view-toggle {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #0c1117;
+}
+.file-view-toggle button {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
   color: var(--muted);
-  font: 12px/1.5 ui-monospace, Consolas, monospace;
+  cursor: pointer;
+}
+.file-view-toggle button:hover,
+.file-view-toggle button.active {
+  background: var(--surface2);
+  color: var(--text);
+}
+.file-explorer-path {
+  display: flex;
+  gap: 8px;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--line);
+}
+.file-explorer-path input {
+  margin: 0;
+  font: 13px/1.5 ui-monospace, Consolas, monospace;
+}
+.file-explorer-path .button {
+  flex: 0 0 auto;
 }
 .file-explorer-up {
   display: inline-flex;
@@ -733,19 +771,123 @@ input:focus {
   color: var(--accent);
   cursor: pointer;
 }
-.file-explorer-row {
+.file-explorer-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 12px;
+  padding: 18px 20px 20px;
+}
+.file-explorer-card {
+  position: relative;
+  min-width: 0;
+  overflow: visible;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #0d131a;
+}
+.file-explorer-card:hover {
+  border-color: #405044;
+  background: #111a20;
+}
+.file-explorer-menu {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 2;
+}
+.file-explorer-menu-trigger {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface2);
+  color: var(--muted);
+  cursor: pointer;
+}
+.file-explorer-menu-trigger:hover,
+.file-explorer-menu-trigger[aria-expanded="true"] {
+  color: var(--text);
+  background: #26313c;
+}
+.file-explorer-menu-trigger:disabled {
+  cursor: wait;
+  opacity: .5;
+}
+.file-explorer-menu-items {
+  position: absolute;
+  top: 37px;
+  right: 0;
+  z-index: 5;
+  min-width: 132px;
+  padding: 4px;
+  border: 1px solid #3a4654;
+  border-radius: 8px;
+  background: #151c24;
+  box-shadow: 0 12px 30px #0008;
+}
+.file-explorer-menu-items button {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 0 20px;
+  width: 100%;
+  gap: 8px;
+  padding: 8px 9px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.file-explorer-menu-items button:hover {
+  background: #26313c;
+}
+.file-explorer-menu-items button.danger {
+  color: #fda4a4;
+}
+.file-explorer-grid.list {
+  display: block;
+  padding: 0;
+}
+.file-explorer-grid.list .file-explorer-card {
+  display: flex;
+  align-items: center;
+  border: 0;
   border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+}
+.file-explorer-grid.list .file-explorer-card:last-child {
+  border-bottom: 0;
+}
+.file-explorer-grid.list .file-explorer-open {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) auto;
+  flex: 1;
+  align-items: center;
+  gap: 9px;
+  padding: 13px 66px 13px 20px;
+}
+.file-explorer-grid.list .file-explorer-open svg {
+  width: 22px;
+  height: 22px;
+}
+.file-explorer-grid.list .file-explorer-actions {
+  padding: 8px 20px 8px 0;
+}
+.file-explorer-grid.list .file-explorer-menu {
+  top: 9px;
+  right: 20px;
 }
 .file-explorer-actions {
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 6px;
-  padding: 8px 0;
+  padding: 0 10px 10px;
 }
 .file-explorer-actions .button {
   min-height: 30px;
@@ -753,13 +895,13 @@ input:focus {
   font-size: 12px;
 }
 .file-explorer-open {
-  display: grid;
-  grid-template-columns: 24px minmax(0, 1fr) auto;
-  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
   min-width: 0;
-  align-items: center;
-  gap: 8px;
-  padding: 13px 0;
+  width: 100%;
+  gap: 7px;
+  padding: 16px 14px 12px;
   border: 0;
   background: transparent;
   color: var(--text);
@@ -771,6 +913,7 @@ input:focus {
 }
 .file-explorer-open svg {
   color: var(--accent);
+  fill: #7dd3a71a;
 }
 .file-explorer-open span,
 .file-explorer-open small {
@@ -1011,6 +1154,11 @@ input:focus {
     transform: rotate(360deg);
   }
 }
+@media (max-width: 1200px) {
+  .metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
 @media (max-width: 800px) {
   body {
     overflow-x: hidden;
@@ -1212,20 +1360,36 @@ input:focus {
     width: 100%;
   }
   .file-explorer-path,
-  .file-explorer-row {
+  .file-explorer-grid {
     padding-left: 12px;
     padding-right: 12px;
   }
   .file-explorer-up {
     margin-left: 12px;
   }
-  .file-explorer-open {
-    grid-template-columns: 22px minmax(0, 1fr);
+  .file-explorer-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
   }
-  .file-explorer-row {
+  .file-explorer-grid.list {
+    display: block;
+  }
+  .file-explorer-grid.list .file-explorer-card {
     align-items: stretch;
     flex-direction: column;
-    gap: 0;
+  }
+  .file-explorer-grid.list .file-explorer-open {
+    grid-template-columns: 28px minmax(0, 1fr);
+    padding: 12px 54px 12px 12px;
+  }
+  .file-explorer-grid.list .file-explorer-open small {
+    display: none;
+  }
+  .file-explorer-grid.list .file-explorer-actions {
+    padding: 0 12px 10px;
+  }
+  .file-explorer-grid.list .file-explorer-menu {
+    right: 12px;
   }
   .file-explorer-actions {
     width: 100%;
@@ -1235,8 +1399,8 @@ input:focus {
     flex: 1 1 auto;
     justify-content: center;
   }
-  .file-explorer-open small {
-    display: none;
+  .file-explorer-open {
+    padding: 13px 11px 10px;
   }
   .file-editor {
     padding: 14px;

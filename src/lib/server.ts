@@ -98,6 +98,97 @@ export function runInput(args: string[], input: string, timeout = 30000) {
   const [c, a] = ssh(args);
   return execFileSync(c, a, { encoding: "utf8", input, timeout, maxBuffer: 4e6 });
 }
+export type SystemStats = {
+  temperatureC: number | null;
+  memoryUsedBytes: number;
+  memoryTotalBytes: number;
+  memoryAvailableBytes: number;
+  diskUsedBytes: number;
+  diskTotalBytes: number;
+  diskUsedPercent: number;
+  storage: {
+    path: string;
+    usedBytes: number | null;
+    totalBytes: number | null;
+    usedPercent: number | null;
+  }[];
+  uptimeSeconds: number;
+  cpuUsagePercent: number;
+  cpuCores: number;
+};
+export function systemStats(): SystemStats {
+  const output = run([
+    "bash",
+    "-lc",
+    [
+      'read -r mem_total mem_used mem_available < <(free -b | awk \'/^Mem:/ {print $2, $3, $7}\')',
+      'read -r disk_total disk_used disk_pct < <(df -B1 -P / | awk \'NR==2 {gsub(/%/, "", $5); print $2, $3, $5}\')',
+      'read -r _ cpu_user cpu_nice cpu_system cpu_idle cpu_iowait cpu_irq cpu_softirq cpu_steal _ < /proc/stat',
+      'cpu_total_1=$((cpu_user + cpu_nice + cpu_system + cpu_idle + cpu_iowait + cpu_irq + cpu_softirq + cpu_steal))',
+      'cpu_idle_1=$((cpu_idle + cpu_iowait))',
+      'sleep 0.15',
+      'read -r _ cpu_user cpu_nice cpu_system cpu_idle cpu_iowait cpu_irq cpu_softirq cpu_steal _ < /proc/stat',
+      'cpu_total_2=$((cpu_user + cpu_nice + cpu_system + cpu_idle + cpu_iowait + cpu_irq + cpu_softirq + cpu_steal))',
+      'cpu_idle_2=$((cpu_idle + cpu_iowait))',
+      'cpu_delta=$((cpu_total_2 - cpu_total_1))',
+      'cpu_idle_delta=$((cpu_idle_2 - cpu_idle_1))',
+      'cpu_pct=$(awk -v total="$cpu_delta" -v idle="$cpu_idle_delta" \'BEGIN {if (total > 0) printf "%.1f", 100 * (total - idle) / total; else print "0.0"}\')',
+      'uptime_s=$(cut -d. -f1 /proc/uptime)',
+      'cores=$(nproc)',
+      'temp=$(command -v sensors >/dev/null && sensors "coretemp-*" -u 2>/dev/null | awk \'/_input:/ {if ($2 > max) max=$2} END {if (max) printf "%.1f", max}\')',
+      'if [ -z "$temp" ]; then temp=$(find -L /sys/class/thermal /sys/class/hwmon -type f \\( -name temp -o -name "temp*_input" \\) -readable -exec cat {} + 2>/dev/null | awk \'$1 ~ /^[0-9]+([.][0-9]+)?$/ {v=$1; if (v > 1000) v=v/1000; if (v > 0 && v < 150 && v > max) max=v} END {if (max) printf "%.1f", max}\'); fi',
+      'printf "temperatureC=%s\\nmemoryUsedBytes=%s\\nmemoryTotalBytes=%s\\nmemoryAvailableBytes=%s\\ndiskUsedBytes=%s\\ndiskTotalBytes=%s\\ndiskUsedPercent=%s\\nuptimeSeconds=%s\\ncpuUsagePercent=%s\\ncpuCores=%s\\n" "$temp" "$mem_used" "$mem_total" "$mem_available" "$disk_used" "$disk_total" "$disk_pct" "$uptime_s" "$cpu_pct" "$cores"',
+    ].join("; "),
+  ]);
+  const values = Object.fromEntries(
+    output
+      .trim()
+      .split("\n")
+      .map((line) => line.split("=", 2)),
+  );
+  const number = (key: string) => {
+    const value = Number(values[key]);
+    return Number.isFinite(value) ? value : 0;
+  };
+  const monitoredPaths = [
+    ...new Set(
+      (process.env.MONITORED_PATHS || "/mnt/storage")
+        .split(",")
+        .map((item) => item.trim().replace(/\/$/, ""))
+        .filter((item) => item.startsWith("/")),
+    ),
+  ];
+  const storage = monitoredPaths.map((storagePath) => {
+    try {
+      const fields = run(["df", "-B1", "-P", storagePath])
+        .trim()
+        .split("\n")
+        .at(-1)!
+        .trim()
+        .split(/\s+/);
+      const totalBytes = Number(fields[1]);
+      const usedBytes = Number(fields[2]);
+      const usedPercent = Number(fields[4]?.replace("%", ""));
+      if (![totalBytes, usedBytes, usedPercent].every(Number.isFinite)) throw Error();
+      return { path: storagePath, usedBytes, totalBytes, usedPercent };
+    } catch {
+      return { path: storagePath, usedBytes: null, totalBytes: null, usedPercent: null };
+    }
+  });
+  return {
+    temperatureC: values.temperatureC ? number("temperatureC") : null,
+    memoryUsedBytes: number("memoryUsedBytes"),
+    memoryTotalBytes: number("memoryTotalBytes"),
+    memoryAvailableBytes: number("memoryAvailableBytes"),
+    diskUsedBytes: number("diskUsedBytes"),
+    diskTotalBytes: number("diskTotalBytes"),
+    diskUsedPercent: number("diskUsedPercent"),
+    storage,
+    uptimeSeconds: number("uptimeSeconds"),
+    cpuUsagePercent: number("cpuUsagePercent"),
+    cpuCores: number("cpuCores"),
+  };
+}
 type CronUser = "user" | "root";
 const rootCronHelper = "/usr/local/sbin/media-dashboard-root-cron";
 const rootScriptHelper = "/usr/local/sbin/media-dashboard-root-run";
@@ -329,7 +420,7 @@ export type ScriptBrowserEntry = {
   type: "directory" | "script";
 };
 const fileOperation = String.raw`
-import json, os, sys, shutil
+import json, os, sys, shutil, subprocess
 request = json.load(sys.stdin)
 roots = [os.path.realpath(root) for root in request["roots"]]
 target = os.path.realpath(request["path"] or roots[0])
@@ -388,6 +479,17 @@ elif request["action"] in ("copy", "move", "rename"):
     print(json.dumps({"ok": True, "path": output}))
 else:
     entries = []
+    sizes = {}
+    if not request["scripts"]:
+        try:
+            measured = subprocess.run(
+                ["du", "-b", "--max-depth=1", "--", target],
+                capture_output=True, text=True, timeout=20, check=False)
+            for line in measured.stdout.splitlines():
+                amount, name = line.split("\t", 1)
+                sizes[os.path.realpath(name)] = int(amount)
+        except (OSError, ValueError, subprocess.TimeoutExpired):
+            pass
     with os.scandir(target) as items:
         for item in items:
             if item.is_dir(follow_symlinks=False):
@@ -398,7 +500,8 @@ else:
                 kind = "script" if request["scripts"] else "file"
             else:
                 continue
-            entries.append({"name": item.name, "path": item.path, "type": kind})
+            size = sizes.get(os.path.realpath(item.path)) if kind == "directory" else item.stat(follow_symlinks=False).st_size
+            entries.append({"name": item.name, "path": item.path, "type": kind, "size": size})
     entries.sort(key=lambda item: (item["type"] != "directory", item["name"].lower()))
     parent = os.path.dirname(target)
     print(json.dumps({"path": target, "roots": roots,
