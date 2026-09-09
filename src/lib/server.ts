@@ -1,4 +1,5 @@
-import { execFileSync, spawn } from "node:child_process";
+import { execFile, execFileSync, spawn } from "node:child_process";
+import { promisify } from "node:util";
 import {
   createHash,
   randomBytes,
@@ -94,6 +95,14 @@ export function run(args: string[], timeout = 30000) {
   const [c, a] = ssh(args);
   return execFileSync(c, a, { encoding: "utf8", timeout, maxBuffer: 4e6 });
 }
+const execFileAsync = promisify(execFile);
+export async function runAsync(args: string[], timeout = 30000) {
+  const [command, arguments_] = ssh(args);
+  const { stdout } = await execFileAsync(command, arguments_, {
+    encoding: "utf8", timeout, maxBuffer: 4e6,
+  });
+  return stdout;
+}
 export function runInput(args: string[], input: string, timeout = 30000) {
   const [c, a] = ssh(args);
   return execFileSync(c, a, { encoding: "utf8", input, timeout, maxBuffer: 4e6 });
@@ -116,8 +125,8 @@ export type SystemStats = {
   cpuUsagePercent: number;
   cpuCores: number;
 };
-export function systemStats(): SystemStats {
-  const output = run([
+export async function systemStats(): Promise<SystemStats> {
+  const output = await runAsync([
     "bash",
     "-lc",
     [
@@ -158,9 +167,9 @@ export function systemStats(): SystemStats {
         .filter((item) => item.startsWith("/")),
     ),
   ];
-  const storage = monitoredPaths.map((storagePath) => {
+  const storage = await Promise.all(monitoredPaths.map(async (storagePath) => {
     try {
-      const fields = run(["df", "-B1", "-P", storagePath])
+      const fields = (await runAsync(["df", "-B1", "-P", storagePath]))
         .trim()
         .split("\n")
         .at(-1)!
@@ -174,7 +183,7 @@ export function systemStats(): SystemStats {
     } catch {
       return { path: storagePath, usedBytes: null, totalBytes: null, usedPercent: null };
     }
-  });
+  }));
   return {
     temperatureC: values.temperatureC ? number("temperatureC") : null,
     memoryUsedBytes: number("memoryUsedBytes"),
@@ -192,6 +201,32 @@ export function systemStats(): SystemStats {
 type CronUser = "user" | "root";
 const rootCronHelper = "/usr/local/sbin/media-dashboard-root-cron";
 const rootScriptHelper = "/usr/local/sbin/media-dashboard-root-run";
+// Share only concurrent read requests. Completed snapshots are never cached,
+// so a refresh after a mutation always reads current host state.
+let pendingSnapshot: ReturnType<typeof collectSnapshot> | undefined;
+async function collectSnapshot() {
+  const [containers, userCron, root, rootScript, time, stats] = await Promise.all([
+    runAsync(["docker", "ps", "-a", "--size", "--format", "{{json .}}"])
+      .then((output) => output.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line))),
+    runAsync(["crontab", "-l"]).catch(() => ""),
+    Promise.all([
+      runAsync(["sudo", "-n", rootCronHelper, "list"]),
+      runAsync(["sudo", "-n", rootCronHelper, "system-list"]),
+    ]).then(([cron, system]) => ({ available: true, cron, system }))
+      .catch(() => ({ available: false, cron: "", system: "" })),
+    runAsync(["sudo", "-n", rootScriptHelper, "status"])
+      .then(() => ({ available: true })).catch(() => ({ available: false })),
+    runAsync(["date", "+%d.%m.%Y %H:%M:%S %Z"]).then((value) => value.trim()),
+    systemStats(),
+  ]);
+  return { containers, cron: userCron, root, rootScript, time, stats };
+}
+export function hostSnapshot() {
+  if (!pendingSnapshot) {
+    pendingSnapshot = collectSnapshot().finally(() => { pendingSnapshot = undefined; });
+  }
+  return pendingSnapshot;
+}
 export function cron(user: CronUser = "user") {
   try {
     return user === "root"
@@ -480,7 +515,7 @@ elif request["action"] in ("copy", "move", "rename"):
 else:
     entries = []
     sizes = {}
-    if not request["scripts"]:
+    if request["action"] == "sizes":
         try:
             measured = subprocess.run(
                 ["du", "-b", "--max-depth=1", "--", target],
@@ -490,6 +525,8 @@ else:
                 sizes[os.path.realpath(name)] = int(amount)
         except (OSError, ValueError, subprocess.TimeoutExpired):
             pass
+        print(json.dumps({"path": target, "sizes": sizes}))
+        sys.exit(0)
     with os.scandir(target) as items:
         for item in items:
             if item.is_dir(follow_symlinks=False):
@@ -531,6 +568,9 @@ export function browseScripts(requested = "") {
 }
 export function browseFiles(requested = "") {
   return remoteFileOperation({ path: requested, action: "browse", scripts: false });
+}
+export function folderSizes(requested: string) {
+  return remoteFileOperation({ path: requested, action: "sizes", scripts: false });
 }
 export async function deleteFolder(requested: string) {
   await remoteFileOperation({ path: requested, action: "delete" });

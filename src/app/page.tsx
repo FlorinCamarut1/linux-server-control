@@ -164,9 +164,19 @@ export default function Home() {
     }
   }, []);
   useEffect(() => {
-    refresh(true);
-    const x = setInterval(() => refresh(true), 15000);
-    return () => clearInterval(x);
+    let polling = false;
+    const poll = async () => {
+      if (document.hidden || polling) return;
+      polling = true;
+      try { await refresh(true); } finally { polling = false; }
+    };
+    void poll();
+    const x = setInterval(poll, 15000);
+    document.addEventListener("visibilitychange", poll);
+    return () => {
+      clearInterval(x);
+      document.removeEventListener("visibilitychange", poll);
+    };
   }, [refresh]);
   const active = useMemo(
     () => state?.containers.filter((c) => c.State === "running").length || 0,
@@ -1248,27 +1258,46 @@ function RunScriptForm({
     </Modal>
   );
 }
-function useDirectory<T>(endpoint: string, directory: string) {
+function useDirectory<T>(endpoint: string, directory: string, includeSizes = false) {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const [sizesLoading, setSizesLoading] = useState(false);
   const generation = useRef(0);
   const load = useCallback(async () => {
     const current = ++generation.current;
     setLoading(true);
+    setSizesLoading(false);
     setError("");
     try {
       const result = await api(endpoint, { path: directory }, true);
-      if (current === generation.current) setData(result);
+      if (current !== generation.current) return;
+      setData(result);
+      setLoading(false);
+      if (includeSizes && result.entries.some((entry: FileBrowserData["entries"][number]) => entry.type === "directory")) {
+        setSizesLoading(true);
+        try {
+          const measured = await api("file/sizes", { path: result.path }, true);
+          if (current === generation.current) setData({
+            ...result,
+            entries: result.entries.map((entry: FileBrowserData["entries"][number]) =>
+              entry.type === "directory" ? { ...entry, size: measured.sizes[entry.path] ?? null } : entry),
+          });
+        } catch {
+          // Size failures must not hide an otherwise readable directory.
+        } finally {
+          if (current === generation.current) setSizesLoading(false);
+        }
+      }
     } catch (reason) {
       if (current === generation.current)
         setError(reason instanceof Error ? reason.message : "Could not read folder");
     } finally {
       if (current === generation.current) setLoading(false);
     }
-  }, [endpoint, directory]);
+  }, [endpoint, directory, includeSizes]);
   useEffect(() => { load(); return () => { generation.current++; }; }, [load]);
-  return { data, error, setError, loading, load };
+  return { data, error, setError, loading, sizesLoading, load };
 }
 function currentLocation(data: FileBrowserData | ScriptBrowserData | null, directory: string) {
   const current = directory || data?.path || "";
@@ -1286,7 +1315,7 @@ function FileExplorer() {
       action: "copy" | "move";
       name: string;
     } | null>(null);
-  const { data, error, setError, loading, load } = useDirectory<FileBrowserData>("file/browse", directory);
+  const { data, error, setError, loading, sizesLoading, load } = useDirectory<FileBrowserData>("file/browse", directory, true);
   function navigate(path: string) {
     setMenuPath(null);
     setDirectory(path);
@@ -1411,7 +1440,7 @@ function FileExplorer() {
               <span title={entry.name}>{entry.name}</span>
               <small>
                 {entry.size === null
-                  ? "Size unavailable"
+                  ? (sizesLoading ? "Calculating size…" : "Size unavailable")
                   : `${entry.type === "directory" ? "Folder uses" : "File size"}: ${formatBytes(entry.size)}`}
               </small>
             </button>

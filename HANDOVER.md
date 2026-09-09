@@ -68,15 +68,33 @@ Scheduled jobs use guided cron forms and managed comments so the dashboard chang
 
 ## Operational notes
 
+- Periodic host snapshots use asynchronous SSH reads in parallel. Concurrent snapshot requests share in-flight work; completed snapshots are not cached.
+- Files loads directory entries first and requests recursive folder sizes separately. Script and file pickers do not calculate recursive sizes. Size failures do not prevent navigation.
+- Automatic dashboard polling pauses while the browser tab is hidden and refreshes when it becomes visible. Scheduled polls do not overlap one another.
+- Run the concurrency regression checks with `node --test tests/performance.test.mjs`.
 - Keep the API catch-all route at `src/app/api/[...path]/route.ts`.
 - The dashboard uses SSH for all host operations; it does not mount the host Docker socket.
 - File listing calculates directory sizes with a bounded command. Restricted directories can have an unavailable or partial size.
 - The file menu provides Edit, Copy, Cut, Rename, and Delete actions without crowding each row.
 - The interface is responsive for phone screens.
 
-## Suggested next work
+## Known limitations
 
-- Add per-script execution history with exit code and completion time.
-- Add role separation for multiple administrators.
-- Add export and restore for dashboard configuration.
-- Add configurable alert thresholds for system statistics.
+- Sessions are held in application memory, so restarting the dashboard signs users out.
+- Folder sizes require a recursive `du` scan. Entries appear first, but size calculation can remain expensive on very large directory trees.
+- The Files API returns at most 300 entries per directory and has no search, sort controls, or pagination.
+- Script runs do not yet persist structured completion status, exit code, duration, or historical records.
+- System statistics are current snapshots; no historical samples or alert thresholds are stored.
+- The automated tests cover snapshot concurrency and failure recovery. Authentication, file operations, cron synchronization, and responsive UI flows still need integration coverage.
+
+## Recommended next work
+
+1. Add script execution history with start time, completion time, exit code, duration, arguments, and a link to the captured log.
+2. Add configurable alerts for temperature, CPU, RAM, low disk space, failed scripts, and stopped containers. Include notification cooldowns to avoid repeated alerts.
+3. Persist sessions or use signed, revocable session tokens so a normal deployment does not sign every browser out.
+4. Add export and restore for configuration, scripts, folders, schedules, devices, and alert rules without exporting credentials.
+5. Add search, sorting, pagination, and optional size calculation in Files for directories containing many entries.
+6. Store time-series samples for CPU, RAM, temperatures, and disks, then add compact history charts and configurable retention.
+7. Add roles such as administrator and read-only operator if the dashboard will be shared by multiple people.
+8. Expand integration tests around authentication, allowed-path enforcement, file operations, cron changes, and mobile layouts.
+9. Consider SSH connection multiplexing when deployments use many independent SSH requests and the target supports persistent control sockets.

@@ -7,7 +7,6 @@ import {
   browseFiles,
   changeFile,
   createCustomScript,
-  cron,
   digest,
   folders,
   hash,
@@ -16,7 +15,6 @@ import {
   run,
   runScript,
   rootCronStatus,
-  rootScriptStatus,
   save,
   saveEditableFile,
   schedules,
@@ -24,7 +22,8 @@ import {
   secureEqual,
   sessions,
   syncCron,
-  systemStats,
+  hostSnapshot,
+  folderSizes,
   token,
   validCron,
   DATA,
@@ -296,30 +295,14 @@ async function handle(
             },
           ],
         });
-      const containers = run([
-        "docker",
-        "ps",
-        "-a",
-        "--size",
-        "--format",
-        "{{json .}}",
-      ])
-        .trim()
-        .split("\n")
-        .filter(Boolean)
-        .map((line) => JSON.parse(line));
+      const snapshot = await hostSnapshot();
       return NextResponse.json({
-        containers,
+        ...snapshot,
         scripts: scripts(),
         folders: folders(),
         schedules: schedules(),
-        cron: cron(),
-          root: rootCronStatus(),
-          rootScript: rootScriptStatus(),
         devices,
         host: process.env.SSH_TARGET,
-        time: run(["date", "+%d.%m.%Y %H:%M:%S %Z"]).trim(),
-        stats: systemStats(),
       });
     }
     if (route === "logout") {
@@ -365,6 +348,8 @@ async function handle(
       return NextResponse.json(await browseScripts(body.path || ""));
     if (route === "file/browse" && body)
       return NextResponse.json(await browseFiles(body.path || ""));
+    if (route === "file/sizes" && body)
+      return NextResponse.json(await folderSizes(body.path || ""));
     if (route === "file/operation" && body) {
       const action = body.action;
       if (!["delete", "copy", "move", "rename"].includes(action))
