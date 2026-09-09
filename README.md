@@ -19,6 +19,18 @@ Linux Server Control is a self-hosted dashboard for administering one Linux serv
 - Authorize and revoke individual browsers
 - Restrict access to a LAN subnet, with optional Tailscale access
 
+## Screenshots
+
+All screenshots below use anonymized demonstration data only.
+
+### Containers and storage monitoring
+
+![Containers dashboard with generic services and storage metrics](docs/screenshots/containers-demo.png)
+
+### Script and cron execution history
+
+![Execution history dashboard with generic demo data](docs/screenshots/history-demo.png)
+
 ## Quick start
 
 The default installation is LAN-only. It uses a dedicated SSH key so the dashboard container can execute approved operations on the host.
