@@ -54,7 +54,19 @@ export type Schedule = {
   runAs?: "user" | "root";
   command?: string;
 };
-export const sessions = new Map<string, { device: string; expires: number }>();
+export type Session = { device: string; expires: number; created: number };
+export type ScriptRun = {
+  id: string; scriptId: string; scriptName: string; startedAt: string;
+  completedAt?: string; exitCode?: number; durationMs?: number; arguments: string;
+  status: "running" | "success" | "failed"; logPath: string;
+};
+export type AlertRule = {
+  id: string; name: string; metric: "temperature" | "cpu" | "ram" | "disk" | "failedScripts" | "stoppedContainers";
+  threshold: number; enabled: boolean; cooldownMinutes: number; lastTriggeredAt?: number;
+};
+export type MetricSample = { at: number; cpu: number; ram: number; temperature: number | null; disk: number };
+export type CronRun = { scheduleId: string; label: string; startedAt: string; completedAt?: string; exitCode?: number; status: "running" | "success" | "failed" };
+export const sessions = new Map<string, Session>();
 export function read<T>(name: string, fallback: T): T {
   try {
     return JSON.parse(readFileSync(path.join(DATA, name + ".json"), "utf8"));
@@ -67,6 +79,74 @@ export function save(name: string, value: unknown) {
     t = p + ".tmp";
   writeFileSync(t, JSON.stringify(value, null, 2), { mode: 0o600 });
   renameSync(t, p);
+}
+export function loadSessions() {
+  const stored = read<Record<string, Session>>("sessions", {});
+  const now = Date.now();
+  for (const [id, session] of Object.entries(stored))
+    if (session.expires > now) sessions.set(id, session);
+}
+export function persistSessions() {
+  save("sessions", Object.fromEntries(sessions));
+}
+export function scriptRuns() { return read<ScriptRun[]>("script-runs", []); }
+export function alertRules() { return read<AlertRule[]>("alerts", []); }
+export function metricSamples() { return read<MetricSample[]>("metrics", []); }
+export function monitoredPaths() {
+  const configured = read<string[]>("monitored-paths", []);
+  if (configured.length) return configured;
+  return [...new Set((process.env.MONITORED_PATHS || "/mnt/storage").split(",").map((item) => item.trim().replace(/\/$/, "")).filter((item) => item.startsWith("/")))];
+}
+export function addMonitoredPath(input: string) {
+  const requested = input.trim().replace(/\/$/, "");
+  if (!requested.startsWith("/") || /[\r\n\0]/.test(requested)) throw Error("Enter an absolute storage path");
+  const resolved = run(["realpath", "-e", requested]).trim(); run(["test", "-d", resolved]);
+  const all = monitoredPaths(); if (!all.includes(resolved)) save("monitored-paths", [...all, resolved]);
+  audit("monitor storage path " + resolved); return resolved;
+}
+export function removeMonitoredPath(input: string) {
+  const all = monitoredPaths().filter((item) => item !== input);
+  if (!all.length) throw Error("Keep at least one monitored storage path");
+  save("monitored-paths", all); audit("stop monitoring storage path " + input);
+}
+export function cronRuns() { return read<CronRun[]>("cron-runs", []); }
+export function recordMetricSample(stats: SystemStats) {
+  const retentionDays = Math.max(1, Math.min(365, Number(process.env.METRICS_RETENTION_DAYS || 30)) || 30);
+  const cutoff = Date.now() - retentionDays * 86400000;
+  const sample: MetricSample = { at: Date.now(), cpu: stats.cpuUsagePercent, ram: stats.memoryTotalBytes ? (stats.memoryUsedBytes / stats.memoryTotalBytes) * 100 : 0, temperature: stats.temperatureC, disk: stats.diskUsedPercent };
+  const all = [...metricSamples().filter((item) => item.at > cutoff), sample].slice(-10000);
+  save("metrics", all);
+  return all;
+}
+export function evaluateAlerts(snapshot: { stats: SystemStats; containers: { State: string }[] }) {
+  const failed = scriptRuns().filter((item) => item.status === "failed").length;
+  const stopped = snapshot.containers.filter((item) => item.State !== "running").length;
+  const values: Record<AlertRule["metric"], number> = {
+    temperature: snapshot.stats.temperatureC ?? 0, cpu: snapshot.stats.cpuUsagePercent,
+    ram: snapshot.stats.memoryTotalBytes ? snapshot.stats.memoryUsedBytes / snapshot.stats.memoryTotalBytes * 100 : 0,
+    disk: snapshot.stats.diskUsedPercent, failedScripts: failed, stoppedContainers: stopped,
+  };
+  const now = Date.now();
+  const triggered: AlertRule[] = [];
+  const updated = alertRules().map((rule) => {
+    const cool = rule.cooldownMinutes * 60000;
+    if (rule.enabled && values[rule.metric] >= rule.threshold && (!rule.lastTriggeredAt || now - rule.lastTriggeredAt >= cool)) {
+      const next = { ...rule, lastTriggeredAt: now };
+      triggered.push(next); audit(`alert triggered ${rule.name}: ${values[rule.metric]}`); return next;
+    }
+    return rule;
+  });
+  if (triggered.length) save("alerts", updated);
+  return { values, triggered };
+}
+export function exportConfiguration() {
+  return { version: 1, exportedAt: new Date().toISOString(), scripts: scripts(), folders: folders(), schedules: schedules(), devices: read("devices", {}), alerts: alertRules(), settings: { metricsRetentionDays: process.env.METRICS_RETENTION_DAYS || "30" } };
+}
+export function restoreConfiguration(payload: Record<string, unknown>) {
+  if (payload.version !== 1 || !Array.isArray(payload.scripts) || !Array.isArray(payload.schedules) || !Array.isArray(payload.folders) || !Array.isArray(payload.alerts)) throw Error("Invalid configuration backup");
+  save("scripts", payload.scripts); save("schedules", payload.schedules); save("folders", payload.folders); save("alerts", payload.alerts);
+  if (payload.devices && typeof payload.devices === "object") save("devices", payload.devices);
+  syncCron(payload.schedules as Schedule[]); audit("configuration restored");
 }
 const ssh = (args: string[]): [string, string[]] =>
   process.env.SSH_TARGET
@@ -159,15 +239,7 @@ export async function systemStats(): Promise<SystemStats> {
     const value = Number(values[key]);
     return Number.isFinite(value) ? value : 0;
   };
-  const monitoredPaths = [
-    ...new Set(
-      (process.env.MONITORED_PATHS || "/mnt/storage")
-        .split(",")
-        .map((item) => item.trim().replace(/\/$/, ""))
-        .filter((item) => item.startsWith("/")),
-    ),
-  ];
-  const storage = await Promise.all(monitoredPaths.map(async (storagePath) => {
+  const storage = await Promise.all(monitoredPaths().map(async (storagePath) => {
     try {
       const fields = (await runAsync(["df", "-B1", "-P", storagePath]))
         .trim()
@@ -322,10 +394,9 @@ export function syncCron(items: Schedule[], extraUsers: CronUser[] = []) {
     )) {
       const script = available.find((item) => item.id === schedule.scriptId);
       if (schedule.enabled && (script || schedule.command))
+        // The markers make scheduled work observable without granting cron any additional privileges.
         lines.push(
-          schedule.command
-            ? `${schedule.expression} ${schedule.command} # media-dashboard:${schedule.id}`
-            : `${schedule.expression} /bin/bash ${shell([script!.path])} >> ${shell([REMOTE + "/" + script!.id + ".log"])} 2>&1 # media-dashboard:${schedule.id}`,
+          `${schedule.expression} ( printf 'MEDIA_DASHBOARD_START ${schedule.id} %s\\n' "$(date -Is)"; ${schedule.command ? schedule.command : `/bin/bash ${shell([script!.path])}`} ; code=$?; printf 'MEDIA_DASHBOARD_END ${schedule.id} %s %s\\n' "$(date -Is)" "$code"; exit "$code" ) >> ${shell([REMOTE + "/schedules.log"])} 2>&1 # media-dashboard:${schedule.id}`,
         );
     }
     const data = lines.join("\n") + "\n";
@@ -333,6 +404,18 @@ export function syncCron(items: Schedule[], extraUsers: CronUser[] = []) {
       runInput(["sudo", "-n", rootCronHelper, "install"], data, 15000);
     else runInput(["crontab", "-"], data, 15000);
   }
+}
+export function collectCronRuns() {
+  let output = "";
+  try { output = run(["tail", "-n", "4000", path.posix.join(REMOTE, "schedules.log")]); } catch { return cronRuns(); }
+  const active = new Map<string, CronRun>(); const parsed: CronRun[] = [];
+  for (const line of output.split("\n")) {
+    const start = /^MEDIA_DASHBOARD_START\s+(\S+)\s+(.+)$/.exec(line);
+    if (start) { active.set(start[1], { scheduleId: start[1], label: schedules().find((item) => item.id === start[1])?.label || "Schedule", startedAt: start[2], status: "running" }); continue; }
+    const end = /^MEDIA_DASHBOARD_END\s+(\S+)\s+(\S+)\s+(\d+)$/.exec(line);
+    if (end) { const item = active.get(end[1]) || { scheduleId: end[1], label: schedules().find((x) => x.id === end[1])?.label || "Schedule", startedAt: end[2], status: "running" as const }; parsed.push({ ...item, completedAt: end[2], exitCode: Number(end[3]), status: end[3] === "0" ? "success" : "failed" }); active.delete(end[1]); }
+  }
+  const all = [...parsed, ...active.values()].slice(-500).reverse(); save("cron-runs", all); return all;
 }
 export function hash(password: string, salt: string) {
   return scryptSync(password, Buffer.from(salt, "hex"), 64, {
@@ -439,15 +522,32 @@ export function runScript(s: Script, rawArguments = "", selectedFile = "") {
       s.runAs === "root"
         ? ["sudo", "-n", rootScriptHelper, "run", s.path, ...scriptArguments]
         : ["/bin/bash", s.path, ...scriptArguments],
-    log = path.join(DATA, s.id + ".log"),
+    runId = randomUUID(),
+    log = path.join(DATA, "runs", runId + ".log"),
     [cmd, args] = ssh(command);
+  mkdirSync(path.dirname(log), { recursive: true });
+  const started = Date.now();
+  const record: ScriptRun = {
+    id: runId, scriptId: s.id, scriptName: s.name, startedAt: new Date(started).toISOString(),
+    arguments: rawArguments, status: "running", logPath: log,
+  };
+  save("script-runs", [record, ...scriptRuns()].slice(0, 2000));
   const out = openSync(log, "a");
   const child = spawn(cmd, args, {
-    detached: true,
     stdio: ["ignore", out, out],
   });
+  child.on("close", (code) => {
+    const finished = Date.now();
+    const all = scriptRuns().map((item) => item.id === runId ? {
+      ...item, completedAt: new Date(finished).toISOString(), durationMs: finished - started,
+      exitCode: code ?? 1, status: code === 0 ? "success" as const : "failed" as const,
+    } : item);
+    save("script-runs", all);
+    audit(`script ${s.name} ${code === 0 ? "completed" : "failed"} (${runId})`);
+  });
   child.unref();
-  audit("run script " + s.name);
+  audit("run script " + s.name + " (" + runId + ")");
+  return record;
 }
 export type ScriptBrowserEntry = {
   name: string;
@@ -479,6 +579,21 @@ if request["action"] == "delete":
     else:
         raise ValueError("File or folder not found")
     print(json.dumps({"ok": True}))
+elif request["action"] == "create":
+    parent = target
+    name = request.get("name") or ""
+    if not name or name in (".", "..") or "/" in name or "\\" in name or len(name) > 255:
+        raise ValueError("Enter a valid name")
+    if not allowed(parent) or not os.path.isdir(parent):
+        raise ValueError("Choose an allowed destination folder")
+    output = os.path.realpath(os.path.join(parent, name))
+    if not allowed(output) or os.path.exists(output):
+        raise ValueError("A file or folder with this name already exists")
+    if request.get("kind") == "folder":
+        os.mkdir(output)
+    else:
+        open(output, "x").close()
+    print(json.dumps({"ok": True, "path": output}))
 elif request["action"] in ("copy", "move", "rename"):
     source = os.path.realpath(request.get("source") or "")
     if not source or not allowed(source) or protected(source):
@@ -539,11 +654,20 @@ else:
                 continue
             size = sizes.get(os.path.realpath(item.path)) if kind == "directory" else item.stat(follow_symlinks=False).st_size
             entries.append({"name": item.name, "path": item.path, "type": kind, "size": size})
-    entries.sort(key=lambda item: (item["type"] != "directory", item["name"].lower()))
+    query = str(request.get("search") or "").lower()
+    if query:
+        entries = [item for item in entries if query in item["name"].lower()]
+    ordering = request.get("sort") or "name"
+    if ordering == "size":
+        entries.sort(key=lambda item: (item["type"] != "directory", item.get("size") is None, item.get("size") or 0, item["name"].lower()))
+    else:
+        entries.sort(key=lambda item: (item["type"] != "directory", item["name"].lower()))
+    offset = max(0, int(request.get("offset") or 0))
+    limit = min(300, max(1, int(request.get("limit") or 100)))
     parent = os.path.dirname(target)
     print(json.dumps({"path": target, "roots": roots,
         "parent": parent if target not in roots and any(inside(parent, root) for root in roots) else None,
-        "entries": entries[:300]}))
+        "entries": entries[offset:offset + limit], "total": len(entries), "offset": offset, "limit": limit}))
 `;
 async function remoteFileOperation(request: Record<string, unknown>) {
   const [command, args] = ssh(["python3", "-c", fileOperation]);
@@ -566,8 +690,8 @@ async function remoteFileOperation(request: Record<string, unknown>) {
 export function browseScripts(requested = "") {
   return remoteFileOperation({ path: requested, action: "browse", scripts: true });
 }
-export function browseFiles(requested = "") {
-  return remoteFileOperation({ path: requested, action: "browse", scripts: false });
+export function browseFiles(requested = "", options: { search?: string; sort?: string; offset?: number; limit?: number } = {}) {
+  return remoteFileOperation({ path: requested, action: "browse", scripts: false, ...options });
 }
 export function folderSizes(requested: string) {
   return remoteFileOperation({ path: requested, action: "sizes", scripts: false });
@@ -591,6 +715,10 @@ export async function changeFile(
   });
   audit(`${action} ${source}${result.path ? " -> " + result.path : ""}`);
   return result;
+}
+export async function createFileOrFolder(directory: string, name: string, kind: "file" | "folder") {
+  const result = await remoteFileOperation({ path: directory, action: "create", name, kind });
+  audit(`created ${kind} ${result.path}`); return result;
 }
 export function addScript(input: Record<string, string>) {
   const name = (input.name || "").trim().slice(0, 80),
@@ -665,3 +793,6 @@ export function createCustomScript(input: Record<string, string>) {
   }
   audit("created custom script " + target);
 }
+
+// Sessions are intentionally persisted without credentials so routine restarts do not sign out every browser.
+loadSessions();

@@ -84,6 +84,11 @@ type St = {
     cpuUsagePercent: number;
     cpuCores: number;
   };
+  runs: { id: string; scriptId: string; scriptName: string; startedAt: string; completedAt?: string; exitCode?: number; durationMs?: number; arguments: string; status: "running" | "success" | "failed" }[];
+  alerts: { id: string; name: string; metric: string; threshold: number; enabled: boolean; cooldownMinutes: number; lastTriggeredAt?: number }[];
+  metrics: { at: number; cpu: number; ram: number; temperature: number | null; disk: number }[];
+  cronRuns: { scheduleId: string; label: string; startedAt: string; completedAt?: string; exitCode?: number; status: "running" | "success" | "failed" }[];
+  monitoredPaths: string[];
 };
 type ScriptBrowserData = {
   path: string;
@@ -115,6 +120,27 @@ async function api(path: string, body?: unknown, silent = false) {
       window.dispatchEvent(new Event("media-control-request-end"));
   }
 }
+type DialogRequest = {
+  kind: "confirm" | "prompt";
+  title: string;
+  message: string;
+  confirmLabel: string;
+  defaultValue?: string;
+  danger?: boolean;
+  resolve: (value: boolean | string | null) => void;
+};
+function requestDialog(request: Omit<DialogRequest, "resolve">) {
+  return new Promise<boolean | string | null>((resolve) =>
+    window.dispatchEvent(new CustomEvent("media-control-dialog", { detail: { ...request, resolve } })),
+  );
+}
+async function appConfirm(message: string, title = "Confirm action", confirmLabel = "Confirm", danger = false) {
+  return (await requestDialog({ kind: "confirm", title, message, confirmLabel, danger })) === true;
+}
+async function appPrompt(message: string, defaultValue = "", title = "Enter a value", confirmLabel = "Continue") {
+  const result = await requestDialog({ kind: "prompt", title, message, confirmLabel, defaultValue });
+  return typeof result === "string" ? result : null;
+}
 const Btn = ({
   className = "",
   ...p
@@ -135,6 +161,9 @@ export default function Home() {
     [runPrompt, setRunPrompt] = useState<S | null>(null),
     [scheduleEditor, setScheduleEditor] = useState<Schedule | null | undefined>(),
     [folderEditor, setFolderEditor] = useState(false),
+    [alertEditor, setAlertEditor] = useState<St["alerts"][number] | null | undefined>(),
+    [storageManager, setStorageManager] = useState(false),
+    [storagePage, setStoragePage] = useState(0),
     [enrollment, setEnrollment] = useState<{
       code: string;
       expires: number;
@@ -183,6 +212,9 @@ export default function Home() {
     [state],
   );
   const stopped = (state?.containers.length || 0) - active;
+  const storagePerPage = 4;
+  const visibleStorage = state?.stats.storage.slice(storagePage * storagePerPage, (storagePage + 1) * storagePerPage) || [];
+  const storagePages = Math.max(1, Math.ceil((state?.stats.storage.length || 0) / storagePerPage));
   const visibleContainers = useMemo(() => {
     if (!state || containerFilter === "all") return state?.containers || [];
     return state.containers.filter((container) =>
@@ -241,6 +273,8 @@ export default function Home() {
     ["scripts", FileTerminal, "Scripts"],
     ["files", FolderOpen, "Files"],
     ["cron", Clock3, "Schedules"],
+    ["history", Clock3, "History"],
+    ["alerts", Thermometer, "Alerts"],
     ["devices", Box, "Devices"],
     ["account", KeyRound, "Account"],
   ] as const;
@@ -283,6 +317,8 @@ export default function Home() {
                   containers: "Containers",
                   scripts: "Scripts",
                   cron: "Schedules",
+                  history: "History",
+                  alerts: "Alerts",
                   devices: "Devices",
                   account: "Account",
                 }[tab]
@@ -332,7 +368,7 @@ export default function Home() {
                 note={`${state.stats.diskUsedPercent}% used · ${formatBytes(state.stats.diskTotalBytes)} total`}
                 icon={<HardDrive />}
               />
-              {state.stats.storage.map((drive) => (
+              {visibleStorage.map((drive) => (
                 <Metric
                   key={drive.path}
                   label={`Storage (${drive.path})`}
@@ -359,6 +395,8 @@ export default function Home() {
                 icon={<Container />}
               />
             </section>
+            <div className="actions" style={{ marginBottom: 18 }}><Btn onClick={() => setStorageManager(true)}><HardDrive size={16} />Manage storage paths</Btn></div>
+            {state.stats.storage.length > storagePerPage && <div className="actions" style={{ marginBottom: 18 }}><Btn disabled={storagePage === 0} onClick={() => setStoragePage((page) => page - 1)}>Previous storage</Btn><small>Storage {storagePage + 1} of {storagePages}</small><Btn disabled={storagePage + 1 >= storagePages} onClick={() => setStoragePage((page) => page + 1)}>Next storage</Btn></div>}
             <Panel
               title="All containers"
               note="Live Docker status and controls"
@@ -466,13 +504,9 @@ export default function Home() {
                         <Btn
                           className="danger"
                           disabled={!!busy}
-                          onClick={() => {
-                            if (
-                              window.confirm(
-                                `Delete “${s.name}” and its scheduled jobs?`,
-                              )
-                            )
-                              action(s.id, "script/delete", { id: s.id });
+                          onClick={async () => {
+                            if (await appConfirm(`Delete “${s.name}” and its scheduled jobs?`, "Delete script", "Delete", true))
+                              await action(s.id, "script/delete", { id: s.id });
                           }}
                         >
                           <Trash2 size={15} />
@@ -579,6 +613,13 @@ export default function Home() {
             </details>
           </Panel>
         )}
+        {tab === "history" && <HistoryPanel runs={state.runs || []} cronRuns={state.cronRuns || []} metrics={state.metrics || []} openLog={(run) => openLogs(`${run.scriptName} run`, "script/log", { id: run.scriptId, runId: run.id })} />}
+        {tab === "alerts" && (
+          <Panel title="Alert rules" note="Threshold checks run with each dashboard refresh; cooldowns prevent repeated notifications." extra={<Btn className="primary" onClick={() => setAlertEditor(null)}>New alert</Btn>}>
+            {(state.alerts || []).map((rule) => <div className="schedule-row" key={rule.id}><div className="grow"><b>{rule.name}</b><small>{rule.metric} ≥ {rule.threshold} · cooldown {rule.cooldownMinutes} min{rule.lastTriggeredAt ? ` · last triggered ${new Date(rule.lastTriggeredAt).toLocaleString()}` : ""}</small></div><span className={`badge ${rule.enabled ? "up" : "down"}`}>{rule.enabled ? "Enabled" : "Paused"}</span><div className="actions"><Btn onClick={() => setAlertEditor(rule)}>Edit</Btn><Btn className="danger" onClick={() => action(rule.id, "alerts/delete", { id: rule.id })}><Trash2 size={15}/>Delete</Btn></div></div>)}
+            {!state.alerts?.length && <div className="empty-state"><Thermometer size={22}/><b>No alert rules yet</b><p>Add thresholds for server health and jobs.</p></div>}
+          </Panel>
+        )}
         {tab === "devices" && (
           <Panel
             title="Authorized browsers"
@@ -617,7 +658,7 @@ export default function Home() {
             ))}
           </Panel>
         )}
-        {tab === "account" && <PasswordForm />}
+        {tab === "account" && <><PasswordForm /><ConfigurationPanel refresh={refresh} /></>}
       </main>
       {logs && (
         <LiveLogViewer logs={logs} close={() => setLogs(null)} />
@@ -681,6 +722,8 @@ export default function Home() {
           }}
         />
       )}
+      {alertEditor !== undefined && <AlertForm initial={alertEditor} close={() => setAlertEditor(undefined)} done={async () => { setAlertEditor(undefined); await refresh(); }} />}
+      {storageManager && <StorageManager paths={state.monitoredPaths || state.stats.storage.map((item) => item.path)} close={() => setStorageManager(false)} done={async () => { await refresh(); setStoragePage(0); }} />}
       {enrollment && (
         <Modal title="New browser access code" close={() => setEnrollment(null)}>
           <div className="access-code">
@@ -705,6 +748,7 @@ export default function Home() {
           </div>
         </Modal>
       )}
+      <DialogHost />
     </div>
   );
 }
@@ -898,6 +942,39 @@ function Modal({
       </section>
     </div>
   );
+}
+function DialogHost() {
+  const [request, setRequest] = useState<DialogRequest | null>(null);
+  useEffect(() => {
+    const open = (event: Event) => setRequest((event as CustomEvent<DialogRequest>).detail);
+    window.addEventListener("media-control-dialog", open);
+    return () => window.removeEventListener("media-control-dialog", open);
+  }, []);
+  if (!request) return null;
+  const finish = (value: boolean | string | null) => {
+    request.resolve(value);
+    setRequest(null);
+  };
+  return request.kind === "prompt" ? (
+    <PromptDialog request={request} finish={finish} />
+  ) : (
+    <Modal title={request.title} close={() => finish(false)}>
+      <p>{request.message}</p>
+      <div className="actions">
+        <Btn onClick={() => finish(false)}>Cancel</Btn>
+        <Btn className={request.danger ? "danger" : "primary"} onClick={() => finish(true)}>{request.confirmLabel}</Btn>
+      </div>
+    </Modal>
+  );
+}
+function PromptDialog({ request, finish }: { request: DialogRequest; finish: (value: string | null) => void }) {
+  const [value, setValue] = useState(request.defaultValue || "");
+  return <Modal title={request.title} close={() => finish(null)}>
+    <form onSubmit={(event) => { event.preventDefault(); if (value.trim()) finish(value); }}>
+      <label>{request.message}<input autoFocus value={value} onChange={(event) => setValue(event.target.value)} /></label>
+      <div className="actions"><Btn type="button" onClick={() => finish(null)}>Cancel</Btn><Btn className="primary" disabled={!value.trim()}>{request.confirmLabel}</Btn></div>
+    </form>
+  </Modal>;
 }
 function LiveLogViewer({
   logs,
@@ -1258,7 +1335,7 @@ function RunScriptForm({
     </Modal>
   );
 }
-function useDirectory<T>(endpoint: string, directory: string, includeSizes = false) {
+function useDirectory<T>(endpoint: string, directory: string, includeSizes = false, options: Record<string, unknown> = {}) {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
@@ -1270,7 +1347,7 @@ function useDirectory<T>(endpoint: string, directory: string, includeSizes = fal
     setSizesLoading(false);
     setError("");
     try {
-      const result = await api(endpoint, { path: directory }, true);
+      const result = await api(endpoint, { path: directory, ...options }, true);
       if (current !== generation.current) return;
       setData(result);
       setLoading(false);
@@ -1278,11 +1355,14 @@ function useDirectory<T>(endpoint: string, directory: string, includeSizes = fal
         setSizesLoading(true);
         try {
           const measured = await api("file/sizes", { path: result.path }, true);
-          if (current === generation.current) setData({
-            ...result,
-            entries: result.entries.map((entry: FileBrowserData["entries"][number]) =>
-              entry.type === "directory" ? { ...entry, size: measured.sizes[entry.path] ?? null } : entry),
-          });
+          if (current === generation.current) {
+            const entries = result.entries.map((entry: FileBrowserData["entries"][number]) =>
+              entry.type === "directory" ? { ...entry, size: measured.sizes[entry.path] ?? null } : entry);
+            if (options.sort === "size")
+              entries.sort((a: FileBrowserData["entries"][number], b: FileBrowserData["entries"][number]) =>
+                (b.size ?? -1) - (a.size ?? -1) || a.name.localeCompare(b.name));
+            setData({ ...result, entries });
+          }
         } catch {
           // Size failures must not hide an otherwise readable directory.
         } finally {
@@ -1295,7 +1375,7 @@ function useDirectory<T>(endpoint: string, directory: string, includeSizes = fal
     } finally {
       if (current === generation.current) setLoading(false);
     }
-  }, [endpoint, directory, includeSizes]);
+  }, [endpoint, directory, includeSizes, JSON.stringify(options)]);
   useEffect(() => { load(); return () => { generation.current++; }; }, [load]);
   return { data, error, setError, loading, sizesLoading, load };
 }
@@ -1310,14 +1390,16 @@ function FileExplorer() {
     [editor, setEditor] = useState<{ path: string; content: string } | null>(null),
     [opening, setOpening] = useState(""),
     [menuPath, setMenuPath] = useState<string | null>(null),
+    [search, setSearch] = useState(""), [sort, setSort] = useState("name"), [offset, setOffset] = useState(0),
     [clipboard, setClipboard] = useState<{
       path: string;
       action: "copy" | "move";
       name: string;
     } | null>(null);
-  const { data, error, setError, loading, sizesLoading, load } = useDirectory<FileBrowserData>("file/browse", directory, true);
+  const { data, error, setError, loading, sizesLoading, load } = useDirectory<FileBrowserData & { total?: number; offset?: number; limit?: number }>("file/browse", directory, true, { search, sort, offset, limit: 100 });
   function navigate(path: string) {
     setMenuPath(null);
+    setOffset(0);
     setDirectory(path);
   }
   async function operate(
@@ -1340,10 +1422,10 @@ function FileExplorer() {
     const description = entry.type === "directory"
       ? `Delete folder ${entry.path} and ALL its contents? This permanently deletes files from the server.`
       : `Delete file ${entry.path}? This cannot be undone.`;
-    if (window.confirm(description)) await operate("delete", entry.path);
+    if (await appConfirm(description, `Delete ${entry.type}`, "Delete", true)) await operate("delete", entry.path);
   }
   async function renameEntry(entry: FileBrowserData["entries"][number]) {
-    const name = window.prompt(`Rename ${entry.name} to:`, entry.name)?.trim();
+    const name = (await appPrompt(`Rename ${entry.name} to:`, entry.name, "Rename item", "Rename"))?.trim();
     if (name && name !== entry.name) await operate("rename", entry.path, "", name);
   }
   async function paste() {
@@ -1360,6 +1442,14 @@ function FileExplorer() {
     } finally {
       setOpening("");
     }
+  }
+  async function create(kind: "file" | "folder") {
+    if (!data) return;
+    const name = (await appPrompt(`Enter the new ${kind} name:`, "", `New ${kind}`, `Create ${kind}`))?.trim();
+    if (!name) return;
+    try { setOpening(name); await api("file/create", { path: data.path, name, kind }); await load(); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : "Could not create item"); }
+    finally { setOpening(""); }
   }
   return (
     <>
@@ -1398,6 +1488,8 @@ function FileExplorer() {
             <Btn disabled={!clipboard || !!opening || !data} onClick={paste} title={clipboard ? `Paste ${clipboard.name}` : "Copy or cut a file first"}>
               <ClipboardPaste size={16} />Paste
             </Btn>
+            <Btn disabled={!data || !!opening} onClick={() => create("folder")}><Folder size={16} />New folder</Btn>
+            <Btn disabled={!data || !!opening} onClick={() => create("file")}><FileTerminal size={16} />New file</Btn>
             <Btn onClick={load}><RefreshCw size={16} />Refresh</Btn>
           </div>
         }
@@ -1420,6 +1512,11 @@ function FileExplorer() {
           />
           <Btn disabled={loading}>Go</Btn>
         </form>
+        <div className="file-explorer-tools">
+          <input aria-label="Search files" value={search} onChange={(event) => { setSearch(event.target.value); setOffset(0); }} placeholder="Search this folder" />
+          <select aria-label="Sort files" value={sort} onChange={(event) => { setSort(event.target.value); setOffset(0); }}><option value="name">Sort by name</option><option value="size">Sort by size</option></select>
+          <small>Folder sizes are calculated on demand.</small>
+        </div>
         {data?.parent && (
           <button type="button" className="file-explorer-up" onClick={() => navigate(data.parent!)}>
             <ChevronLeft size={16} /> Up one folder
@@ -1482,6 +1579,7 @@ function FileExplorer() {
           </div>
         ) : null}
         {!loading && !error && data && !data.entries.length && <div className="empty-state"><Folder size={22} /><b>This folder is empty</b></div>}
+        {!loading && !error && (data?.total || 0) > (data?.limit || 100) && <div className="actions"><Btn disabled={!offset} onClick={() => setOffset(Math.max(0, offset - 100))}>Previous</Btn><small>{offset + 1}–{Math.min(offset + 100, data!.total!)} of {data!.total}</small><Btn disabled={offset + 100 >= data!.total!} onClick={() => setOffset(offset + 100)}>Next</Btn></div>}
       </Panel>
       {editor && (
         <FileEditor
@@ -1520,7 +1618,7 @@ function FileEditor({
     }
   }
   async function deleteFile() {
-    if (!window.confirm(`Delete ${file.path}? This cannot be undone.`)) return;
+    if (!await appConfirm(`Delete ${file.path}? This cannot be undone.`, "Delete file", "Delete", true)) return;
     try {
       setSaving(true);
       await api("file/operation", { action: "delete", source: file.path });
@@ -1973,6 +2071,73 @@ function PasswordForm() {
       </form>
     </Panel>
   );
+}
+function HistoryPanel({ runs, cronRuns, metrics, openLog }: { runs: St["runs"]; cronRuns: St["cronRuns"]; metrics: St["metrics"]; openLog: (run: St["runs"][number]) => void }) {
+  const latest = metrics.at(-1);
+  const [kind, setKind] = useState<"scripts" | "cron">("scripts");
+  const [search, setSearch] = useState("");
+  const [status, setStatus] = useState("all");
+  const [page, setPage] = useState(0);
+  const rows = kind === "scripts" ? runs : cronRuns;
+  const filtered = rows.filter((row) => {
+    const title = kind === "scripts" ? (row as St["runs"][number]).scriptName : (row as St["cronRuns"][number]).label;
+    return title.toLowerCase().includes(search.toLowerCase()) && (status === "all" || row.status === status);
+  });
+  const perPage = 20, pages = Math.max(1, Math.ceil(filtered.length / perPage));
+  const visible = filtered.slice(page * perPage, page * perPage + perPage);
+  const switchKind = (next: "scripts" | "cron") => { setKind(next); setSearch(""); setStatus("all"); setPage(0); };
+  return <>
+    <section className="metrics">
+      <Metric label="CPU history" value={latest ? `${latest.cpu.toFixed(1)}%` : "No samples"} icon={<Gauge />} />
+      <Metric label="RAM history" value={latest ? `${latest.ram.toFixed(1)}%` : "No samples"} icon={<Gauge />} />
+      <Metric label="Samples retained" value={String(metrics.length)} note="Retention is configurable on the server" icon={<Clock3 />} />
+    </section>
+    <Panel title="Execution history" note="Search, filter, and review manual script runs or scheduled cron jobs.">
+      <div className="container-filters" aria-label="History type">
+        <button type="button" className={kind === "scripts" ? "active" : ""} onClick={() => switchKind("scripts")}>Script runs <span>{runs.length}</span></button>
+        <button type="button" className={kind === "cron" ? "active" : ""} onClick={() => switchKind("cron")}>Cron runs <span>{cronRuns.length}</span></button>
+      </div>
+      <div className="actions" style={{ margin: "16px 0" }}>
+        <input aria-label="Search execution history" value={search} onChange={(event) => { setSearch(event.target.value); setPage(0); }} placeholder={kind === "scripts" ? "Search script name or run" : "Search cron schedule"} />
+        <select aria-label="Filter status" value={status} onChange={(event) => { setStatus(event.target.value); setPage(0); }}><option value="all">All statuses</option><option value="success">Success</option><option value="failed">Failed</option><option value="running">Running</option></select>
+        <small>{filtered.length} result{filtered.length === 1 ? "" : "s"}</small>
+      </div>
+      {visible.map((row, index) => kind === "scripts" ? (() => { const run = row as St["runs"][number]; return <div className="schedule-row" key={run.id}><div className="grow"><b>{run.scriptName}</b><small>{new Date(run.startedAt).toLocaleString()} · {run.arguments || "no arguments"} · {run.durationMs === undefined ? "in progress" : `${(run.durationMs / 1000).toFixed(1)}s`}</small></div><span className={`badge ${run.status === "success" ? "up" : run.status === "failed" ? "down" : "root"}`}>{run.status}{run.exitCode !== undefined ? ` (${run.exitCode})` : ""}</span><Btn onClick={() => openLog(run)}>Log</Btn></div>; })() : (() => { const run = row as St["cronRuns"][number]; return <div className="schedule-row" key={`${run.scheduleId}-${run.startedAt}-${index}`}><div className="grow"><b>{run.label}</b><small>Started {new Date(run.startedAt).toLocaleString()}{run.completedAt ? ` · completed ${new Date(run.completedAt).toLocaleString()}` : ""}</small></div><span className={`badge ${run.status === "success" ? "up" : run.status === "failed" ? "down" : "root"}`}>{run.status}{run.exitCode !== undefined ? ` (${run.exitCode})` : ""}</span></div>; })())}
+      {!filtered.length && <div className="empty-state"><Clock3 size={22}/><b>{search || status !== "all" ? "No matching runs" : kind === "scripts" ? "No execution history yet" : "No cron runs recorded yet"}</b><p>{kind === "scripts" ? "Runs started from the dashboard will appear here." : "Save or change an existing schedule to enable tracking."}</p></div>}
+      {filtered.length > perPage && <div className="actions" style={{ marginTop: 16 }}><Btn disabled={page === 0} onClick={() => setPage((value) => value - 1)}>Previous</Btn><small>Page {page + 1} of {pages}</small><Btn disabled={page + 1 >= pages} onClick={() => setPage((value) => value + 1)}>Next</Btn></div>}
+    </Panel>
+  </>;
+}
+function AlertForm({ initial, close, done }: { initial: St["alerts"][number] | null; close: () => void; done: () => void }) {
+  const [error, setError] = useState("");
+  return <Modal title={initial ? "Edit alert" : "New alert"} close={close}><form onSubmit={async (event) => { event.preventDefault(); try { await api("alerts/save", Object.fromEntries(new FormData(event.currentTarget))); done(); } catch (reason) { setError(reason instanceof Error ? reason.message : "Error"); } }}>
+    <input type="hidden" name="id" defaultValue={initial?.id} />
+    <label>Name<input name="name" defaultValue={initial?.name} required maxLength={80} /></label>
+    <label>Metric<select name="metric" defaultValue={initial?.metric || "temperature"}><option value="temperature">CPU temperature (°C)</option><option value="cpu">CPU use (%)</option><option value="ram">RAM use (%)</option><option value="disk">System disk use (%)</option><option value="failedScripts">Failed script runs</option><option value="stoppedContainers">Stopped containers</option></select></label>
+    <label>Trigger at or above<input name="threshold" type="number" min="0" step="0.1" defaultValue={initial?.threshold ?? 80} required /></label>
+    <label>Cooldown (minutes)<input name="cooldownMinutes" type="number" min="1" max="10080" defaultValue={initial?.cooldownMinutes ?? 30} required /></label>
+    <label><input name="enabled" type="checkbox" value="true" defaultChecked={initial?.enabled !== false} /> Enabled</label>
+    {error && <div className="alert">{error}</div>}<Btn className="primary">Save alert</Btn>
+  </form></Modal>;
+}
+function ConfigurationPanel({ refresh }: { refresh: () => Promise<void> }) {
+  const [message, setMessage] = useState(""); const [error, setError] = useState("");
+  return <Panel title="Configuration backup" note="Exports dashboard configuration only. Passwords, SSH credentials and session tokens are excluded.">
+    <div className="actions"><Btn onClick={async () => { const data = await api("config/export"); const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }); const link = document.createElement("a"); link.href = URL.createObjectURL(blob); link.download = "media-dashboard-backup.json"; link.click(); URL.revokeObjectURL(link.href); setMessage("Backup downloaded."); }}>Export configuration</Btn>
+      <label className="button">Restore configuration<input type="file" accept="application/json" hidden onChange={async (event) => { const file = event.target.files?.[0]; if (!file || !await appConfirm("Restore configuration and overwrite scripts, folders, schedules, devices and alerts?", "Restore configuration", "Restore", true)) return; try { await api("config/restore", { payload: await file.text() }); await refresh(); setMessage("Configuration restored."); } catch (reason) { setError(reason instanceof Error ? reason.message : "Restore failed"); } }} /></label></div>
+    {message && <div className="success">{message}</div>}{error && <div className="alert">{error}</div>}
+  </Panel>;
+}
+function StorageManager({ paths, close, done }: { paths: string[]; close: () => void; done: () => Promise<void> }) {
+  const [error, setError] = useState(""); const [adding, setAdding] = useState(false);
+  return <Modal title="Monitored storage" close={close}>
+    <p>Choose the mounted folders whose disk usage should appear on the dashboard. You can track as many paths as needed.</p>
+    <form onSubmit={async (event) => { event.preventDefault(); const form = event.currentTarget; setError(""); try { setAdding(true); const path = String(new FormData(form).get("path") || ""); await api("storage/add", { path }); form.reset(); await done(); } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not add path"); } finally { setAdding(false); } }}>
+      <label>Absolute folder path<input name="path" placeholder="/mnt/media" required spellCheck={false} /></label><Btn className="primary" disabled={adding}>Add storage path</Btn>
+    </form>
+    <div className="storage-path-list">{paths.map((path) => <div className="schedule-row" key={path}><div className="grow"><b>{path}</b><small>Monitored storage path</small></div><Btn className="danger" disabled={paths.length < 2} onClick={async () => { if (!await appConfirm(`Stop monitoring ${path}?`, "Remove storage path", "Remove", true)) return; try { await api("storage/remove", { path }); await done(); } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not remove path"); } }}><Trash2 size={15}/>Remove</Btn></div>)}</div>
+    {error && <div className="alert">{error}</div>}<small>At least one path must remain monitored.</small>
+  </Modal>;
 }
 function AppLoading() {
   return (

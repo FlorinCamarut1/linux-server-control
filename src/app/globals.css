@@ -761,6 +761,21 @@ input:focus {
 .file-explorer-path .button {
   flex: 0 0 auto;
 }
+.file-explorer-tools {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 180px auto;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--line);
+}
+.file-explorer-tools input,
+.file-explorer-tools select {
+  margin: 0;
+}
+.file-explorer-tools small {
+  white-space: nowrap;
+}
 .file-explorer-up {
   display: inline-flex;
   align-items: center;
@@ -1363,6 +1378,14 @@ input:focus {
   .file-explorer-grid {
     padding-left: 12px;
     padding-right: 12px;
+  }
+  .file-explorer-tools {
+    grid-template-columns: 1fr;
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+  .file-explorer-tools small {
+    white-space: normal;
   }
   .file-explorer-up {
     margin-left: 12px;

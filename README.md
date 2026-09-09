@@ -11,7 +11,10 @@ Linux Server Control is a self-hosted dashboard for administering one Linux serv
 - Choose whether each script runs as the SSH user or root
 - Define safe dropdown arguments and file selections for scripts
 - Run scripts and follow their logs live
-- Create, edit, pause, and delete guided cron schedules or one-line custom commands
+- Keep script execution history with status, timing, arguments, and per-run logs
+- Configure cooldown-based health alerts and retain compact system metric history
+- Export and restore dashboard configuration without exporting credentials
+- Create, edit, pause, and delete guided cron schedules or one-line custom commands (root schedules require approved scripts)
 - Browse, edit, and delete files inside explicitly allowed directories
 - Authorize and revoke individual browsers
 - Restrict access to a LAN subnet, with optional Tailscale access

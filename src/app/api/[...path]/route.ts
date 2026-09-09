@@ -6,6 +6,11 @@ import {
   browseScripts,
   browseFiles,
   changeFile,
+  createFileOrFolder,
+  collectCronRuns,
+  addMonitoredPath,
+  removeMonitoredPath,
+  monitoredPaths,
   createCustomScript,
   digest,
   folders,
@@ -27,6 +32,14 @@ import {
   token,
   validCron,
   DATA,
+  alertRules,
+  evaluateAlerts,
+  exportConfiguration,
+  metricSamples,
+  persistSessions,
+  recordMetricSample,
+  restoreConfiguration,
+  scriptRuns,
 } from "@/lib/server";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
@@ -126,7 +139,9 @@ async function handle(
         sessions.set(session, {
           device: "demo",
           expires: Date.now() + 28800000,
+          created: Date.now(),
         });
+        persistSessions();
         const res = NextResponse.json({ ok: true });
         res.cookies.set("session", session, {
           httpOnly: true,
@@ -176,7 +191,9 @@ async function handle(
       sessions.set(session, {
         device: digest(device),
         expires: Date.now() + 28800000,
+        created: Date.now(),
       });
+      persistSessions();
       const res = NextResponse.json({ ok: true });
       res.cookies.set("session", session, {
         httpOnly: true,
@@ -296,6 +313,8 @@ async function handle(
           ],
         });
       const snapshot = await hostSnapshot();
+      const metrics = recordMetricSample(snapshot.stats);
+      const alerts = evaluateAlerts(snapshot);
       return NextResponse.json({
         ...snapshot,
         scripts: scripts(),
@@ -303,10 +322,17 @@ async function handle(
         schedules: schedules(),
         devices,
         host: process.env.SSH_TARGET,
+        runs: scriptRuns(),
+        alerts: alertRules(),
+        metrics,
+        alertState: alerts,
+        cronRuns: collectCronRuns(),
+        monitoredPaths: monitoredPaths(),
       });
     }
     if (route === "logout") {
       sessions.delete(sid);
+      persistSessions();
       return NextResponse.json({ ok: true });
     }
     if (route === "account/password" && body) {
@@ -329,6 +355,7 @@ async function handle(
         password: hash(body.newPassword, salt),
       });
       for (const key of sessions.keys()) if (key !== sid) sessions.delete(key);
+      persistSessions();
       audit("password changed");
       return NextResponse.json({ ok: true });
     }
@@ -347,7 +374,10 @@ async function handle(
     if (route === "script/browse" && body)
       return NextResponse.json(await browseScripts(body.path || ""));
     if (route === "file/browse" && body)
-      return NextResponse.json(await browseFiles(body.path || ""));
+      return NextResponse.json(await browseFiles(body.path || "", {
+        search: body.search || "", sort: body.sort || "name",
+        offset: Number(body.offset || 0), limit: Number(body.limit || 100),
+      }));
     if (route === "file/sizes" && body)
       return NextResponse.json(await folderSizes(body.path || ""));
     if (route === "file/operation" && body) {
@@ -362,6 +392,15 @@ async function handle(
           body.name || "",
         ),
       );
+    }
+    if (route === "file/create" && body) {
+      const kind = body.kind === "folder" ? "folder" : "file";
+      return NextResponse.json(await createFileOrFolder(body.path || "", body.name || "", kind));
+    }
+    if (route === "storage/add" && body)
+      return NextResponse.json({ path: addMonitoredPath(body.path || "") });
+    if (route === "storage/remove" && body) {
+      removeMonitoredPath(body.path || ""); return NextResponse.json({ ok: true });
     }
     if (route === "file/read" && body)
       return NextResponse.json(readEditableFile(body.path || ""));
@@ -394,6 +433,8 @@ async function handle(
         body.runAs === "root" ? "root" : "user";
       if (runAs === "root" && !rootCronStatus().available)
         throw Error("Root cron access has not been enabled on this server");
+      if (runAs === "root" && command)
+        throw Error("Root schedules must use an approved script; custom root commands are disabled");
       const item = {
         id: /^[a-f0-9-]{32,36}$/.test(body.id || "")
           ? body.id
@@ -439,14 +480,14 @@ async function handle(
           const selected = s.runOptions[option];
           if (selected.needsFile && !body.file)
             throw Error("Choose a file before running this option");
-          runScript(s, selected.value, selected.needsFile ? body.file : "");
-        } else runScript(s);
-        return NextResponse.json({ ok: true });
+          return NextResponse.json({ ok: true, run: runScript(s, selected.value, selected.needsFile ? body.file : "") });
+        } else return NextResponse.json({ ok: true, run: runScript(s) });
       }
       if (route === "script/log") {
-        const p = path.join(DATA, s.id + ".log");
-        let output = existsSync(p)
-          ? readFileSync(p, "utf8").slice(-64000)
+        const runRecord = body.runId ? scriptRuns().find((item) => item.id === body.runId && item.scriptId === s.id) : undefined;
+        const p = runRecord?.logPath || path.join(DATA, s.id + ".log");
+        let output = existsSync(/* turbopackIgnore: true */ p)
+          ? readFileSync(/* turbopackIgnore: true */ p, "utf8").slice(-64000)
           : "No logs available.";
         try {
           output +=
@@ -477,6 +518,25 @@ async function handle(
         return NextResponse.json({ ok: true });
       }
     }
+    if (route === "history/runs" && !body)
+      return NextResponse.json({ runs: scriptRuns() });
+    if (route === "history/metrics" && !body)
+      return NextResponse.json({ metrics: metricSamples() });
+    if (route === "alerts/save" && body) {
+      const metric = body.metric as ReturnType<typeof alertRules>[number]["metric"];
+      if (!['temperature','cpu','ram','disk','failedScripts','stoppedContainers'].includes(metric)) throw Error("Invalid alert metric");
+      const threshold = Number(body.threshold), cooldownMinutes = Number(body.cooldownMinutes);
+      if (!Number.isFinite(threshold) || threshold < 0 || !Number.isFinite(cooldownMinutes) || cooldownMinutes < 1 || cooldownMinutes > 10080) throw Error("Invalid alert values");
+      const id = /^[a-f0-9-]{32,36}$/.test(body.id || "") ? body.id : randomBytes(16).toString("hex");
+      const all = alertRules().filter((item) => item.id !== id);
+      all.push({ id, name: (body.name || "Alert").trim().slice(0, 80), metric, threshold, cooldownMinutes, enabled: body.enabled !== "false" });
+      save("alerts", all); audit("alert saved " + id); return NextResponse.json({ ok: true });
+    }
+    if (route === "alerts/delete" && body) {
+      save("alerts", alertRules().filter((item) => item.id !== body.id)); audit("alert deleted " + body.id); return NextResponse.json({ ok: true });
+    }
+    if (route === "config/export" && !body) return NextResponse.json(exportConfiguration());
+    if (route === "config/restore" && body) { restoreConfiguration(body.payload ? JSON.parse(body.payload) : body); return NextResponse.json({ ok: true }); }
     if (route === "device/revoke" && body) {
       delete devices[body.id];
       save("devices", devices);
