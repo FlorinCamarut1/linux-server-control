@@ -1,7 +1,5 @@
 :8443 {
   tls /certs/cert.pem /certs/key.pem
-  @outside_lan not remote_ip {$LAN_CIDR}
-  respond @outside_lan "Forbidden" 403
   reverse_proxy dashboard:3000
   header {
     X-Content-Type-Options nosniff

@@ -172,7 +172,7 @@ chmod 600 data/tailscale.key
 docker compose up -d --force-recreate proxy
 ```
 
-Open `https://your-server.your-tailnet.ts.net:8443`. The proxy accepts this endpoint only from Tailscale's `100.64.0.0/10` range. Do not browse to the raw Tailscale IP when using the hostname certificate.
+Open `https://your-server.your-tailnet.ts.net:8443`. The proxy is bound to the server's Tailscale IP, so it is reachable through the tailnet only. Do not browse to the raw Tailscale IP when using the hostname certificate.
 
 Tailscale certificates expire and must be renewed. Automate `tailscale cert --min-validity 720h` with a root systemd timer or cron job and restart the proxy after replacing the files.
 
