@@ -62,6 +62,26 @@ Scripts must be registered before they can run. Script records may be grouped, a
 
 Root execution and root cron management require the controlled helpers in `scripts/`. Install them only after reviewing their allowed paths and sudoers configuration.
 
+## Root security model
+
+The dashboard connects over SSH as an unprivileged account. It does not receive general passwordless `sudo`; the sudoers entries allow only `/usr/local/sbin/media-dashboard-root-run` and `/usr/local/sbin/media-dashboard-root-cron` with their supported operations.
+
+For an immediate root script run, the helper requires an absolute `.sh` path, rejects a requested symlink, resolves the real path, verifies that the target is a regular file, and permits it only when it is below a root listed in `/etc/media-dashboard/root-script-paths`. Application commands and script arguments are passed as argument arrays instead of being interpolated into an interactive shell command.
+
+The approved root-script directories form a security boundary. They should be owned by `root` and must not be writable by the dashboard SSH account. If that account can edit an approved script, an authenticated dashboard user can change the script and execute arbitrary code as root. A suitable baseline is:
+
+```bash
+sudo chown -R root:root /srv/dashboard-root-scripts
+sudo chmod 755 /srv/dashboard-root-scripts
+sudo chmod 755 /srv/dashboard-root-scripts/*.sh
+```
+
+Adjust the example path to the configured directory and confirm permissions on every parent directory. Do not include an editable Files root inside a writable root-script directory.
+
+Root cron access has a wider trust boundary. The helper can replace root's crontab, and the current schedule form accepts a one-line custom command. Consequently, a fully authenticated dashboard user with root scheduling enabled can obtain arbitrary root execution. Treat access to this dashboard as administrative access, keep it behind a private LAN or VPN, and enable root cron only where this behavior is intended.
+
+For a stricter deployment, disable custom root cron commands and allow root schedules to reference only preapproved, root-owned scripts. This is the highest-priority root security hardening item.
+
 ## Schedules and logs
 
 Scheduled jobs use guided cron forms and managed comments so the dashboard changes only its own entries. Container and script log viewers can refresh automatically while live mode is enabled.
