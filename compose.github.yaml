@@ -1,0 +1,60 @@
+# Standalone deployment: Docker builds the dashboard directly from GitHub.
+# Download this file as compose.yaml; see README.md for the small setup steps.
+services:
+  dashboard:
+    build:
+      context: https://github.com/FlorinCamarut1/linux-server-control.git#main
+    restart: unless-stopped
+    environment:
+      SSH_TARGET: ${SSH_TARGET}
+      SCRIPT_ROOT: ${SCRIPT_ROOT}
+      ALLOWED_PATHS: ${ALLOWED_PATHS:-${SCRIPT_ROOT}}
+      MONITORED_PATHS: ${MONITORED_PATHS:-/mnt/storage}
+      REMOTE_LOGS: ${REMOTE_LOGS}
+      LAN_CIDR: ${LAN_CIDR}
+      DASHBOARD_USER: ${DASHBOARD_USER:-admin}
+      DATA_DIR: /app/data
+    volumes:
+      - ./data:/app/data
+      - ./ssh:/run/ssh:ro
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /app/.next/cache
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+  proxy:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    depends_on: [dashboard]
+    ports:
+      - "${LAN_IP}:8443:8443"
+    configs:
+      - source: dashboard_caddyfile
+        target: /etc/caddy/Caddyfile
+    volumes:
+      - ./data:/certs:ro
+    read_only: true
+    tmpfs: [/data, /config]
+    security_opt: [no-new-privileges:true]
+
+configs:
+  dashboard_caddyfile:
+    content: |
+      :8443 {
+        tls /certs/cert.pem /certs/key.pem
+        reverse_proxy dashboard:3000
+        header {
+          X-Content-Type-Options nosniff
+          X-Frame-Options DENY
+          Referrer-Policy no-referrer
+          Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+        }
+      }

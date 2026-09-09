@@ -33,6 +33,56 @@ cp .env.example .env
 
 Edit `.env`, then follow the key and certificate setup in the installation guide.
 
+## Install without cloning Git
+
+If Docker is already installed on the server, this is the shortest supported
+deployment. Docker will fetch the application source from GitHub at build time;
+the local directory contains only your configuration, SSH material, and
+persistent dashboard data.
+
+```bash
+mkdir -p ~/linux-server-control && cd ~/linux-server-control
+curl -fsSLo compose.yaml https://raw.githubusercontent.com/FlorinCamarut1/linux-server-control/main/compose.github.yaml
+curl -fsSLo .env https://raw.githubusercontent.com/FlorinCamarut1/linux-server-control/main/.env.example
+mkdir -p data ssh
+chmod 700 data ssh
+nano .env
+```
+
+Set `LAN_IP`, `LAN_CIDR`, `SSH_TARGET`, `SCRIPT_ROOT`, `ALLOWED_PATHS`, and
+`REMOTE_LOGS` in `.env`. These values deliberately require an administrator's
+choice: they define which host is controlled and which files the dashboard may
+change.
+
+Create the dedicated SSH key and verify the host fingerprint before trusting it:
+
+```bash
+ssh-keygen -t ed25519 -N '' -C linux-server-control -f ssh/id_ed25519
+cat ssh/id_ed25519.pub >> ~/.ssh/authorized_keys
+# Replace with the exact hostname or IP used in SSH_TARGET.
+ssh-keyscan -H 192.168.1.100 > ssh/known_hosts
+chmod 600 ssh/id_ed25519
+```
+
+Create the LAN certificate, replacing the IP with the value from `.env`:
+
+```bash
+openssl req -x509 -newkey rsa:3072 -nodes -keyout data/key.pem -out data/cert.pem -days 365 -subj '/CN=192.168.1.100' -addext 'subjectAltName=IP:192.168.1.100'
+chmod 600 data/key.pem
+sudo chown -R 1000:1000 data ssh
+```
+
+Finally, choose a password and start it. Future upgrades are one command.
+
+```bash
+DASHBOARD_PASSWORD='use-a-long-unique-password' docker compose run --rm dashboard node scripts/setup.mjs
+docker compose up -d --build
+# Upgrade later: docker compose build --pull dashboard && docker compose up -d
+```
+
+Open `https://LAN_IP:8443`. The first browser still needs an enrollment code;
+generate it with `docker compose run --rm dashboard node scripts/enroll.mjs`.
+
 ## Security model
 
 - The dashboard service is not published directly; Caddy is the only exposed container.
