@@ -2180,6 +2180,7 @@ function Login({
         <form
           onSubmit={async (e) => {
             e.preventDefault();
+            setMsg("");
             try {
               await api(
                 "login",
