@@ -31,86 +31,79 @@ All screenshots below use anonymized demonstration data only.
 
 ![Execution history dashboard with generic demo data](docs/screenshots/history-demo.png)
 
-## Quick start
+## Install
 
-The default installation is LAN-only. It uses a dedicated SSH key so the dashboard container can execute approved operations on the host.
+This quick guide assumes the dashboard will control the same Linux server on
+which Docker is running. Docker Engine, Docker Compose, `curl`, `ssh-keygen`,
+`ssh-keyscan`, and `openssl` must be installed.
 
-See **[INSTALL.md](INSTALL.md)** for the complete installation tutorial, optional root cron support, Tailscale HTTPS, upgrades, and troubleshooting.
-
-```bash
-git clone https://github.com/Florincamarut1/linux-server-control.git
-cd linux-server-control
-cp .env.example .env
-```
-
-Edit `.env`, then follow the key and certificate setup in the installation guide.
-
-## Quick install with Docker Compose
-
-If Docker is already installed, Compose downloads a pre-built `amd64` or `arm64`
-image from GHCR. The local directory contains only configuration, SSH material,
-and persistent dashboard data.
-
-The standalone Compose file uses the published image directly:
-
-```yaml
-services:
-  dashboard:
-    image: ghcr.io/florincamarut1/linux-server-control:latest
-    pull_policy: always
-```
-
-Download the complete Compose file and example configuration:
+### 1. Download the two configuration files
 
 ```bash
-mkdir -p ~/linux-server-control && cd ~/linux-server-control
+mkdir -p ~/linux-server-control/{data,ssh}
+cd ~/linux-server-control
 curl -fsSLo compose.yaml https://raw.githubusercontent.com/FlorinCamarut1/linux-server-control/main/compose.github.yaml
 curl -fsSLo .env https://raw.githubusercontent.com/FlorinCamarut1/linux-server-control/main/.env.example
-mkdir -p data ssh
-chmod 700 data ssh
+```
+
+The Compose file pulls the ready-made image:
+
+```yaml
+image: ghcr.io/florincamarut1/linux-server-control:latest
+```
+
+### 2. Enter your server details
+
+```bash
 nano .env
 ```
 
-Set `LAN_IP`, `LAN_CIDR`, `SSH_TARGET`, `SCRIPT_ROOT`, `ALLOWED_PATHS`, and
-`REMOTE_LOGS` in `.env`. These values deliberately require an administrator's
-choice: they define which host is controlled and which files the dashboard may
-change.
+Replace the example user, IP address, LAN subnet, and folders. The SSH user must
+be able to run Docker commands. Keep the dashboard on a trusted LAN or VPN.
 
-Create the dedicated SSH key and verify the host fingerprint before trusting it:
+### 3. Create the SSH key
+
+Replace `192.168.1.100` below with the same address used in `SSH_TARGET`:
 
 ```bash
 ssh-keygen -t ed25519 -N '' -C linux-server-control -f ssh/id_ed25519
 cat ssh/id_ed25519.pub >> ~/.ssh/authorized_keys
-# Replace with the exact hostname or IP used in SSH_TARGET.
 ssh-keyscan -H 192.168.1.100 > ssh/known_hosts
-chmod 600 ssh/id_ed25519
+chmod 600 ssh/id_ed25519 ssh/known_hosts
 ```
 
-Create the LAN certificate, replacing the IP with the value from `.env`:
+### 4. Create the HTTPS certificate
+
+Replace the IP in both places:
 
 ```bash
-openssl req -x509 -newkey rsa:3072 -nodes -keyout data/key.pem -out data/cert.pem -days 365 -subj '/CN=192.168.1.100' -addext 'subjectAltName=IP:192.168.1.100'
+openssl req -x509 -newkey rsa:3072 -nodes -days 365 \
+  -keyout data/key.pem -out data/cert.pem \
+  -subj '/CN=192.168.1.100' -addext 'subjectAltName=IP:192.168.1.100'
 chmod 600 data/key.pem
 sudo chown -R 1000:1000 data ssh
 ```
 
-Start the dashboard, then create the administrator account in the browser.
-Future upgrades are one command.
+### 5. Start it
 
 ```bash
 docker compose up -d
-# Upgrade later:
-docker compose pull && docker compose up -d
+docker compose logs dashboard
 ```
 
-Open `https://LAN_IP:8443`. On a fresh installation, the browser displays the
-account setup screen. Get its one-time token with
-`docker compose logs dashboard`; completing setup authorizes that first browser
-automatically. Additional browsers require an enrollment code generated from
-the Devices page.
+Open `https://YOUR_SERVER_IP:8443`. Your browser will warn about the local
+self-signed certificate. Use the setup token shown in the logs to create the
+administrator account. The first browser is authorized automatically.
 
-Set `VERSION=1` in `.env` after the first stable release if you prefer compatible
-updates within major version 1 instead of following `latest`.
+To update later:
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+For remote servers, root scripts, Tailscale, backups, and troubleshooting, see
+the **[complete installation guide](INSTALL.md)**.
 
 ## Security model
 
