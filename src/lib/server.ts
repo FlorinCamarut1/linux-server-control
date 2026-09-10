@@ -16,18 +16,55 @@ import {
   openSync,
 } from "node:fs";
 import path from "node:path";
-export const DATA = process.env.DATA_DIR || "/app/data",
-  TARGET = process.env.SSH_TARGET || "localhost",
-  ROOT = process.env.SCRIPT_ROOT || "/home",
-  REMOTE = process.env.REMOTE_LOGS || "/tmp/media-dashboard";
-export const ALLOWED_ROOTS = [
-  ...new Set(
-    (process.env.ALLOWED_PATHS || ROOT)
-      .split(",")
-      .map((item) => item.trim().replace(/\/$/, ""))
-      .filter((item) => item.startsWith("/")),
-  ),
-];
+export const DATA = process.env.DATA_DIR || "/app/data";
+export type ServerSettings = {
+  sshTarget: string;
+  scriptRoot: string;
+  allowedPaths: string[];
+  remoteLogs: string;
+  metricsRetentionDays: number;
+};
+const defaultServerSettings = (): ServerSettings => {
+  const scriptRoot = process.env.SCRIPT_ROOT || "/home";
+  return {
+    sshTarget: process.env.SSH_TARGET || "",
+    scriptRoot,
+    allowedPaths: [...new Set((process.env.ALLOWED_PATHS || scriptRoot).split(",").map((item) => item.trim().replace(/\/$/, "")).filter((item) => item.startsWith("/")))],
+    remoteLogs: process.env.REMOTE_LOGS || "/tmp/media-dashboard",
+    metricsRetentionDays: Math.max(1, Math.min(365, Number(process.env.METRICS_RETENTION_DAYS || 30) || 30)),
+  };
+};
+function cleanPath(value: string) {
+  const cleaned = value.trim().replace(/\/$/, "");
+  if (!cleaned.startsWith("/") || /[\r\n\0]/.test(cleaned)) throw Error("Use absolute paths only");
+  return cleaned;
+}
+export function serverSettings(): ServerSettings {
+  const saved = read<Partial<ServerSettings>>("server-settings", {});
+  const defaults = defaultServerSettings();
+  return {
+    sshTarget: typeof saved.sshTarget === "string" ? saved.sshTarget : defaults.sshTarget,
+    scriptRoot: typeof saved.scriptRoot === "string" ? saved.scriptRoot : defaults.scriptRoot,
+    allowedPaths: Array.isArray(saved.allowedPaths) && saved.allowedPaths.length ? saved.allowedPaths : defaults.allowedPaths,
+    remoteLogs: typeof saved.remoteLogs === "string" ? saved.remoteLogs : defaults.remoteLogs,
+    metricsRetentionDays: typeof saved.metricsRetentionDays === "number" ? saved.metricsRetentionDays : defaults.metricsRetentionDays,
+  };
+}
+export function updateServerSettings(input: Partial<ServerSettings>) {
+  const current = serverSettings();
+  const sshTarget = (input.sshTarget ?? current.sshTarget).trim();
+  if (sshTarget && !/^[a-zA-Z0-9_.-]+@[a-zA-Z0-9_.:-]+$/.test(sshTarget))
+    throw Error("SSH target must look like user@host");
+  const scriptRoot = cleanPath(input.scriptRoot ?? current.scriptRoot);
+  const allowedPaths = (input.allowedPaths ?? current.allowedPaths).map(cleanPath);
+  if (!allowedPaths.length) throw Error("Keep at least one allowed path");
+  const retention = Number(input.metricsRetentionDays ?? current.metricsRetentionDays);
+  if (!Number.isInteger(retention) || retention < 1 || retention > 365) throw Error("Metric retention must be between 1 and 365 days");
+  const settings = { sshTarget, scriptRoot, allowedPaths: [...new Set(allowedPaths)], remoteLogs: cleanPath(input.remoteLogs ?? current.remoteLogs), metricsRetentionDays: retention };
+  save("server-settings", settings);
+  return settings;
+}
+export function allowedRoots() { return serverSettings().allowedPaths; }
 mkdirSync(DATA, { recursive: true });
 export type Script = {
   id: string;
@@ -111,7 +148,7 @@ export function removeMonitoredPath(input: string) {
 }
 export function cronRuns() { return read<CronRun[]>("cron-runs", []); }
 export function recordMetricSample(stats: SystemStats) {
-  const retentionDays = Math.max(1, Math.min(365, Number(process.env.METRICS_RETENTION_DAYS || 30)) || 30);
+  const retentionDays = serverSettings().metricsRetentionDays;
   const cutoff = Date.now() - retentionDays * 86400000;
   const sample: MetricSample = { at: Date.now(), cpu: stats.cpuUsagePercent, ram: stats.memoryTotalBytes ? (stats.memoryUsedBytes / stats.memoryTotalBytes) * 100 : 0, temperature: stats.temperatureC, disk: stats.diskUsedPercent };
   const all = [...metricSamples().filter((item) => item.at > cutoff), sample].slice(-10000);
@@ -140,16 +177,18 @@ export function evaluateAlerts(snapshot: { stats: SystemStats; containers: { Sta
   return { values, triggered };
 }
 export function exportConfiguration() {
-  return { version: 1, exportedAt: new Date().toISOString(), scripts: scripts(), folders: folders(), schedules: schedules(), devices: read("devices", {}), alerts: alertRules(), settings: { metricsRetentionDays: process.env.METRICS_RETENTION_DAYS || "30" } };
+  return { version: 1, exportedAt: new Date().toISOString(), scripts: scripts(), folders: folders(), schedules: schedules(), devices: read("devices", {}), alerts: alertRules(), serverSettings: serverSettings() };
 }
 export function restoreConfiguration(payload: Record<string, unknown>) {
   if (payload.version !== 1 || !Array.isArray(payload.scripts) || !Array.isArray(payload.schedules) || !Array.isArray(payload.folders) || !Array.isArray(payload.alerts)) throw Error("Invalid configuration backup");
   save("scripts", payload.scripts); save("schedules", payload.schedules); save("folders", payload.folders); save("alerts", payload.alerts);
   if (payload.devices && typeof payload.devices === "object") save("devices", payload.devices);
+  if (payload.serverSettings && typeof payload.serverSettings === "object") updateServerSettings(payload.serverSettings as Partial<ServerSettings>);
   syncCron(payload.schedules as Schedule[]); audit("configuration restored");
 }
-const ssh = (args: string[]): [string, string[]] =>
-  process.env.SSH_TARGET
+const ssh = (args: string[]): [string, string[]] => {
+  const target = serverSettings().sshTarget;
+  return target
     ? [
         "ssh",
         [
@@ -163,11 +202,18 @@ const ssh = (args: string[]): [string, string[]] =>
           "/run/ssh/id_ed25519",
           "-o",
           "UserKnownHostsFile=/run/ssh/known_hosts",
-          TARGET,
+          target,
           shell(args),
         ],
       ]
     : [args[0], args.slice(1)];
+};
+export async function testServerConnection() {
+  const target = serverSettings().sshTarget;
+  if (!target) return { host: "local", mode: "local" as const };
+  const host = (await runAsync(["hostname"], 12000)).trim();
+  return { host, mode: "ssh" as const, target };
+}
 export function shell(args: string[]) {
   return args.map((x) => "'" + x.replaceAll("'", "'\\''") + "'").join(" ");
 }
@@ -377,7 +423,8 @@ export function validCron(x: string) {
     throw Error("Invalid cron expression");
 }
 export function syncCron(items: Schedule[], extraUsers: CronUser[] = []) {
-  run(["mkdir", "-p", REMOTE]);
+  const remote = serverSettings().remoteLogs;
+  run(["mkdir", "-p", remote]);
   const available = scripts();
   const users = new Set<CronUser>([
     ...items.map((item) => item.runAs || "user"),
@@ -396,7 +443,7 @@ export function syncCron(items: Schedule[], extraUsers: CronUser[] = []) {
       if (schedule.enabled && (script || schedule.command))
         // The markers make scheduled work observable without granting cron any additional privileges.
         lines.push(
-          `${schedule.expression} ( printf 'MEDIA_DASHBOARD_START ${schedule.id} %s\\n' "$(date -Is)"; ${schedule.command ? schedule.command : `/bin/bash ${shell([script!.path])}`} ; code=$?; printf 'MEDIA_DASHBOARD_END ${schedule.id} %s %s\\n' "$(date -Is)" "$code"; exit "$code" ) >> ${shell([REMOTE + "/schedules.log"])} 2>&1 # media-dashboard:${schedule.id}`,
+          `${schedule.expression} ( printf 'MEDIA_DASHBOARD_START ${schedule.id} %s\\n' "$(date -Is)"; ${schedule.command ? schedule.command : `/bin/bash ${shell([script!.path])}`} ; code=$?; printf 'MEDIA_DASHBOARD_END ${schedule.id} %s %s\\n' "$(date -Is)" "$code"; exit "$code" ) >> ${shell([remote + "/schedules.log"])} 2>&1 # media-dashboard:${schedule.id}`,
         );
     }
     const data = lines.join("\n") + "\n";
@@ -407,7 +454,7 @@ export function syncCron(items: Schedule[], extraUsers: CronUser[] = []) {
 }
 export function collectCronRuns() {
   let output = "";
-  try { output = run(["tail", "-n", "4000", path.posix.join(REMOTE, "schedules.log")]); } catch { return cronRuns(); }
+  try { output = run(["tail", "-n", "4000", path.posix.join(serverSettings().remoteLogs, "schedules.log")]); } catch { return cronRuns(); }
   const active = new Map<string, CronRun>(); const parsed: CronRun[] = [];
   for (const line of output.split("\n")) {
     const start = /^MEDIA_DASHBOARD_START\s+(\S+)\s+(.+)$/.exec(line);
@@ -464,12 +511,12 @@ function parseArguments(value: string) {
   return args;
 }
 function isAllowedPath(value: string) {
-  return ALLOWED_ROOTS.some((root) => value === root || value.startsWith(root + "/"));
+  return allowedRoots().some((root) => value === root || value.startsWith(root + "/"));
 }
 function resolveAllowedDirectory(requested: string) {
   const directory = requested
     ? run(["realpath", "-e", requested]).trim()
-    : ALLOWED_ROOTS[0];
+    : allowedRoots()[0];
   if (!directory || !isAllowedPath(directory))
     throw Error("This folder is outside the allowed locations");
   run(["test", "-d", directory]);
@@ -684,7 +731,7 @@ async function remoteFileOperation(request: Record<string, unknown>) {
       try { resolve(JSON.parse(output)); } catch { reject(Error("Invalid file response")); }
     });
     child.stdin.on("error", () => {});
-    child.stdin.end(JSON.stringify({ ...request, roots: ALLOWED_ROOTS }));
+    child.stdin.end(JSON.stringify({ ...request, roots: allowedRoots() }));
   });
 }
 export function browseScripts(requested = "") {

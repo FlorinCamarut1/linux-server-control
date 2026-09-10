@@ -40,6 +40,9 @@ import {
   recordMetricSample,
   restoreConfiguration,
   scriptRuns,
+  serverSettings,
+  testServerConnection,
+  updateServerSettings,
 } from "@/lib/server";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
@@ -131,7 +134,7 @@ async function handle(
           console.log(`\nInitial setup token: ${code}\n`);
         }
       }
-      return NextResponse.json({ configured: Boolean(config.password) });
+      return NextResponse.json({ configured: Boolean(config.password), server: serverSettings() });
     }
     if (route === "setup" && body) {
       const existing = read<Record<string, string>>("config", {});
@@ -148,6 +151,19 @@ async function handle(
       if (body.password !== body.confirmPassword)
         return fail("The passwords do not match.");
 
+      const previousServerSettings = serverSettings();
+      try {
+        updateServerSettings({
+          sshTarget: body.sshTarget || "",
+          scriptRoot: body.scriptRoot || "/home",
+          allowedPaths: (body.allowedPaths || body.scriptRoot || "/home").split(","),
+          remoteLogs: body.remoteLogs || "/tmp/media-dashboard",
+        });
+        await testServerConnection();
+      } catch (error) {
+        updateServerSettings(previousServerSettings);
+        return fail(`Server connection could not be verified: ${error instanceof Error ? error.message : "unknown error"}`, 400);
+      }
       const salt = randomBytes(16).toString("hex");
       save("config", { username, salt, password: hash(body.password, salt) });
       save("setup-bootstrap", {});
@@ -367,7 +383,12 @@ async function handle(
             },
           ],
         });
-      const snapshot = await hostSnapshot();
+      let snapshot;
+      try {
+        snapshot = await hostSnapshot();
+      } catch (error) {
+        return NextResponse.json({ error: "Server unavailable. Check the SSH connection in Settings and reconnect.", code: "HOST_UNAVAILABLE" }, { status: 503 });
+      }
       const metrics = recordMetricSample(snapshot.stats);
       const alerts = evaluateAlerts(snapshot);
       return NextResponse.json({
@@ -376,7 +397,7 @@ async function handle(
         folders: folders(),
         schedules: schedules(),
         devices,
-        host: process.env.SSH_TARGET,
+        host: serverSettings().sshTarget || "local server",
         runs: scriptRuns(),
         alerts: alertRules(),
         metrics,
@@ -413,6 +434,26 @@ async function handle(
       persistSessions();
       audit("password changed");
       return NextResponse.json({ ok: true });
+    }
+    if (route === "settings/server" && !body)
+      return NextResponse.json(serverSettings());
+    if (route === "settings/server" && body) {
+      const previous = serverSettings();
+      try {
+        const settings = updateServerSettings({
+          sshTarget: body.sshTarget,
+          scriptRoot: body.scriptRoot,
+          allowedPaths: (body.allowedPaths || "").split(",").filter(Boolean),
+          remoteLogs: body.remoteLogs,
+          metricsRetentionDays: Number(body.metricsRetentionDays),
+        });
+        const connection = await testServerConnection();
+        audit("server settings updated");
+        return NextResponse.json({ settings, connection });
+      } catch (error) {
+        updateServerSettings(previous);
+        throw error;
+      }
     }
     if (route === "container" && body) {
       if (
@@ -551,7 +592,7 @@ async function handle(
               "tail",
               "-c",
               "64000",
-              process.env.REMOTE_LOGS + "/" + s.id + ".log",
+              serverSettings().remoteLogs + "/" + s.id + ".log",
             ]);
         } catch {}
         return NextResponse.json({ output });

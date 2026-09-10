@@ -8,7 +8,8 @@ The application uses Next.js with TypeScript, the App Router, Docker Compose, an
 
 ## Main files
 
-- `src/app/page.tsx` contains the client dashboard UI.
+- `src/app/page.tsx` contains the client dashboard UI and view composition.
+- `src/lib/client-api.ts` contains the client API helper and structured API errors.
 - `src/app/globals.css` contains the responsive dashboard styles.
 - `src/app/api/[...path]/route.ts` implements authenticated API routes.
 - `src/lib/server.ts` implements SSH, Docker, file, script, cron, and system-statistics helpers.
@@ -42,12 +43,14 @@ For a no-clone deployment, download `compose.github.yaml` as `compose.yaml`, cop
 
 An empty `DATA_DIR` no longer requires `scripts/setup.mjs`. The client checks `GET /api/setup/status`; when no password configuration exists, the API generates a one-time bootstrap token in `setup-bootstrap.json` and prints it to the dashboard container logs. The browser then displays the setup form.
 
-`POST /api/setup` requires that token, a valid username, and matching passwords of at least 12 characters. On success it:
+`POST /api/setup` requires that token, a valid username, and matching passwords of at least 12 characters. The setup page also confirms the SSH target before completing; it uses the mounted private key and `known_hosts` file, never stores SSH credentials in dashboard data. On success it:
 
 - stores the scrypt password hash and salt in `config.json`;
 - consumes the bootstrap token;
 - registers the current browser as the first authorized device;
 - creates the initial session and secure cookies.
+
+The initial `.env` remains the portable installation default. After setup, **Settings → Server connection** can update the SSH target, script root, allowed paths, and remote log folder in `server-settings.json`, then verifies the connection with `hostname`. These values are non-secret and are included in a dashboard-settings export; SSH keys and fingerprints remain external mounts.
 
 After `config.json` contains a password, the setup endpoint refuses further initialization attempts. Additional browsers use the existing time-limited enrollment flow. `scripts/setup.mjs` remains available for legacy or non-browser provisioning but is not part of the normal installation path.
 
@@ -64,11 +67,11 @@ After `config.json` contains a password, the setup endpoint refuses further init
 - Five failed sign-ins from one source address result in a temporary block.
 - Deploy behind a private LAN, VPN, or equivalent access boundary; do not expose the dashboard directly to the public internet.
 
-## System statistics
+## Overview and system statistics
 
-The Containers page refreshes every 15 seconds and shows CPU temperature, current CPU utilization, RAM use, system-disk capacity, configured storage mounts, uptime, and container counts.
+The Overview page is the default landing screen: it summarizes running/stopped containers, CPU/RAM/disk health, and the latest failed script or scheduled run with a direct log action. The Containers page refreshes every 15 seconds and shows CPU temperature, current CPU utilization, RAM use, system-disk capacity, configured storage mounts, uptime, and container counts.
 
-`MONITORED_PATHS` provides the initial comma-separated list of filesystem paths. After first startup, **Manage storage paths** in the Containers page persists additions and removals in `DATA_DIR`, without an `.env` edit. The cards are paginated four at a time. For example:
+`MONITORED_PATHS` provides the initial comma-separated list of filesystem paths. After first startup, **Settings → Storage monitoring** (also available on Containers) persists additions and removals in `DATA_DIR`, without an `.env` edit. The cards are paginated four at a time. Metric retention can likewise be changed in **Settings → Server connection**; the `.env` value is the initial default. For example:
 
 ```env
 MONITORED_PATHS=/srv/media,/srv/backups
@@ -86,7 +89,7 @@ The Containers page lists active and stopped containers from `docker ps -a`. It 
 
 The Files page supports an absolute-path bar, list and grid views, search, name/size sorting, pagination, folder-size display, text-file editing up to 512 KB, and create, copy, move, rename, and delete actions. Folder sizes are fetched asynchronously and size sorting is applied after that scan completes. File and folder actions remain server-side validated against `ALLOWED_PATHS`.
 
-Scripts must be registered before they can run. Script records may be grouped, assigned run options, and scheduled. Deleting a script removes its dashboard record and managed schedules but does not delete the script file.
+Scripts must be registered before they can run. Script records may be grouped, assigned run options, and scheduled; each script row shows whether it is scheduled and its latest run status, and opens its schedule form directly. Deleting a script removes its dashboard record and managed schedules but does not delete the script file.
 
 Root execution and root cron management require the controlled helpers in `scripts/`. Install them only after reviewing their allowed paths and sudoers configuration.
 
@@ -135,6 +138,7 @@ Scheduled jobs use guided cron forms and managed comments so the dashboard chang
 - Alerts are evaluated during dashboard snapshot refreshes and written to the audit log. They do not yet send email, push, or chat notifications.
 - Metric history currently appears as latest-value cards and counts; compact time-series charts have not been added yet.
 - The automated tests cover snapshot concurrency and failure recovery. Authentication, file operations, cron synchronization, and responsive UI flows still need integration coverage.
+- The dashboard distinguishes a lost SSH connection from a login failure and displays a reconnect screen. Settings can be edited after connectivity returns; the reconnect screen intentionally avoids presenting a configuration form while the server cannot be verified.
 
 ## Recommended next work
 

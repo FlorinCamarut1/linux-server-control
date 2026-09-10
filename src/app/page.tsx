@@ -1,5 +1,6 @@
 "use client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ApiError, api } from "@/lib/client-api";
 import {
   Box,
   CalendarPlus,
@@ -102,24 +103,6 @@ type FileBrowserData = {
   roots: string[];
   entries: { name: string; path: string; type: "directory" | "file"; size: number | null }[];
 };
-async function api(path: string, body?: unknown, silent = false) {
-  if (!silent && typeof window !== "undefined")
-    window.dispatchEvent(new Event("media-control-request-start"));
-  try {
-    const r = await fetch(`/api/${path}`, {
-      method: body ? "POST" : "GET",
-      headers: body ? { "content-type": "application/json" } : {},
-      body: body ? JSON.stringify(body) : undefined,
-      cache: "no-store",
-    });
-    const d = await r.json();
-    if (!r.ok) throw Error(d.error || "Request failed");
-    return d;
-  } finally {
-    if (!silent && typeof window !== "undefined")
-      window.dispatchEvent(new Event("media-control-request-end"));
-  }
-}
 type DialogRequest = {
   kind: "confirm" | "prompt";
   title: string;
@@ -151,7 +134,7 @@ export default function Home() {
   const [state, setState] = useState<St | null>(null),
     [err, setErr] = useState(""),
     [busy, setBusy] = useState(""),
-    [tab, setTab] = useState("containers"),
+    [tab, setTab] = useState("overview"),
     [containerFilter, setContainerFilter] = useState<
       "all" | "running" | "stopped"
     >("all"),
@@ -187,8 +170,8 @@ export default function Home() {
       setState(await api("state", undefined, silent));
       setErr("");
     } catch (e) {
-      setState(null);
       setErr(e instanceof Error ? e.message : "Error");
+      if (!(e instanceof ApiError) || e.code !== "HOST_UNAVAILABLE") setState(null);
       try {
         const setup = await api("setup/status", undefined, true);
         setNeedsSetup(!setup.configured);
@@ -273,17 +256,19 @@ export default function Home() {
   if (initializing) return <LoadingScreen />;
   if (needsSetup)
     return <Setup done={() => { setNeedsSetup(false); void refresh(); }} loading={pendingRequests > 0} />;
+  if (!state && err.includes("Server unavailable"))
+    return <ConnectionUnavailable error={err} retry={() => void refresh()} loading={pendingRequests > 0} />;
   if (!state)
     return <Login error={err} done={refresh} loading={pendingRequests > 0} />;
   const nav = [
+    ["overview", LayoutGrid, "Overview"],
     ["containers", Container, "Containers"],
     ["scripts", FileTerminal, "Scripts"],
     ["files", FolderOpen, "Files"],
     ["cron", Clock3, "Schedules"],
     ["history", Clock3, "History"],
     ["alerts", Thermometer, "Alerts"],
-    ["devices", Box, "Devices"],
-    ["account", KeyRound, "Account"],
+    ["settings", KeyRound, "Settings"],
   ] as const;
   return (
     <div className="shell">
@@ -321,13 +306,13 @@ export default function Home() {
             <h1>
               {
                 {
+                  overview: "Overview",
                   containers: "Containers",
                   scripts: "Scripts",
                   cron: "Schedules",
                   history: "History",
                   alerts: "Alerts",
-                  devices: "Devices",
-                  account: "Account",
+                  settings: "Settings",
                 }[tab]
               }
             </h1>
@@ -355,6 +340,7 @@ export default function Home() {
             <button onClick={() => setErr("")}>×</button>
           </div>
         )}
+        {tab === "overview" && <Overview state={state} active={active} stopped={stopped} openLogs={openLogs} />}
         {tab === "containers" && (
           <>
             <section className="metrics">
@@ -488,6 +474,7 @@ export default function Home() {
                       <div className="grow">
                         <b>{s.name}</b>
                         <small>{s.path}</small>
+                        {(() => { const schedule = state.schedules.find((item) => item.scriptId === s.id); const lastRun = state.runs.find((item) => item.scriptId === s.id); return <small>{schedule ? `${schedule.enabled ? "Scheduled" : "Schedule paused"}: ${schedule.expression}` : "Not scheduled"}{lastRun ? ` · last run ${lastRun.status}` : " · never run"}</small>; })()}
                         {s.runAs === "root" && <span className="badge root">root</span>}
                       </div>
                       <div className="actions">
@@ -507,6 +494,7 @@ export default function Home() {
                         >
                           Logs
                         </Btn>
+                        <Btn onClick={() => { const schedule = state.schedules.find((item) => item.scriptId === s.id); setScheduleEditor(schedule || { id: "", scriptId: s.id, expression: "0 3 * * *", label: `Run ${s.name}`, enabled: true, runAs: s.runAs || "user" }); }}>Schedule</Btn>
                         <Btn onClick={() => setEdit(s)}>Edit</Btn>
                         <Btn
                           className="danger"
@@ -627,45 +615,7 @@ export default function Home() {
             {!state.alerts?.length && <div className="empty-state"><Thermometer size={22}/><b>No alert rules yet</b><p>Add thresholds for server health and jobs.</p></div>}
           </Panel>
         )}
-        {tab === "devices" && (
-          <Panel
-            title="Authorized browsers"
-            note="Revoke access for an unknown device"
-            extra={
-              <Btn
-                className="primary"
-                onClick={async () => {
-                  try {
-                    setEnrollment(await api("enrollment/create", { minutes: "15" }));
-                    setCopied(false);
-                  } catch (e) {
-                    setErr(e instanceof Error ? e.message : "Error");
-                  }
-                }}
-              >
-                <KeyRound size={16} />
-                Generate access code
-              </Btn>
-            }
-          >
-            {Object.entries(state.devices).map(([id, d]) => (
-              <div className="device-row" key={id}>
-                <div className="grow">
-                  <b>{d.name}</b>
-                  <small>Authorized {d.created}</small>
-                </div>
-                <Btn
-                  className="danger"
-                  onClick={() => action(id, "device/revoke", { id })}
-                >
-                  <Trash2 size={15} />
-                  Revoke
-                </Btn>
-              </div>
-            ))}
-          </Panel>
-        )}
-        {tab === "account" && <><PasswordForm /><ConfigurationPanel refresh={refresh} /></>}
+        {tab === "settings" && <><ServerSettings /><Panel title="Storage monitoring" note="Choose which mounted paths appear in capacity cards."><Btn onClick={() => setStorageManager(true)}><HardDrive size={16}/>Manage storage paths</Btn></Panel><DevicePanel devices={state.devices} revoke={(id) => action(id, "device/revoke", { id })} createCode={async () => { try { setEnrollment(await api("enrollment/create", { minutes: "15" })); setCopied(false); } catch (e) { setErr(e instanceof Error ? e.message : "Error"); } }} /><PasswordForm /><ConfigurationPanel refresh={refresh} /></>}
       </main>
       {logs && (
         <LiveLogViewer logs={logs} close={() => setLogs(null)} />
@@ -2079,6 +2029,45 @@ function PasswordForm() {
     </Panel>
   );
 }
+function Overview({ state, active, stopped, openLogs }: { state: St; active: number; stopped: number; openLogs: (title: string, path: string, body: unknown) => void }) {
+  const failed = state.runs.find((run) => run.status === "failed");
+  const latestScheduleFailure = state.cronRuns.find((run) => run.status === "failed");
+  return <>
+    <section className="metrics">
+      <Metric label="Containers" value={`${active} running`} note={`${stopped} stopped`} icon={<Container />} />
+      <Metric label="CPU usage" value={`${state.stats.cpuUsagePercent.toFixed(1)}%`} note={`${state.stats.cpuCores} logical cores`} icon={<Gauge />} />
+      <Metric label="RAM" value={formatPercent(state.stats.memoryUsedBytes, state.stats.memoryTotalBytes)} note={`${formatBytes(state.stats.memoryAvailableBytes)} available`} icon={<Gauge />} />
+      <Metric label="System disk" value={`${state.stats.diskUsedPercent}% used`} note={`${formatBytes(state.stats.diskTotalBytes - state.stats.diskUsedBytes)} free`} icon={<HardDrive />} />
+    </section>
+    <Panel title="Attention needed" note="The most useful things to check first.">
+      {stopped > 0 && <div className="schedule-row"><div className="grow"><b>{stopped} stopped container{stopped === 1 ? "" : "s"}</b><small>Open Containers to start, inspect, or review logs.</small></div><span className="badge down">Needs attention</span></div>}
+      {failed && <div className="schedule-row"><div className="grow"><b>Latest failed script: {failed.scriptName}</b><small>{new Date(failed.startedAt).toLocaleString()} · exit code {failed.exitCode ?? "unknown"}</small></div><Btn onClick={() => openLogs(`${failed.scriptName} run`, "script/log", { id: failed.scriptId, runId: failed.id })}>View log</Btn></div>}
+      {!failed && latestScheduleFailure && <div className="schedule-row"><div className="grow"><b>Latest failed schedule: {latestScheduleFailure.label}</b><small>{new Date(latestScheduleFailure.startedAt).toLocaleString()}</small></div><span className="badge down">Failed</span></div>}
+      {!stopped && !failed && !latestScheduleFailure && <div className="empty-state"><Circle size={22}/><b>Everything looks healthy</b><p>No stopped containers or failed recent runs.</p></div>}
+    </Panel>
+    <Panel title="Next steps" note="Common admin tasks"><div className="schedule-row"><div className="grow"><b>{state.scripts.length} approved scripts</b><small>{state.schedules.filter((item) => item.enabled).length} active schedules · manage runs in Scripts and Schedules.</small></div></div></Panel>
+  </>;
+}
+function DevicePanel({ devices, revoke, createCode }: { devices: St["devices"]; revoke: (id: string) => void; createCode: () => void }) {
+  return <Panel title="Authorized browsers" note="Revoke access for an unknown device" extra={<Btn className="primary" onClick={createCode}><KeyRound size={16}/>Generate access code</Btn>}>
+    {Object.entries(devices).map(([id, device]) => <div className="device-row" key={id}><div className="grow"><b>{device.name}</b><small>Authorized {device.created}</small></div><Btn className="danger" onClick={() => revoke(id)}><Trash2 size={15}/>Revoke</Btn></div>)}
+  </Panel>;
+}
+function ServerSettings() {
+  const [settings, setSettings] = useState<{ sshTarget: string; scriptRoot: string; allowedPaths: string[]; remoteLogs: string; metricsRetentionDays: number } | null>(null);
+  const [message, setMessage] = useState(""); const [error, setError] = useState("");
+  useEffect(() => { void api("settings/server").then(setSettings).catch((reason) => setError(reason instanceof Error ? reason.message : "Could not load server settings")); }, []);
+  return <Panel title="Server connection" note="The SSH key and known_hosts stay in Docker mounts; this page stores only the connection and permitted paths.">
+    {!settings ? <p>{error || "Loading server settings…"}</p> : <form className="account-form" onSubmit={async (event) => { event.preventDefault(); setMessage(""); setError(""); try { const result = await api("settings/server", Object.fromEntries(new FormData(event.currentTarget))); setSettings(result.settings); setMessage(`Connection verified: ${result.connection.host}.`); } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not save settings"); } }}>
+      <label>SSH target <input name="sshTarget" defaultValue={settings.sshTarget} placeholder="user@server" spellCheck={false} /><small>Leave empty only when the dashboard runs on the server itself.</small></label>
+      <label>Script root <input name="scriptRoot" required defaultValue={settings.scriptRoot} spellCheck={false} /></label>
+      <label>Allowed paths <input name="allowedPaths" required defaultValue={settings.allowedPaths.join(", ")} spellCheck={false} /><small>Comma-separated absolute paths. File and script access is limited to these locations.</small></label>
+      <label>Remote logs folder <input name="remoteLogs" required defaultValue={settings.remoteLogs} spellCheck={false} /></label>
+      <label>Metric retention (days) <input name="metricsRetentionDays" type="number" min="1" max="365" required defaultValue={settings.metricsRetentionDays} /><small>Older dashboard health samples are removed during refreshes.</small></label>
+      {message && <div className="success">{message}</div>}{error && <div className="alert">{error}</div>}<Btn className="primary">Save and test connection</Btn>
+    </form>}
+  </Panel>;
+}
 function HistoryPanel({ runs, cronRuns, metrics, openLog }: { runs: St["runs"]; cronRuns: St["cronRuns"]; metrics: St["metrics"]; openLog: (run: St["runs"][number]) => void }) {
   const latest = metrics.at(-1);
   const [kind, setKind] = useState<"scripts" | "cron">("scripts");
@@ -2129,9 +2118,9 @@ function AlertForm({ initial, close, done }: { initial: St["alerts"][number] | n
 }
 function ConfigurationPanel({ refresh }: { refresh: () => Promise<void> }) {
   const [message, setMessage] = useState(""); const [error, setError] = useState("");
-  return <Panel title="Configuration backup" note="Exports dashboard configuration only. Passwords, SSH credentials and session tokens are excluded.">
-    <div className="actions"><Btn onClick={async () => { const data = await api("config/export"); const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }); const link = document.createElement("a"); link.href = URL.createObjectURL(blob); link.download = "media-dashboard-backup.json"; link.click(); URL.revokeObjectURL(link.href); setMessage("Backup downloaded."); }}>Export configuration</Btn>
-      <label className="button">Restore configuration<input type="file" accept="application/json" hidden onChange={async (event) => { const file = event.target.files?.[0]; if (!file || !await appConfirm("Restore configuration and overwrite scripts, folders, schedules, devices and alerts?", "Restore configuration", "Restore", true)) return; try { await api("config/restore", { payload: await file.text() }); await refresh(); setMessage("Configuration restored."); } catch (reason) { setError(reason instanceof Error ? reason.message : "Restore failed"); } }} /></label></div>
+  return <Panel title="Dashboard settings backup" note="Exports dashboard scripts, schedules, folders, alerts, and authorized devices. It does not contain server files, Docker data, passwords, SSH keys, or sessions.">
+    <div className="actions"><Btn onClick={async () => { const data = await api("config/export"); const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }); const link = document.createElement("a"); link.href = URL.createObjectURL(blob); link.download = "media-dashboard-settings.json"; link.click(); URL.revokeObjectURL(link.href); setMessage("Settings export downloaded."); }}>Export dashboard settings</Btn>
+      <label className="button">Restore dashboard settings<input type="file" accept="application/json" hidden onChange={async (event) => { const file = event.target.files?.[0]; if (!file || !await appConfirm("Restore dashboard settings and overwrite scripts, folders, schedules, devices and alerts?", "Restore dashboard settings", "Restore", true)) return; try { await api("config/restore", { payload: await file.text() }); await refresh(); setMessage("Dashboard settings restored."); } catch (reason) { setError(reason instanceof Error ? reason.message : "Restore failed"); } }} /></label></div>
     {message && <div className="success">{message}</div>}{error && <div className="alert">{error}</div>}
   </Panel>;
 }
@@ -2230,16 +2219,21 @@ function Login({
     </main>
   );
 }
+function ConnectionUnavailable({ error, retry, loading }: { error: string; retry: () => void; loading: boolean }) {
+  return <main className="login-wrap"><section className="login-card"><div className="login-logo"><img src="/icon.svg" alt="" /></div><h1>Server unavailable</h1><p>Your dashboard session is still valid, but it cannot reach the managed server over SSH.</p><div className="alert">{error}</div><p>Check that the server is online, then verify the SSH target, key, and known_hosts mount. Once it reconnects, Settings will be available again.</p><Btn className="primary full" disabled={loading} onClick={retry}>{loading ? "Reconnecting…" : "Reconnect"}</Btn></section></main>;
+}
 function Setup({ done, loading }: { done: () => void; loading: boolean }) {
   const [message, setMessage] = useState("");
+  const [server, setServer] = useState<{ sshTarget: string; scriptRoot: string; allowedPaths: string[]; remoteLogs: string } | null>(null);
+  useEffect(() => { void api("setup/status", undefined, true).then((data) => setServer(data.server)).catch(() => {}); }, []);
   return (
     <main className="login-wrap">
       <section className="login-card">
         <div className="login-logo"><img src="/icon.svg" alt="" /></div>
         <h1>Set up Linux Server Control</h1>
-        <p>Create the administrator account for this installation.</p>
+        <p>Create the administrator account and verify the server connection.</p>
         {message && <div className="alert">{message}</div>}
-        <form onSubmit={async (event) => {
+        <form key={server?.sshTarget || "loading"} onSubmit={async (event) => {
           event.preventDefault();
           try {
             await api("setup", Object.fromEntries(new FormData(event.currentTarget)));
@@ -2253,7 +2247,11 @@ function Setup({ done, loading }: { done: () => void; loading: boolean }) {
           <label>Password<input name="password" type="password" minLength={12} required autoComplete="new-password" /></label>
           <label>Confirm password<input name="confirmPassword" type="password" minLength={12} required autoComplete="new-password" /></label>
           <label>Device name<input name="deviceName" defaultValue="First browser" maxLength={80} /></label>
-          <small>Find the token with <code>docker compose logs dashboard</code>. Use a password of at least 12 characters. This browser will be authorized automatically.</small>
+          <label>SSH target<input name="sshTarget" placeholder="user@server" defaultValue={server?.sshTarget || ""} spellCheck={false} /><small>Leave empty only when this container runs directly on the server.</small></label>
+          <label>Script root<input name="scriptRoot" defaultValue={server?.scriptRoot || "/home"} required spellCheck={false} /></label>
+          <label>Allowed paths<input name="allowedPaths" defaultValue={server?.allowedPaths.join(", ") || "/home"} required spellCheck={false} /><small>Comma-separated absolute paths the dashboard may browse or run scripts from.</small></label>
+          <label>Remote logs folder<input name="remoteLogs" defaultValue={server?.remoteLogs || "/tmp/media-dashboard"} required spellCheck={false} /></label>
+          <small>Find the token with <code>docker compose logs dashboard</code>. The SSH key and server fingerprint must already be mounted as <code>/run/ssh/id_ed25519</code> and <code>/run/ssh/known_hosts</code>. This browser will be authorized automatically.</small>
           <Btn className="primary full" disabled={loading}>{loading ? "Setting up…" : "Finish setup"}</Btn>
         </form>
       </section>
