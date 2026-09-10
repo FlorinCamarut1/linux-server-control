@@ -185,10 +185,10 @@ async function handle(
       audit("initial setup completed");
       const response = NextResponse.json({ ok: true });
       response.cookies.set("session", sessionId, {
-        httpOnly: true, secure: true, sameSite: "strict", maxAge: 28800, path: "/",
+        httpOnly: true, secure: process.env.COOKIE_SECURE === "true", sameSite: "strict", maxAge: 28800, path: "/",
       });
       response.cookies.set("device", device, {
-        httpOnly: true, secure: true, sameSite: "strict", maxAge: 31536000, path: "/",
+        httpOnly: true, secure: process.env.COOKIE_SECURE === "true", sameSite: "strict", maxAge: 31536000, path: "/",
       });
       return response;
     }
@@ -268,14 +268,14 @@ async function handle(
       const res = NextResponse.json({ ok: true });
       res.cookies.set("session", session, {
         httpOnly: true,
-        secure: true,
+        secure: process.env.COOKIE_SECURE === "true",
         sameSite: "strict",
         maxAge: 28800,
         path: "/",
       });
       res.cookies.set("device", device, {
         httpOnly: true,
-        secure: true,
+        secure: process.env.COOKIE_SECURE === "true",
         sameSite: "strict",
         maxAge: 31536000,
         path: "/",

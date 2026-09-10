@@ -1,8 +1,0 @@
-services:
-  proxy:
-    environment:
-      TAILSCALE_HOST: ${TAILSCALE_HOST}
-    ports:
-      - "${TAILSCALE_IP}:8443:8443"
-    volumes:
-      - ./Caddyfile.tailscale:/etc/caddy/Caddyfile:ro

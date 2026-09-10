@@ -8,6 +8,8 @@ services:
       - .env
     environment:
       DATA_DIR: /app/data
+    ports:
+      - "${LAN_IP}:8080:3000"
     volumes:
       - ./data:/app/data
       - ./ssh:/run/ssh:ro
@@ -24,31 +26,3 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
-  proxy:
-    image: caddy:2.10-alpine
-    restart: unless-stopped
-    depends_on: [dashboard]
-    ports:
-      - "${LAN_IP}:8443:8443"
-    configs:
-      - source: dashboard_caddyfile
-        target: /etc/caddy/Caddyfile
-    volumes:
-      - ./data:/certs:ro
-    read_only: true
-    tmpfs: [/data, /config]
-    security_opt: [no-new-privileges:true]
-
-configs:
-  dashboard_caddyfile:
-    content: |
-      :8443 {
-        tls /certs/cert.pem /certs/key.pem
-        reverse_proxy dashboard:3000
-        header {
-          X-Content-Type-Options nosniff
-          X-Frame-Options DENY
-          Referrer-Policy no-referrer
-          Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
-        }
-      }

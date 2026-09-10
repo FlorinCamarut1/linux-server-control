@@ -4,7 +4,7 @@
 
 Linux Server Control is a private-network dashboard for administering Docker containers, approved shell scripts, cron schedules, files, and authorized browser devices over SSH.
 
-The application uses Next.js with TypeScript, the App Router, Docker Compose, and Caddy. Persistent dashboard data is stored in the `DATA_DIR` volume.
+The application uses Next.js with TypeScript, the App Router, and Docker Compose. Persistent dashboard data is stored in the `DATA_DIR` volume.
 
 ## Main files
 
@@ -13,7 +13,7 @@ The application uses Next.js with TypeScript, the App Router, Docker Compose, an
 - `src/app/globals.css` contains the responsive dashboard styles.
 - `src/app/api/[...path]/route.ts` implements authenticated API routes.
 - `src/lib/server.ts` implements SSH, Docker, file, script, cron, and system-statistics helpers.
-- `compose.yaml` defines the dashboard and reverse proxy services.
+- `compose.yaml` builds and exposes the dashboard directly on the configured LAN IP.
 - `compose.github.yaml` is a standalone Compose file that pulls the multi-architecture dashboard image from GHCR.
 - `.github/workflows/container.yml` publishes `latest`, semantic-version, and commit tags for `amd64` and `arm64`.
 - `.env.example` documents the required environment settings.
@@ -25,7 +25,7 @@ There are two supported application deployment paths:
 - `compose.yaml` builds the current source checkout locally.
 - `compose.github.yaml` pulls `ghcr.io/florincamarut1/linux-server-control:${VERSION:-latest}` from GHCR and does not require a repository clone.
 
-Both Compose files load runtime settings with `env_file: .env`; `DATA_DIR` is overridden inside the container as `/app/data`. This ensures settings such as `SSH_TARGET`, `ALLOWED_PATHS`, `MONITORED_PATHS`, and `METRICS_RETENTION_DAYS` are passed to the application without being repeated in Compose.
+Both Compose files load runtime settings with `env_file: .env`; `DATA_DIR` is overridden inside the container as `/app/data`. The dashboard is served over plain HTTP on `${LAN_IP}:8080`, without a proxy or local certificate.
 
 For a source checkout, copy `.env.example` to `.env`, configure the SSH target and private-network settings, then build and start the services:
 
@@ -37,7 +37,7 @@ docker compose ps
 
 Run `npm run build` before deploying source changes. Keep `.env`, SSH keys, dashboard data, enrollment codes, and passwords outside Git.
 
-For a no-clone deployment, download `compose.github.yaml` as `compose.yaml`, copy `.env.example`, create the `data` and `ssh` directories, then run `docker compose up -d`. `pull_policy: always` checks the selected image tag whenever Compose starts the service. `latest` follows successful builds from `main`; `VERSION` can pin another published tag. The administrator must still deliberately configure the SSH target, allowed paths, key, host fingerprint, and LAN certificate; these values cannot be safely inferred.
+For a no-clone deployment, download `compose.github.yaml` as `compose.yaml`, copy `.env.example`, create the `data` and `ssh` directories, then run `docker compose up -d`. `pull_policy: always` checks the selected image tag whenever Compose starts the service. `latest` follows successful builds from `main`; `VERSION` can pin another published tag. The administrator must still deliberately configure the SSH target, allowed paths, key, and host fingerprint.
 
 ## First-run application setup
 
@@ -62,10 +62,10 @@ After `config.json` contains a password, the setup endpoint refuses further init
 
 - Login uses a dashboard username and password.
 - New browsers require a time-limited enrollment code.
-- Sessions are secure, HTTP-only cookies.
+- Sessions use HTTP-only, SameSite-strict cookies. Set `COOKIE_SECURE=true` only when an external HTTPS reverse proxy is added.
 - POST requests validate their origin.
 - Five failed sign-ins from one source address result in a temporary block.
-- Deploy behind a private LAN, VPN, or equivalent access boundary; do not expose the dashboard directly to the public internet.
+- Keep the HTTP port on a trusted private LAN; do not expose the dashboard directly to the public internet.
 
 ## Overview and system statistics
 

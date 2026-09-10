@@ -2193,7 +2193,7 @@ function Login({
         >
           <label>
             Username
-            <input name="username" defaultValue="admin" />
+            <input name="username" autoComplete="username" />
           </label>
           <label>
             Password

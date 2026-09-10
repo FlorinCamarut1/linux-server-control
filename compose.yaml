@@ -6,6 +6,8 @@ services:
       - .env
     environment:
       DATA_DIR: /app/data
+    ports:
+      - "${LAN_IP}:8080:3000"
     volumes:
       - ./data:/app/data
       - ./ssh:/run/ssh:ro
@@ -22,15 +24,3 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
-  proxy:
-    image: caddy:2.10-alpine
-    restart: unless-stopped
-    depends_on: [dashboard]
-    ports:
-      - "${LAN_IP}:8443:8443"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - ./data:/certs:ro
-    read_only: true
-    tmpfs: [/data, /config]
-    security_opt: [no-new-privileges:true]
