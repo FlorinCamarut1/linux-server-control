@@ -1,169 +1,136 @@
-# Installation guide
+# Installation
 
-This guide installs Linux Server Control on the Linux server it will manage. The default setup is accessible only from the local network. Tailscale is optional.
+This guide installs Linux Server Control on the Linux server it manages. The dashboard uses Docker and SSH to connect back to that same server.
 
-## 1. Requirements
+Use a normal Linux account that can run `docker ps` and manage its own crontab. The examples use `serveradmin`; replace it everywhere with your account and server IP.
 
-Install Docker Engine with the Docker Compose plugin, OpenSSH, OpenSSL, and Git. Choose a normal Linux user that can run `docker ps` and manage its own crontab. The examples use `serveradmin`; replace it with your account name. Give the server a fixed LAN address or DHCP reservation.
+## 1. Install Docker
+
+Skip this section when `docker --version` and `docker compose version` already work.
+
+Use Docker's official installation guide for your distribution:
+
+- [Docker Engine](https://docs.docker.com/engine/install/)
+- [Docker Compose plugin](https://docs.docker.com/compose/install/linux/)
+
+On Ubuntu or Debian, Docker's convenience script is a quick option for a personal server:
+
+```bash
+curl -fsSL https://get.docker.com -o get-docker.sh
+sudo sh get-docker.sh
+rm get-docker.sh
+sudo usermod -aG docker "$USER"
+```
+
+Sign out and back in, then verify:
 
 ```bash
 docker --version
 docker compose version
-ssh localhost true
+docker run --rm hello-world
 ```
 
-If your user cannot access Docker, follow the Docker documentation for your distribution. Membership in the `docker` group grants root-equivalent host access.
+Being in the `docker` group is root-equivalent access to the host. Use only a trusted account.
 
-## 2. Download the project
+## 2. Install Linux Server Control
+
+Create a small directory for the Compose file, dashboard data, certificates, and SSH key. This installation pulls the published image—there is no repository clone.
 
 ```bash
-cd /home/serveradmin
-git clone https://github.com/Florincamarut1/linux-server-control.git
-cd linux-server-control
-cp .env.example .env
-mkdir -p data ssh
+mkdir -p ~/linux-server-control/{data,ssh}
+cd ~/linux-server-control
+curl -fsSLo compose.yaml https://raw.githubusercontent.com/FlorinCamarut1/linux-server-control/main/compose.github.yaml
+curl -fsSLo .env https://raw.githubusercontent.com/FlorinCamarut1/linux-server-control/main/.env.example
 chmod 700 data ssh
 ```
 
-## 3. Configure the environment
+## 3. Configure the dashboard
 
-Edit `.env`:
+Open `.env` and replace the example values:
+
+```bash
+nano .env
+```
+
+Minimum example:
 
 ```dotenv
 LAN_IP=192.168.1.100
 LAN_CIDR=192.168.1.0/24
 SSH_TARGET=serveradmin@192.168.1.100
 SCRIPT_ROOT=/home/serveradmin
-ALLOWED_PATHS=/home/serveradmin/scripts,/home/serveradmin/services,/mnt/media
-REMOTE_LOGS=/home/serveradmin/.local/state/linux-server-control
-DASHBOARD_USER=admin
+ALLOWED_PATHS=/home/serveradmin/scripts,/mnt/media
+MONITORED_PATHS=/mnt/media
+REMOTE_LOGS=/home/serveradmin/.local/state/media-dashboard
 ```
 
-Use the server's real LAN IP in `LAN_IP` and `SSH_TARGET`. `LAN_CIDR` is the subnet allowed to reach the dashboard.
+`ALLOWED_PATHS` is the security boundary for Files and Scripts. List only folders that should be browsed, edited, or used for scripts—never `/`, `.ssh`, or the dashboard's `data` and `ssh` folders.
 
-`ALLOWED_PATHS` is the comma-separated allowlist used by the Files page and script selectors. Add only directories that the dashboard should read, edit, or delete. Do not allow `/`, `/home`, an entire home directory, `.ssh`, or this project's `data` and `ssh` directories.
+## 4. Create the SSH key
 
-The **New custom script** action writes an executable `.sh` file only to a folder selected from this allowlist. Custom cron commands are also available from the Scheduled jobs page; they run as the selected SSH user or, when enabled, root.
-
-## 4. Create the dashboard SSH key
-
-Generate a dedicated key without a passphrase because the container must use it unattended:
+The container needs a dedicated key to reach the managed server without a password. For a same-server setup, authorize it for your current account:
 
 ```bash
+cd ~/linux-server-control
 ssh-keygen -t ed25519 -N '' -C linux-server-control -f ssh/id_ed25519
 cat ssh/id_ed25519.pub >> ~/.ssh/authorized_keys
 chmod 700 ~/.ssh
 chmod 600 ~/.ssh/authorized_keys ssh/id_ed25519
+ssh-keyscan -H 192.168.1.100 > ssh/known_hosts
+chmod 600 ssh/known_hosts
 ```
 
-Record the server's SSH host key:
+Compare the fingerprint before continuing:
 
 ```bash
-ssh-keyscan -H 192.168.1.100 > ssh/known_hosts
 ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub
 ssh-keygen -lf ssh/known_hosts
 ```
 
-Compare the fingerprints through a trusted local session before continuing. If `SSH_TARGET` uses a hostname, scan that exact hostname instead.
-
-Make the persistent files writable by the `node` user inside the dashboard container:
-
-```bash
-sudo chown -R 1000:1000 data ssh
-```
+Use the exact hostname or IP from `SSH_TARGET` when running `ssh-keyscan`.
 
 ## 5. Create the LAN certificate
 
-Generate a certificate containing the server's LAN IP:
+The dashboard uses HTTPS. Create a local certificate for the LAN IP:
 
 ```bash
-openssl req -x509 -newkey rsa:3072 -nodes \
-  -keyout data/key.pem \
-  -out data/cert.pem \
-  -days 365 \
-  -subj '/CN=linux-server-control' \
+cd ~/linux-server-control
+openssl req -x509 -newkey rsa:3072 -nodes -days 365 \
+  -keyout data/key.pem -out data/cert.pem \
+  -subj '/CN=192.168.1.100' \
   -addext 'subjectAltName=IP:192.168.1.100'
 chmod 600 data/key.pem
+sudo chown -R 1000:1000 data ssh
 ```
 
-Replace the example IP. Browsers will warn about this self-signed certificate until you explicitly trust it on each device. Access remains restricted to `LAN_CIDR`.
+Replace `192.168.1.100` with `LAN_IP`. Your browser will ask you to accept the self-signed certificate unless you trust it locally.
 
-## 6. Start and create the account
-
-The standalone installation uses the published image:
-
-```yaml
-services:
-  dashboard:
-    image: ghcr.io/florincamarut1/linux-server-control:latest
-    env_file:
-      - .env
-```
+## 6. Start and finish setup
 
 ```bash
+cd ~/linux-server-control
 docker compose up -d
+docker compose logs dashboard
 ```
 
-Open the dashboard, get the one-time setup token with
-`docker compose logs dashboard`, and create the administrator account in the
-browser. The password must contain at least 12 characters. It can later be
-changed from **Account**. Source checkouts using `compose.yaml` build locally;
-the standalone `compose.github.yaml` pulls the published GHCR image.
+Open `https://YOUR_LAN_IP:8443`. Copy the one-time setup token from the dashboard logs, create the administrator password, and confirm the server connection in the setup form. The first browser is authorized automatically.
 
-Verify the deployment:
+Verify the services any time with:
 
 ```bash
 docker compose ps
 docker compose logs --tail 100 dashboard proxy
-docker compose exec -T dashboard ssh \
-  -o BatchMode=yes \
-  -o StrictHostKeyChecking=yes \
-  -i /run/ssh/id_ed25519 \
-  -o UserKnownHostsFile=/run/ssh/known_hosts \
-  "$SSH_TARGET" hostname
 ```
 
-Open `https://192.168.1.100:8443` and accept or trust your local certificate.
+## Optional: Tailscale
 
-## 7. Authorize the first browser
+For trusted HTTPS access from a tailnet, download the two Tailscale files into the installation directory, then add the variables below to `.env`:
 
 ```bash
-docker compose run --rm dashboard node scripts/enroll.mjs
+cd ~/linux-server-control
+curl -fsSLo compose.tailscale.yaml https://raw.githubusercontent.com/FlorinCamarut1/linux-server-control/main/compose.tailscale.yaml
+curl -fsSLo Caddyfile.tailscale https://raw.githubusercontent.com/FlorinCamarut1/linux-server-control/main/Caddyfile.tailscale
 ```
-
-On the login screen, expand **New browser**, enter the one-time code and a device name, then sign in. The code expires after 15 minutes and is consumed after use. Future codes can be created from the Devices page.
-
-## 8. Optional root cron support
-
-Normal schedules run as the SSH user and need no additional setup. To display and manage root cron jobs, install the helper:
-
-```bash
-sudo ./scripts/install-root-cron-access.sh serveradmin
-sudo -n /usr/local/sbin/media-dashboard-root-cron list
-```
-
-Replace `serveradmin` with the user from `SSH_TARGET`. This permission allows the dashboard to replace root's crontab and therefore grants root-level command execution. Enable it only for a trusted administrator.
-
-## 9. Optional root script support
-
-The Scripts form can run a registered script as root, but only after installing the separate root-script helper. List each directory from which root scripts may run:
-
-```bash
-sudo ./scripts/install-root-script-access.sh serveradmin \
-  /home/serveradmin/scripts \
-  /home/serveradmin/services
-sudo -n /usr/local/sbin/media-dashboard-root-run status
-```
-
-After this, select **root** in the script's **Run as** field. The helper accepts only existing non-symlink `.sh` files under the listed directories. It does not grant generic sudo access.
-
-## 10. Optional Tailscale access with trusted HTTPS
-
-Skip this section for a LAN-only installation.
-
-Install Tailscale, connect the server to your tailnet, and enable MagicDNS and HTTPS certificates in the Tailscale admin console. Run `tailscale ip -4` and `tailscale cert` to find the server values.
-
-Add these lines to `.env`:
 
 ```dotenv
 TAILSCALE_IP=100.64.0.10
@@ -171,46 +138,39 @@ TAILSCALE_HOST=your-server.your-tailnet.ts.net
 COMPOSE_FILE=compose.yaml:compose.tailscale.yaml
 ```
 
-Issue a certificate using the exact hostname reported by `tailscale cert`:
+Issue a certificate and recreate the proxy:
 
 ```bash
-sudo tailscale cert \
-  --cert-file data/tailscale.crt \
-  --key-file data/tailscale.key \
-  your-server.your-tailnet.ts.net
+sudo tailscale cert --cert-file data/tailscale.crt --key-file data/tailscale.key your-server.your-tailnet.ts.net
 sudo chown 1000:1000 data/tailscale.crt data/tailscale.key
 chmod 600 data/tailscale.key
 docker compose up -d --force-recreate proxy
 ```
 
-Open `https://your-server.your-tailnet.ts.net:8443`. The proxy is bound to the server's Tailscale IP, so it is reachable through the tailnet only. Do not browse to the raw Tailscale IP when using the hostname certificate.
+Open `https://your-server.your-tailnet.ts.net:8443`—not the raw Tailscale IP.
 
-Tailscale certificates expire and must be renewed. Automate `tailscale cert --min-validity 720h` with a root systemd timer or cron job and restart the proxy after replacing the files.
+## Optional: root schedules and scripts
 
-## Upgrading
+Normal scripts and schedules run as the SSH user. Root access is deliberately separate and should be enabled only after reviewing the helper scripts and allowed directories:
 
 ```bash
-cd /home/serveradmin/linux-server-control
-git pull --ff-only
-docker compose build dashboard
-docker compose up -d --force-recreate
+sudo ./scripts/install-root-cron-access.sh serveradmin
+sudo ./scripts/install-root-script-access.sh serveradmin /srv/dashboard-root-scripts
 ```
 
-Persistent account, device, script, folder, and schedule data remains under `data/` and is excluded from Git.
+Root-approved script folders must be owned by root and not writable by the SSH account.
 
-## Backup
+## Backup and troubleshooting
 
-Back up `.env`, `data/`, and `ssh/` securely. They contain configuration, password hashes, browser authorizations, logs, TLS private keys, and the dashboard SSH private key. Never commit them.
+Back up `.env`, `data/`, and `ssh/` securely. They contain TLS and SSH private keys, password hashes, devices, and run logs.
 
-## Troubleshooting
+If the dashboard cannot connect to the server, first check the containers, then test SSH from the dashboard container:
 
 ```bash
 docker compose ps
 docker compose logs --tail 200 dashboard proxy
+set -a; . ./.env; set +a
+docker compose exec -T dashboard ssh -o BatchMode=yes -o StrictHostKeyChecking=yes \
+  -i /run/ssh/id_ed25519 -o UserKnownHostsFile=/run/ssh/known_hosts \
+  "$SSH_TARGET" hostname
 ```
-
-If SSH fails, confirm that `SSH_TARGET` matches the host captured in `ssh/known_hosts` and repeat the container SSH test from step 6.
-
-If the browser reports **Invalid request origin**, use the same hostname and port shown in its address bar and make sure no additional proxy rewrites `Host`, `X-Forwarded-Host`, or `X-Forwarded-Proto`.
-
-If a browser is no longer authorized, generate a fresh enrollment code from an authorized browser or with `scripts/enroll.mjs`.
