@@ -19,7 +19,14 @@ The application uses Next.js with TypeScript, the App Router, Docker Compose, an
 
 ## Setup and deployment
 
-Copy `.env.example` to `.env`, configure the SSH target and private-network settings, then build and start the service:
+There are two supported application deployment paths:
+
+- `compose.yaml` builds the current source checkout locally.
+- `compose.github.yaml` pulls `ghcr.io/florincamarut1/linux-server-control:${VERSION:-latest}` from GHCR and does not require a repository clone.
+
+Both Compose files load runtime settings with `env_file: .env`; `DATA_DIR` is overridden inside the container as `/app/data`. This ensures settings such as `SSH_TARGET`, `ALLOWED_PATHS`, `MONITORED_PATHS`, and `METRICS_RETENTION_DAYS` are passed to the application without being repeated in Compose.
+
+For a source checkout, copy `.env.example` to `.env`, configure the SSH target and private-network settings, then build and start the services:
 
 ```bash
 docker compose build dashboard
@@ -29,7 +36,24 @@ docker compose ps
 
 Run `npm run build` before deploying source changes. Keep `.env`, SSH keys, dashboard data, enrollment codes, and passwords outside Git.
 
-For a no-clone deployment, download `compose.github.yaml` as `compose.yaml`, copy `.env.example`, create the `data` and `ssh` directories, then run `docker compose up -d`. Compose pulls `ghcr.io/florincamarut1/linux-server-control:latest` by default; `VERSION` can pin another published tag. The administrator must still deliberately configure the SSH target, allowed paths, key, host fingerprint, and LAN certificate; these values cannot be safely inferred. On a fresh data volume, the browser shows the account setup screen. Its one-time token is printed in the dashboard container logs, and the first browser is authorized when setup completes.
+For a no-clone deployment, download `compose.github.yaml` as `compose.yaml`, copy `.env.example`, create the `data` and `ssh` directories, then run `docker compose up -d`. `pull_policy: always` checks the selected image tag whenever Compose starts the service. `latest` follows successful builds from `main`; `VERSION` can pin another published tag. The administrator must still deliberately configure the SSH target, allowed paths, key, host fingerprint, and LAN certificate; these values cannot be safely inferred.
+
+## First-run application setup
+
+An empty `DATA_DIR` no longer requires `scripts/setup.mjs`. The client checks `GET /api/setup/status`; when no password configuration exists, the API generates a one-time bootstrap token in `setup-bootstrap.json` and prints it to the dashboard container logs. The browser then displays the setup form.
+
+`POST /api/setup` requires that token, a valid username, and matching passwords of at least 12 characters. On success it:
+
+- stores the scrypt password hash and salt in `config.json`;
+- consumes the bootstrap token;
+- registers the current browser as the first authorized device;
+- creates the initial session and secure cookies.
+
+After `config.json` contains a password, the setup endpoint refuses further initialization attempts. Additional browsers use the existing time-limited enrollment flow. `scripts/setup.mjs` remains available for legacy or non-browser provisioning but is not part of the normal installation path.
+
+## Image publication
+
+`.github/workflows/container.yml` runs for pushes to `main`, version tags, and pull requests. Pull requests build without publishing. Pushes publish OCI images to GHCR for `linux/amd64` and `linux/arm64`, with BuildKit caching and provenance attestations. The generated tags include `latest` for `main`, semantic-version variants for `v*` tags, and a commit tag.
 
 ## Access control
 
