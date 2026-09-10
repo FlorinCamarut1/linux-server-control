@@ -184,10 +184,10 @@ async function handle(
       persistSessions();
       audit("initial setup completed");
       const response = NextResponse.json({ ok: true });
-      response.cookies.set("session", sessionId, {
+      response.cookies.set("lsc_session", sessionId, {
         httpOnly: true, secure: process.env.COOKIE_SECURE === "true", sameSite: "strict", maxAge: 28800, path: "/",
       });
-      response.cookies.set("device", device, {
+      response.cookies.set("lsc_device", device, {
         httpOnly: true, secure: process.env.COOKIE_SECURE === "true", sameSite: "strict", maxAge: 31536000, path: "/",
       });
       return response;
@@ -214,7 +214,7 @@ async function handle(
         });
         persistSessions();
         const res = NextResponse.json({ ok: true });
-        res.cookies.set("session", session, {
+        res.cookies.set("lsc_session", session, {
           httpOnly: true,
           sameSite: "strict",
           path: "/",
@@ -234,7 +234,7 @@ async function handle(
               "Retry-After": String(LOGIN_BLOCK_MS / 1000),
             })
           : fail("Incorrect username or password", 401);
-      let device = req.cookies.get("device")?.value || "";
+      let device = req.cookies.get("lsc_device")?.value || "";
       const devices = read<Record<string, { name: string; created: string }>>(
         "devices",
         {},
@@ -266,14 +266,14 @@ async function handle(
       });
       persistSessions();
       const res = NextResponse.json({ ok: true });
-      res.cookies.set("session", session, {
+      res.cookies.set("lsc_session", session, {
         httpOnly: true,
         secure: process.env.COOKIE_SECURE === "true",
         sameSite: "strict",
         maxAge: 28800,
         path: "/",
       });
-      res.cookies.set("device", device, {
+      res.cookies.set("lsc_device", device, {
         httpOnly: true,
         secure: process.env.COOKIE_SECURE === "true",
         sameSite: "strict",
@@ -283,7 +283,7 @@ async function handle(
       audit("login");
       return res;
     }
-    const sid = req.cookies.get("session")?.value || "",
+    const sid = req.cookies.get("lsc_session")?.value || "",
       session = sessions.get(sid),
       devices = read<Record<string, { name: string; created: string }>>(
         "devices",
