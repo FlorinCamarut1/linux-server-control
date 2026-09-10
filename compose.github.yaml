@@ -4,13 +4,9 @@ services:
     image: ghcr.io/florincamarut1/linux-server-control:${VERSION:-latest}
     pull_policy: always
     restart: unless-stopped
+    env_file:
+      - .env
     environment:
-      SSH_TARGET: ${SSH_TARGET}
-      SCRIPT_ROOT: ${SCRIPT_ROOT}
-      ALLOWED_PATHS: ${ALLOWED_PATHS:-${SCRIPT_ROOT}}
-      MONITORED_PATHS: ${MONITORED_PATHS:-/mnt/storage}
-      REMOTE_LOGS: ${REMOTE_LOGS}
-      LAN_CIDR: ${LAN_CIDR}
       DATA_DIR: /app/data
     volumes:
       - ./data:/app/data

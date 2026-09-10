@@ -93,7 +93,11 @@ Replace the example IP. Browsers will warn about this self-signed certificate un
 The standalone installation uses the published image:
 
 ```yaml
-image: ghcr.io/florincamarut1/linux-server-control:latest
+services:
+  dashboard:
+    image: ghcr.io/florincamarut1/linux-server-control:latest
+    env_file:
+      - .env
 ```
 
 ```bash

@@ -2,14 +2,9 @@ services:
   dashboard:
     build: .
     restart: unless-stopped
+    env_file:
+      - .env
     environment:
-      SSH_TARGET: ${SSH_TARGET}
-      SCRIPT_ROOT: ${SCRIPT_ROOT}
-      ALLOWED_PATHS: ${ALLOWED_PATHS:-${SCRIPT_ROOT}}
-      MONITORED_PATHS: ${MONITORED_PATHS:-/mnt/storage}
-      REMOTE_LOGS: ${REMOTE_LOGS}
-      LAN_CIDR: ${LAN_CIDR}
-      DASHBOARD_USER: ${DASHBOARD_USER:-admin}
       DATA_DIR: /app/data
     volumes:
       - ./data:/app/data
@@ -31,9 +26,6 @@ services:
     image: caddy:2.10-alpine
     restart: unless-stopped
     depends_on: [dashboard]
-    environment:
-      LAN_IP: ${LAN_IP}
-      LAN_CIDR: ${LAN_CIDR}
     ports:
       - "${LAN_IP}:8443:8443"
     volumes:

@@ -49,8 +49,16 @@ curl -fsSLo .env https://raw.githubusercontent.com/FlorinCamarut1/linux-server-c
 The Compose file pulls the ready-made image:
 
 ```yaml
-image: ghcr.io/florincamarut1/linux-server-control:latest
+services:
+  dashboard:
+    image: ghcr.io/florincamarut1/linux-server-control:latest
+    pull_policy: always
+    env_file:
+      - .env
 ```
+
+Compose loads all server settings from the `.env` file beside `compose.yaml`,
+so those values do not need to be repeated in the Compose file.
 
 ### 2. Enter your server details
 
