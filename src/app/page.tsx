@@ -237,11 +237,11 @@ export default function Home() {
   async function startScript(script: S) {
     try {
       setBusy(script.id);
-      await api("script/run", { id: script.id });
+      const result = await api("script/run", { id: script.id });
       setLogs({
         title: `${script.name} logs`,
         path: "script/log",
-        request: { id: script.id },
+        request: { id: script.id, runId: result.run.id },
       });
       await refresh();
     } catch (reason) {
@@ -647,12 +647,12 @@ export default function Home() {
         <RunScriptForm
           script={runPrompt}
           close={() => setRunPrompt(null)}
-          done={async (script) => {
+          done={async (script, runId) => {
             setRunPrompt(null);
             setLogs({
               title: `${script.name} logs`,
               path: "script/log",
-              request: { id: script.id },
+              request: { id: script.id, runId },
             });
             await refresh();
           }}
@@ -1229,7 +1229,7 @@ function RunScriptForm({
 }: {
   script: S;
   close: () => void;
-  done: (script: S) => void;
+  done: (script: S, runId: string) => void;
 }) {
   const [error, setError] = useState(""),
     [selected, setSelected] = useState("0"),
@@ -1243,8 +1243,8 @@ function RunScriptForm({
         onSubmit={async (event) => {
           event.preventDefault();
           try {
-            await api("script/run", { id: script.id, option: selected, file: selectedFile });
-            done(script);
+            const result = await api("script/run", { id: script.id, option: selected, file: selectedFile });
+            done(script, result.run.id);
           } catch (reason) {
             setError(reason instanceof Error ? reason.message : "Could not start script");
           }

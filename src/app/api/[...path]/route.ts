@@ -580,21 +580,13 @@ async function handle(
         } else return NextResponse.json({ ok: true, run: runScript(s) });
       }
       if (route === "script/log") {
-        const runRecord = body.runId ? scriptRuns().find((item) => item.id === body.runId && item.scriptId === s.id) : undefined;
-        const p = runRecord?.logPath || path.join(DATA, s.id + ".log");
-        let output = existsSync(/* turbopackIgnore: true */ p)
+        const runRecord = body.runId
+          ? scriptRuns().find((item) => item.id === body.runId && item.scriptId === s.id)
+          : scriptRuns().find((item) => item.scriptId === s.id);
+        const p = runRecord?.logPath;
+        const output = p && existsSync(/* turbopackIgnore: true */ p)
           ? readFileSync(/* turbopackIgnore: true */ p, "utf8").slice(-64000)
-          : "No logs available.";
-        try {
-          output +=
-            "\n--- Cron ---\n" +
-            run([
-              "tail",
-              "-c",
-              "64000",
-              serverSettings().remoteLogs + "/" + s.id + ".log",
-            ]);
-        } catch {}
+          : "No dashboard run log is available yet.";
         return NextResponse.json({ output });
       }
       if (route === "script/delete") {
