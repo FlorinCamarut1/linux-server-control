@@ -1,9 +1,8 @@
-# Standalone deployment: Docker builds the dashboard directly from GitHub.
-# Download this file as compose.yaml; see README.md for the small setup steps.
+# Standalone deployment using the pre-built multi-architecture image from GHCR.
 services:
   dashboard:
-    build:
-      context: https://github.com/FlorinCamarut1/linux-server-control.git#main
+    image: ghcr.io/florincamarut1/linux-server-control:${VERSION:-latest}
+    pull_policy: always
     restart: unless-stopped
     environment:
       SSH_TARGET: ${SSH_TARGET}
@@ -12,7 +11,6 @@ services:
       MONITORED_PATHS: ${MONITORED_PATHS:-/mnt/storage}
       REMOTE_LOGS: ${REMOTE_LOGS}
       LAN_CIDR: ${LAN_CIDR}
-      DASHBOARD_USER: ${DASHBOARD_USER:-admin}
       DATA_DIR: /app/data
     volumes:
       - ./data:/app/data

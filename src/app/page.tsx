@@ -169,6 +169,7 @@ export default function Home() {
       expires: number;
     } | null>(null),
     [copied, setCopied] = useState(false),
+    [needsSetup, setNeedsSetup] = useState(false),
     [initializing, setInitializing] = useState(true),
     [pendingRequests, setPendingRequests] = useState(0);
   useEffect(() => {
@@ -188,6 +189,10 @@ export default function Home() {
     } catch (e) {
       setState(null);
       setErr(e instanceof Error ? e.message : "Error");
+      try {
+        const setup = await api("setup/status", undefined, true);
+        setNeedsSetup(!setup.configured);
+      } catch {}
     } finally {
       setInitializing(false);
     }
@@ -266,6 +271,8 @@ export default function Home() {
     setLogs({ title, path, request: body });
   }
   if (initializing) return <LoadingScreen />;
+  if (needsSetup)
+    return <Setup done={() => { setNeedsSetup(false); void refresh(); }} loading={pendingRequests > 0} />;
   if (!state)
     return <Login error={err} done={refresh} loading={pendingRequests > 0} />;
   const nav = [
@@ -2218,6 +2225,36 @@ function Login({
             {loading && <Loader2 className="spin" size={16} />}
             {loading ? "Signing in…" : "Sign in"}
           </Btn>
+        </form>
+      </section>
+    </main>
+  );
+}
+function Setup({ done, loading }: { done: () => void; loading: boolean }) {
+  const [message, setMessage] = useState("");
+  return (
+    <main className="login-wrap">
+      <section className="login-card">
+        <div className="login-logo"><img src="/icon.svg" alt="" /></div>
+        <h1>Set up Linux Server Control</h1>
+        <p>Create the administrator account for this installation.</p>
+        {message && <div className="alert">{message}</div>}
+        <form onSubmit={async (event) => {
+          event.preventDefault();
+          try {
+            await api("setup", Object.fromEntries(new FormData(event.currentTarget)));
+            done();
+          } catch (reason) {
+            setMessage(reason instanceof Error ? reason.message : "Setup failed");
+          }
+        }}>
+          <label>Setup token<input name="setupToken" required autoComplete="one-time-code" spellCheck={false} /></label>
+          <label>Username<input name="username" defaultValue="admin" required maxLength={40} autoComplete="username" /></label>
+          <label>Password<input name="password" type="password" minLength={12} required autoComplete="new-password" /></label>
+          <label>Confirm password<input name="confirmPassword" type="password" minLength={12} required autoComplete="new-password" /></label>
+          <label>Device name<input name="deviceName" defaultValue="First browser" maxLength={80} /></label>
+          <small>Find the token with <code>docker compose logs dashboard</code>. Use a password of at least 12 characters. This browser will be authorized automatically.</small>
+          <Btn className="primary full" disabled={loading}>{loading ? "Setting up…" : "Finish setup"}</Btn>
         </form>
       </section>
     </main>

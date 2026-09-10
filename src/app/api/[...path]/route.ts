@@ -121,6 +121,61 @@ async function handle(
   body?: Record<string, string>,
 ) {
   try {
+    if (route === "setup/status" && !body) {
+      const config = read<Record<string, string>>("config", {});
+      if (!config.password) {
+        const bootstrap = read<{ code?: string }>("setup-bootstrap", {});
+        if (!bootstrap.code) {
+          const code = randomBytes(12).toString("base64url");
+          save("setup-bootstrap", { code });
+          console.log(`\nInitial setup token: ${code}\n`);
+        }
+      }
+      return NextResponse.json({ configured: Boolean(config.password) });
+    }
+    if (route === "setup" && body) {
+      const existing = read<Record<string, string>>("config", {});
+      if (existing.password)
+        return fail("Initial setup has already been completed.", 409);
+      const bootstrap = read<{ code?: string }>("setup-bootstrap", {});
+      if (!bootstrap.code || !secureEqual(body.setupToken || "", bootstrap.code))
+        return fail("The setup token is incorrect.", 403);
+      const username = (body.username || "admin").trim();
+      if (!/^[a-zA-Z0-9_.-]{1,40}$/.test(username))
+        return fail("Use a username containing only letters, numbers, dots, dashes or underscores.");
+      if ((body.password || "").length < 12)
+        return fail("The password must contain at least 12 characters.");
+      if (body.password !== body.confirmPassword)
+        return fail("The passwords do not match.");
+
+      const salt = randomBytes(16).toString("hex");
+      save("config", { username, salt, password: hash(body.password, salt) });
+      save("setup-bootstrap", {});
+      const device = token();
+      const deviceDigest = digest(device);
+      save("devices", {
+        [deviceDigest]: {
+          name: (body.deviceName || "First browser").slice(0, 80),
+          created: new Date().toLocaleString("ro-RO"),
+        },
+      });
+      const sessionId = token();
+      sessions.set(sessionId, {
+        device: deviceDigest,
+        expires: Date.now() + 28800000,
+        created: Date.now(),
+      });
+      persistSessions();
+      audit("initial setup completed");
+      const response = NextResponse.json({ ok: true });
+      response.cookies.set("session", sessionId, {
+        httpOnly: true, secure: true, sameSite: "strict", maxAge: 28800, path: "/",
+      });
+      response.cookies.set("device", device, {
+        httpOnly: true, secure: true, sameSite: "strict", maxAge: 31536000, path: "/",
+      });
+      return response;
+    }
     if (route === "login" && body) {
       const attemptKey = loginKey(req);
       const retryAfter = blockedFor(attemptKey);

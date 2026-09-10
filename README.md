@@ -45,12 +45,11 @@ cp .env.example .env
 
 Edit `.env`, then follow the key and certificate setup in the installation guide.
 
-## Install without cloning Git
+## Quick install with Docker Compose
 
-If Docker is already installed on the server, this is the shortest supported
-deployment. Docker will fetch the application source from GitHub at build time;
-the local directory contains only your configuration, SSH material, and
-persistent dashboard data.
+If Docker is already installed, Compose downloads a pre-built `amd64` or `arm64`
+image from GHCR. The local directory contains only configuration, SSH material,
+and persistent dashboard data.
 
 ```bash
 mkdir -p ~/linux-server-control && cd ~/linux-server-control
@@ -84,16 +83,23 @@ chmod 600 data/key.pem
 sudo chown -R 1000:1000 data ssh
 ```
 
-Finally, choose a password and start it. Future upgrades are one command.
+Start the dashboard, then create the administrator account in the browser.
+Future upgrades are one command.
 
 ```bash
-DASHBOARD_PASSWORD='use-a-long-unique-password' docker compose run --rm dashboard node scripts/setup.mjs
-docker compose up -d --build
-# Upgrade later: docker compose build --pull dashboard && docker compose up -d
+docker compose up -d
+# Upgrade later:
+docker compose pull && docker compose up -d
 ```
 
-Open `https://LAN_IP:8443`. The first browser still needs an enrollment code;
-generate it with `docker compose run --rm dashboard node scripts/enroll.mjs`.
+Open `https://LAN_IP:8443`. On a fresh installation, the browser displays the
+account setup screen. Get its one-time token with
+`docker compose logs dashboard`; completing setup authorizes that first browser
+automatically. Additional browsers require an enrollment code generated from
+the Devices page.
+
+Set `VERSION=1` in `.env` after the first stable release if you prefer compatible
+updates within major version 1 instead of following `latest`.
 
 ## Security model
 

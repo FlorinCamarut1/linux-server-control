@@ -13,7 +13,8 @@ The application uses Next.js with TypeScript, the App Router, Docker Compose, an
 - `src/app/api/[...path]/route.ts` implements authenticated API routes.
 - `src/lib/server.ts` implements SSH, Docker, file, script, cron, and system-statistics helpers.
 - `compose.yaml` defines the dashboard and reverse proxy services.
-- `compose.github.yaml` is a standalone Compose file that builds the dashboard directly from GitHub `main`.
+- `compose.github.yaml` is a standalone Compose file that pulls the multi-architecture dashboard image from GHCR.
+- `.github/workflows/container.yml` publishes `latest`, semantic-version, and commit tags for `amd64` and `arm64`.
 - `.env.example` documents the required environment settings.
 
 ## Setup and deployment
@@ -28,7 +29,7 @@ docker compose ps
 
 Run `npm run build` before deploying source changes. Keep `.env`, SSH keys, dashboard data, enrollment codes, and passwords outside Git.
 
-For a no-clone deployment, download `compose.github.yaml` as `compose.yaml`, copy `.env.example`, create the `data` and `ssh` directories, then run `docker compose up -d --build`. The Compose build context is the GitHub repository. The administrator must still deliberately configure the SSH target, allowed paths, key, host fingerprint, LAN certificate, and initial password; these values cannot be safely inferred.
+For a no-clone deployment, download `compose.github.yaml` as `compose.yaml`, copy `.env.example`, create the `data` and `ssh` directories, then run `docker compose up -d`. Compose pulls `ghcr.io/florincamarut1/linux-server-control:latest` by default; `VERSION` can pin another published tag. The administrator must still deliberately configure the SSH target, allowed paths, key, host fingerprint, and LAN certificate; these values cannot be safely inferred. On a fresh data volume, the browser shows the account setup screen. Its one-time token is printed in the dashboard container logs, and the first browser is authorized when setup completes.
 
 ## Access control
 

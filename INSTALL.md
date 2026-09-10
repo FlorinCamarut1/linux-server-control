@@ -88,16 +88,17 @@ chmod 600 data/key.pem
 
 Replace the example IP. Browsers will warn about this self-signed certificate until you explicitly trust it on each device. Access remains restricted to `LAN_CIDR`.
 
-## 6. Build and create the account
+## 6. Start and create the account
 
 ```bash
-docker compose build
-DASHBOARD_PASSWORD='use-a-long-unique-password' \
-  docker compose run --rm dashboard node scripts/setup.mjs
 docker compose up -d
 ```
 
-The password must contain at least 12 characters. It can later be changed from **Account**.
+Open the dashboard, get the one-time setup token with
+`docker compose logs dashboard`, and create the administrator account in the
+browser. The password must contain at least 12 characters. It can later be
+changed from **Account**. Source checkouts using `compose.yaml` build locally;
+the standalone `compose.github.yaml` pulls the published GHCR image.
 
 Verify the deployment:
 
