@@ -51,6 +51,17 @@ If Docker is already installed, Compose downloads a pre-built `amd64` or `arm64`
 image from GHCR. The local directory contains only configuration, SSH material,
 and persistent dashboard data.
 
+The standalone Compose file uses the published image directly:
+
+```yaml
+services:
+  dashboard:
+    image: ghcr.io/florincamarut1/linux-server-control:latest
+    pull_policy: always
+```
+
+Download the complete Compose file and example configuration:
+
 ```bash
 mkdir -p ~/linux-server-control && cd ~/linux-server-control
 curl -fsSLo compose.yaml https://raw.githubusercontent.com/FlorinCamarut1/linux-server-control/main/compose.github.yaml
