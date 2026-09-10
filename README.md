@@ -43,7 +43,7 @@ docker compose up -d
 
 ## Security
 
-- Keep it on a trusted LAN or another private network. Do not expose port `8080` to the public internet.
+- Keep it on a trusted LAN or another private network. Do not expose port `8443` to the public internet.
 - Use a dedicated SSH key and verify the server fingerprint in `ssh/known_hosts`.
 - Keep `ALLOWED_PATHS` narrow. Anyone authorized in the dashboard can edit files in these folders and control Docker, which is effectively administrative access to the host.
 - Back up `.env`, `data/`, and `ssh/` privately. Never commit them.

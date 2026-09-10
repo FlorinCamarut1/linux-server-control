@@ -9,7 +9,7 @@ services:
     environment:
       DATA_DIR: /app/data
     ports:
-      - "${LAN_IP}:8080:3000"
+      - "${LAN_IP}:8443:3000"
     volumes:
       - ./data:/app/data
       - ./ssh:/run/ssh:ro

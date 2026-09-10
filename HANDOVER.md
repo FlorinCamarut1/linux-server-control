@@ -25,7 +25,7 @@ There are two supported application deployment paths:
 - `compose.yaml` builds the current source checkout locally.
 - `compose.github.yaml` pulls `ghcr.io/florincamarut1/linux-server-control:${VERSION:-latest}` from GHCR and does not require a repository clone.
 
-Both Compose files load runtime settings with `env_file: .env`; `DATA_DIR` is overridden inside the container as `/app/data`. The dashboard is served over plain HTTP on `${LAN_IP}:8080`, without a proxy or local certificate.
+Both Compose files load runtime settings with `env_file: .env`; `DATA_DIR` is overridden inside the container as `/app/data`. The dashboard is served over plain HTTP on `${LAN_IP}:8443`, without a proxy or local certificate.
 
 For a source checkout, copy `.env.example` to `.env`, configure the SSH target and private-network settings, then build and start the services:
 

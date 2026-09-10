@@ -95,7 +95,7 @@ docker compose up -d
 docker compose logs dashboard
 ```
 
-Open `http://YOUR_SERVER_IP:8080`, use the one-time token shown in the logs, create the account, and confirm the SSH settings. The first browser is authorized automatically.
+Open `http://YOUR_SERVER_IP:8443`, use the one-time token shown in the logs, create the account, and confirm the SSH settings. The first browser is authorized automatically.
 
 ## Update
 
@@ -120,4 +120,4 @@ docker compose exec -T dashboard ssh -o BatchMode=yes -o StrictHostKeyChecking=y
   "$SSH_TARGET" hostname
 ```
 
-If the browser cannot connect, confirm that port `8080` is allowed by the server firewall and that no router forwards it from the public internet.
+If the browser cannot connect, confirm that port `8443` is allowed by the server firewall and that no router forwards it from the public internet.
