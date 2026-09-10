@@ -48,7 +48,7 @@ An empty `DATA_DIR` no longer requires `scripts/setup.mjs`. The client checks `G
 - stores the scrypt password hash and salt in `config.json`;
 - consumes the bootstrap token;
 - registers the current browser as the first authorized device;
-- creates the initial session and secure cookies.
+- creates the initial session plus HTTP-only, SameSite-strict cookies.
 
 The initial `.env` remains the portable installation default. After setup, **Settings → Server connection** can update the SSH target, script root, allowed paths, and remote log folder in `server-settings.json`, then verifies the connection with `hostname`. These values are non-secret and are included in a dashboard-settings export; SSH keys and fingerprints remain external mounts.
 
@@ -63,6 +63,7 @@ After `config.json` contains a password, the setup endpoint refuses further init
 - Login uses a dashboard username and password.
 - New browsers require a time-limited enrollment code.
 - Sessions use HTTP-only, SameSite-strict cookies. Set `COOKIE_SECURE=true` only when an external HTTPS reverse proxy is added.
+- Cookie names are `lsc_session` and `lsc_device`. They intentionally differ from the earlier HTTPS-only `session` and `device` cookies, because browsers do not allow a plain-HTTP response to overwrite an existing Secure cookie with the same name.
 - POST requests validate their origin.
 - Five failed sign-ins from one source address result in a temporary block.
 - Keep the HTTP port on a trusted private LAN; do not expose the dashboard directly to the public internet.
@@ -117,6 +118,8 @@ Scheduled jobs use guided cron forms and managed comments so the dashboard chang
 
 ## Operational notes
 
+- The standard deployment is available at `http://${LAN_IP}:8443`. Port `8443` is retained to avoid collisions with common media-server services even though the protocol is now HTTP.
+- After migration from the former HTTPS deployment, each browser must enroll once under HTTP. The legacy Secure cookies are ignored; account credentials, devices, scripts, schedules, and history remain in `DATA_DIR` and are not reset.
 - Periodic host snapshots use asynchronous SSH reads in parallel. Concurrent snapshot requests share in-flight work; completed snapshots are not cached.
 - Files loads directory entries first and requests recursive folder sizes separately. Script and file pickers do not calculate recursive sizes. Size failures do not prevent navigation.
 - Automatic dashboard polling pauses while the browser tab is hidden and refreshes when it becomes visible. Scheduled polls do not overlap one another.
