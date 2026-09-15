@@ -395,11 +395,13 @@ export function addFolder(input: string) {
 }
 export function deleteDashboardFolder(input: string, deleteScripts = false) {
   const name = input.trim();
-  if (!name || name === "Unfiled") throw Error("Choose a dashboard folder");
+  if (!name) throw Error("Choose a dashboard folder");
   const stored = read<string[]>("folders", []);
-  if (!stored.includes(name) && !scripts().some((script) => script.folder === name))
+  const belongsToFolder = (script: Script) =>
+    name === "Unfiled" ? !script.folder : script.folder === name;
+  if (!stored.includes(name) && !scripts().some(belongsToFolder))
     throw Error("Folder not found");
-  const removedScripts = scripts().filter((script) => script.folder === name);
+  const removedScripts = scripts().filter(belongsToFolder);
   if (removedScripts.length && !deleteScripts)
     throw Error("This folder still contains scripts");
   const removedIds = new Set(removedScripts.map((script) => script.id));

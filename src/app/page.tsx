@@ -464,25 +464,23 @@ export default function Home() {
                       <b>{folder}</b>
                       <small>{scripts.length} script{scripts.length === 1 ? "" : "s"}</small>
                     </span>
-                    {folder !== "Unfiled" && (
-                      <Btn
-                        className="danger folder-delete"
-                        disabled={!!busy}
-                        title={`Delete ${folder}`}
-                        onClick={async (event) => {
-                          event.preventDefault();
-                          event.stopPropagation();
-                          const description = scripts.length
-                            ? `Delete “${folder}”, all ${scripts.length} scripts registered in it, and their scheduled jobs? The .sh files will remain on the server.`
-                            : `Delete the empty folder “${folder}”?`;
-                          if (await appConfirm(description, "Delete folder", "Delete", true))
-                            await action(`folder:${folder}`, "folder/delete", { name: folder, deleteScripts: String(scripts.length > 0) });
-                        }}
-                      >
-                        <Trash2 size={15} />
-                        Delete folder
-                      </Btn>
-                    )}
+                    <Btn
+                      className="danger folder-delete"
+                      disabled={!!busy}
+                      title={`Delete ${folder}`}
+                      onClick={async (event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        const description = scripts.length
+                          ? `Delete “${folder}”, all ${scripts.length} scripts registered in it, and their scheduled jobs? The .sh files will remain on the server.`
+                          : `Delete the empty folder “${folder}”?`;
+                        if (await appConfirm(description, "Delete folder", "Delete", true))
+                          await action(`folder:${folder}`, "folder/delete", { name: folder, deleteScripts: String(scripts.length > 0) });
+                      }}
+                    >
+                      <Trash2 size={15} />
+                      Delete folder
+                    </Btn>
                     <ChevronDown className="chevron" size={18} />
                   </summary>
                   {scripts.map((s) => (
