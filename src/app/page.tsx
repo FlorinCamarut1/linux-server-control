@@ -615,7 +615,7 @@ export default function Home() {
             {!state.alerts?.length && <div className="empty-state"><Thermometer size={22}/><b>No alert rules yet</b><p>Add thresholds for server health and jobs.</p></div>}
           </Panel>
         )}
-        {tab === "settings" && <><ServerSettings /><Panel title="Storage monitoring" note="Choose which mounted paths appear in capacity cards."><Btn onClick={() => setStorageManager(true)}><HardDrive size={16}/>Manage storage paths</Btn></Panel><DevicePanel devices={state.devices} revoke={(id) => action(id, "device/revoke", { id })} createCode={async () => { try { setEnrollment(await api("enrollment/create", { minutes: "15" })); setCopied(false); } catch (e) { setErr(e instanceof Error ? e.message : "Error"); } }} /><PasswordForm /><ConfigurationPanel refresh={refresh} /></>}
+        {tab === "settings" && <><ServerSettings /><Panel title="Storage monitoring" note="Choose which mounted paths appear in capacity cards."><div className="panel-body"><Btn onClick={() => setStorageManager(true)}><HardDrive size={16}/>Manage storage paths</Btn></div></Panel><DevicePanel devices={state.devices} revoke={(id) => action(id, "device/revoke", { id })} createCode={async () => { try { setEnrollment(await api("enrollment/create", { minutes: "15" })); setCopied(false); } catch (e) { setErr(e instanceof Error ? e.message : "Error"); } }} /><PasswordForm /><ConfigurationPanel refresh={refresh} /></>}
       </main>
       {logs && (
         <LiveLogViewer logs={logs} close={() => setLogs(null)} />
@@ -2058,7 +2058,7 @@ function ServerSettings() {
   const [message, setMessage] = useState(""); const [error, setError] = useState("");
   useEffect(() => { void api("settings/server").then(setSettings).catch((reason) => setError(reason instanceof Error ? reason.message : "Could not load server settings")); }, []);
   return <Panel title="Server connection" note="The SSH key and known_hosts stay in Docker mounts; this page stores only the connection and permitted paths.">
-    {!settings ? <p>{error || "Loading server settings…"}</p> : <form className="account-form" onSubmit={async (event) => { event.preventDefault(); setMessage(""); setError(""); try { const result = await api("settings/server", Object.fromEntries(new FormData(event.currentTarget))); setSettings(result.settings); setMessage(`Connection verified: ${result.connection.host}.`); } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not save settings"); } }}>
+    {!settings ? <div className="panel-body"><p>{error || "Loading server settings…"}</p></div> : <form className="account-form" onSubmit={async (event) => { event.preventDefault(); setMessage(""); setError(""); try { const result = await api("settings/server", Object.fromEntries(new FormData(event.currentTarget))); setSettings(result.settings); setMessage(`Connection verified: ${result.connection.host}.`); } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not save settings"); } }}>
       <label>SSH target <input name="sshTarget" defaultValue={settings.sshTarget} placeholder="user@server" spellCheck={false} /><small>Leave empty only when the dashboard runs on the server itself.</small></label>
       <label>Script root <input name="scriptRoot" required defaultValue={settings.scriptRoot} spellCheck={false} /></label>
       <label>Allowed paths <input name="allowedPaths" required defaultValue={settings.allowedPaths.join(", ")} spellCheck={false} /><small>Comma-separated absolute paths. File and script access is limited to these locations.</small></label>
@@ -2089,18 +2089,20 @@ function HistoryPanel({ runs, cronRuns, metrics, openLog }: { runs: St["runs"]; 
       <Metric label="Samples retained" value={String(metrics.length)} note="Retention is configurable on the server" icon={<Clock3 />} />
     </section>
     <Panel title="Execution history" note="Search, filter, and review manual script runs or scheduled cron jobs.">
-      <div className="container-filters" aria-label="History type">
-        <button type="button" className={kind === "scripts" ? "active" : ""} onClick={() => switchKind("scripts")}>Script runs <span>{runs.length}</span></button>
-        <button type="button" className={kind === "cron" ? "active" : ""} onClick={() => switchKind("cron")}>Cron runs <span>{cronRuns.length}</span></button>
-      </div>
-      <div className="actions" style={{ margin: "16px 0" }}>
-        <input aria-label="Search execution history" value={search} onChange={(event) => { setSearch(event.target.value); setPage(0); }} placeholder={kind === "scripts" ? "Search script name or run" : "Search cron schedule"} />
-        <select aria-label="Filter status" value={status} onChange={(event) => { setStatus(event.target.value); setPage(0); }}><option value="all">All statuses</option><option value="success">Success</option><option value="failed">Failed</option><option value="running">Running</option></select>
+      <div className="panel-toolbar history-toolbar">
+        <div className="container-filters" aria-label="History type">
+          <button type="button" className={kind === "scripts" ? "active" : ""} onClick={() => switchKind("scripts")}>Script runs <span>{runs.length}</span></button>
+          <button type="button" className={kind === "cron" ? "active" : ""} onClick={() => switchKind("cron")}>Cron runs <span>{cronRuns.length}</span></button>
+        </div>
+        <div className="history-fields">
+          <input aria-label="Search execution history" value={search} onChange={(event) => { setSearch(event.target.value); setPage(0); }} placeholder={kind === "scripts" ? "Search script name or run" : "Search cron schedule"} />
+          <select aria-label="Filter status" value={status} onChange={(event) => { setStatus(event.target.value); setPage(0); }}><option value="all">All statuses</option><option value="success">Success</option><option value="failed">Failed</option><option value="running">Running</option></select>
+        </div>
         <small>{filtered.length} result{filtered.length === 1 ? "" : "s"}</small>
       </div>
       {visible.map((row, index) => kind === "scripts" ? (() => { const run = row as St["runs"][number]; return <div className="schedule-row" key={run.id}><div className="grow"><b>{run.scriptName}</b><small>{new Date(run.startedAt).toLocaleString()} · {run.arguments || "no arguments"} · {run.durationMs === undefined ? "in progress" : `${(run.durationMs / 1000).toFixed(1)}s`}</small></div><span className={`badge ${run.status === "success" ? "up" : run.status === "failed" ? "down" : "root"}`}>{run.status}{run.status === "failed" && run.exitCode !== undefined ? ` · code ${run.exitCode}` : ""}</span><Btn onClick={() => openLog(run)}>Log</Btn></div>; })() : (() => { const run = row as St["cronRuns"][number]; return <div className="schedule-row" key={`${run.scheduleId}-${run.startedAt}-${index}`}><div className="grow"><b>{run.label}</b><small>Started {new Date(run.startedAt).toLocaleString()}{run.completedAt ? ` · completed ${new Date(run.completedAt).toLocaleString()}` : ""}</small></div><span className={`badge ${run.status === "success" ? "up" : run.status === "failed" ? "down" : "root"}`}>{run.status}{run.status === "failed" && run.exitCode !== undefined ? ` · code ${run.exitCode}` : ""}</span></div>; })())}
       {!filtered.length && <div className="empty-state"><Clock3 size={22}/><b>{search || status !== "all" ? "No matching runs" : kind === "scripts" ? "No execution history yet" : "No cron runs recorded yet"}</b><p>{kind === "scripts" ? "Runs started from the dashboard will appear here." : "Save or change an existing schedule to enable tracking."}</p></div>}
-      {filtered.length > perPage && <div className="actions" style={{ marginTop: 16 }}><Btn disabled={page === 0} onClick={() => setPage((value) => value - 1)}>Previous</Btn><small>Page {page + 1} of {pages}</small><Btn disabled={page + 1 >= pages} onClick={() => setPage((value) => value + 1)}>Next</Btn></div>}
+      {filtered.length > perPage && <div className="actions panel-pagination"><Btn disabled={page === 0} onClick={() => setPage((value) => value - 1)}>Previous</Btn><small>Page {page + 1} of {pages}</small><Btn disabled={page + 1 >= pages} onClick={() => setPage((value) => value + 1)}>Next</Btn></div>}
     </Panel>
   </>;
 }
@@ -2119,9 +2121,11 @@ function AlertForm({ initial, close, done }: { initial: St["alerts"][number] | n
 function ConfigurationPanel({ refresh }: { refresh: () => Promise<void> }) {
   const [message, setMessage] = useState(""); const [error, setError] = useState("");
   return <Panel title="Dashboard settings backup" note="Exports dashboard scripts, schedules, folders, alerts, and authorized devices. It does not contain server files, Docker data, passwords, SSH keys, or sessions.">
-    <div className="actions configuration-actions"><Btn onClick={async () => { const data = await api("config/export"); const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }); const link = document.createElement("a"); link.href = URL.createObjectURL(blob); link.download = "media-dashboard-settings.json"; link.click(); URL.revokeObjectURL(link.href); setMessage("Settings export downloaded."); }}>Export dashboard settings</Btn>
-      <label className="button">Restore dashboard settings<input type="file" accept="application/json" hidden onChange={async (event) => { const file = event.target.files?.[0]; if (!file || !await appConfirm("Restore dashboard settings and overwrite scripts, folders, schedules, devices and alerts?", "Restore dashboard settings", "Restore", true)) return; try { await api("config/restore", { payload: await file.text() }); await refresh(); setMessage("Dashboard settings restored."); } catch (reason) { setError(reason instanceof Error ? reason.message : "Restore failed"); } }} /></label></div>
-    {message && <div className="success">{message}</div>}{error && <div className="alert">{error}</div>}
+    <div className="panel-body">
+      <div className="actions configuration-actions"><Btn onClick={async () => { const data = await api("config/export"); const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }); const link = document.createElement("a"); link.href = URL.createObjectURL(blob); link.download = "media-dashboard-settings.json"; link.click(); URL.revokeObjectURL(link.href); setMessage("Settings export downloaded."); }}>Export dashboard settings</Btn>
+        <label className="button">Restore dashboard settings<input type="file" accept="application/json" hidden onChange={async (event) => { const file = event.target.files?.[0]; if (!file || !await appConfirm("Restore dashboard settings and overwrite scripts, folders, schedules, devices and alerts?", "Restore dashboard settings", "Restore", true)) return; try { await api("config/restore", { payload: await file.text() }); await refresh(); setMessage("Dashboard settings restored."); } catch (reason) { setError(reason instanceof Error ? reason.message : "Restore failed"); } }} /></label></div>
+      {message && <div className="success panel-feedback">{message}</div>}{error && <div className="alert panel-feedback">{error}</div>}
+    </div>
   </Panel>;
 }
 function StorageManager({ paths, close, done }: { paths: string[]; close: () => void; done: () => Promise<void> }) {
