@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   addScript,
   addFolder,
+  deleteDashboardFolder,
   audit,
   browseScripts,
   browseFiles,
@@ -516,6 +517,12 @@ async function handle(
       addFolder(body.name || "");
       audit("folder created " + (body.name || "").trim());
       return NextResponse.json({ ok: true });
+    }
+    if (route === "folder/delete" && body) {
+      return NextResponse.json({
+        ok: true,
+        ...deleteDashboardFolder(body.name || "", body.deleteScripts === "true"),
+      });
     }
     if (route === "schedule/save" && body) {
       const script = scripts().find((item) => item.id === body.scriptId);

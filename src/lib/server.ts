@@ -393,6 +393,27 @@ export function addFolder(input: string) {
   const all = folders();
   if (!all.includes(name)) save("folders", [...all, name]);
 }
+export function deleteDashboardFolder(input: string, deleteScripts = false) {
+  const name = input.trim();
+  if (!name || name === "Unfiled") throw Error("Choose a dashboard folder");
+  const stored = read<string[]>("folders", []);
+  if (!stored.includes(name) && !scripts().some((script) => script.folder === name))
+    throw Error("Folder not found");
+  const removedScripts = scripts().filter((script) => script.folder === name);
+  if (removedScripts.length && !deleteScripts)
+    throw Error("This folder still contains scripts");
+  const removedIds = new Set(removedScripts.map((script) => script.id));
+  save("folders", stored.filter((folder) => folder !== name));
+  if (removedIds.size) {
+    save("scripts", scripts().filter((script) => !removedIds.has(script.id)));
+    const removedSchedules = schedules().filter((item) => removedIds.has(item.scriptId));
+    const remainingSchedules = schedules().filter((item) => !removedIds.has(item.scriptId));
+    save("schedules", remainingSchedules);
+    syncCron(remainingSchedules, removedSchedules.map((item) => item.runAs || "user"));
+  }
+  audit(`folder deleted ${name} (${removedScripts.length} scripts)`);
+  return { deletedScripts: removedScripts.length };
+}
 export function schedules(): Schedule[] {
   const stored = read<Schedule[]>("schedules", []).map((item) => ({
     ...item,

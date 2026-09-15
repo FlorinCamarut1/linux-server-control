@@ -522,7 +522,7 @@ header p,
 }
 .script-folder summary {
   display: grid;
-  grid-template-columns: 24px 1fr 20px;
+  grid-template-columns: 24px minmax(0, 1fr) auto 20px;
   align-items: center;
   gap: 9px;
   padding: 13px var(--panel-space-x);
@@ -530,6 +530,9 @@ header p,
   list-style: none;
   background: #0d1218;
   color: var(--accent);
+}
+.folder-delete {
+  color: var(--danger);
 }
 .script-folder summary::-webkit-details-marker {
   display: none;
