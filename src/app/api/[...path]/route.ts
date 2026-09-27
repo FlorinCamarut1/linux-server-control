@@ -56,13 +56,13 @@ type LoginAttempt = { failures: number; firstFailure: number; blockedUntil: numb
 const loginAttempts = new Map<string, LoginAttempt>();
 const LOGIN_WINDOW_MS = 15 * 60 * 1000;
 const LOGIN_BLOCK_MS = 15 * 60 * 1000;
-const LOGIN_MAX_FAILURES = 5;
-function loginKey(req: NextRequest) {
-  return (
-    req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
-    req.headers.get("x-real-ip") ||
-    "unknown"
-  );
+// Without a reverse proxy the client address cannot be trusted (clients may send
+// their own X-Forwarded-For), so attempts are grouped by what cannot be forged:
+// each enrolled browser has its own bucket, and all unknown browsers share one.
+// Guessing from new browsers therefore can never lock out an enrolled browser.
+const NEW_BROWSER_BUCKET = "new-browser";
+function loginLimit(key: string) {
+  return key === NEW_BROWSER_BUCKET ? 10 : 5;
 }
 function blockedFor(key: string) {
   const attempt = loginAttempts.get(key);
@@ -80,10 +80,17 @@ function recordLoginFailure(key: string) {
     !previous || now - previous.firstFailure > LOGIN_WINDOW_MS
       ? { failures: 1, firstFailure: now, blockedUntil: 0 }
       : { ...previous, failures: previous.failures + 1 };
-  if (attempt.failures >= LOGIN_MAX_FAILURES)
+  if (attempt.failures >= loginLimit(key))
     attempt.blockedUntil = now + LOGIN_BLOCK_MS;
   loginAttempts.set(key, attempt);
   return attempt.blockedUntil > now;
+}
+function tooManyAttempts(seconds: number) {
+  return fail(
+    `Too many sign-in attempts. Try again in ${Math.ceil(seconds / 60)} minute(s).`,
+    429,
+    { "Retry-After": String(seconds) },
+  );
 }
 function allowed(req: NextRequest) {
   const origin = req.headers.get("origin");
@@ -165,7 +172,7 @@ async function handle(
         return fail(`Server connection could not be verified: ${error instanceof Error ? error.message : "unknown error"}`, 400);
       }
       const salt = randomBytes(16).toString("hex");
-      save("config", { username, salt, password: hash(body.password, salt) });
+      save("config", { username, salt, password: await hash(body.password, salt) });
       save("setup-bootstrap", {});
       const device = token();
       const deviceDigest = digest(device);
@@ -193,14 +200,6 @@ async function handle(
       return response;
     }
     if (route === "login" && body) {
-      const attemptKey = loginKey(req);
-      const retryAfter = blockedFor(attemptKey);
-      if (retryAfter)
-        return fail(
-          `Too many sign-in attempts. Try again in ${Math.ceil(retryAfter / 60)} minute(s).`,
-          429,
-          { "Retry-After": String(retryAfter) },
-        );
       if (
         process.env.NODE_ENV === "development" &&
         body.username === "demo" &&
@@ -221,41 +220,43 @@ async function handle(
         });
         return res;
       }
-      const cfg = read<Record<string, string>>("config", {});
-      if (
-        body.username !== cfg.username ||
-        !secureEqual(
-          hash(body.password || "", cfg.salt || "00"),
-          cfg.password || "",
-        )
-      )
-        return recordLoginFailure(attemptKey)
-          ? fail("Too many sign-in attempts. Try again in 15 minutes.", 429, {
-              "Retry-After": String(LOGIN_BLOCK_MS / 1000),
-            })
-          : fail("Incorrect username or password", 401);
       let device = req.cookies.get("lsc_device")?.value || "";
       const devices = read<Record<string, { name: string; created: string }>>(
         "devices",
         {},
       );
-      if (!devices[digest(device)]) {
-        const enroll = read<{ code?: string; expires?: number }>("enroll", {});
-        if (
-          (enroll.expires || 0) < Date.now() / 1000 ||
-          !secureEqual(body.code || "", enroll.code || "invalid")
-        )
-          return fail(
-            "New browser: enter an enrollment code generated in the dashboard.",
-            403,
-          );
+      const enrolled = Boolean(device && devices[digest(device)]);
+      const attemptKey = enrolled ? `device:${digest(device)}` : NEW_BROWSER_BUCKET;
+      const retryAfter = blockedFor(attemptKey);
+      if (retryAfter) return tooManyAttempts(retryAfter);
+      const rejected = (message: string, status: number) =>
+        recordLoginFailure(attemptKey) ? tooManyAttempts(LOGIN_BLOCK_MS / 1000) : fail(message, status);
+      // A new browser must present a valid enrollment code before its password is
+      // checked, so it cannot learn whether a guessed password is correct.
+      const enroll = read<{ code?: string; expires?: number }>("enroll", {});
+      if (
+        !enrolled &&
+        ((enroll.expires || 0) < Date.now() / 1000 ||
+          !secureEqual(body.code || "", enroll.code || "invalid"))
+      )
+        return rejected("New browser: enter an enrollment code generated in the dashboard.", 403);
+      const cfg = read<Record<string, string>>("config", {});
+      // Both checks always run, so the response time does not reveal the username.
+      const passwordMatches = secureEqual(
+        await hash(body.password || "", cfg.salt || "00"),
+        cfg.password || "",
+      );
+      if (!secureEqual(body.username || "", cfg.username || "") || !passwordMatches)
+        return rejected("Incorrect username or password", 401);
+      if (!enrolled) {
         device = token();
         devices[digest(device)] = {
           name: (body.deviceName || "Browser").slice(0, 80),
-          created: new Date().toLocaleString("ro-RO"),
+          created: new Date().toISOString(),
         };
         save("devices", devices);
         save("enroll", {});
+        audit("device enrolled " + digest(device).slice(0, 12));
       }
       const session = token();
       loginAttempts.delete(attemptKey);
@@ -415,7 +416,7 @@ async function handle(
       const config = read<Record<string, string>>("config", {});
       if (
         !secureEqual(
-          hash(body.currentPassword || "", config.salt || "00"),
+          await hash(body.currentPassword || "", config.salt || "00"),
           config.password || "",
         )
       )
@@ -428,7 +429,7 @@ async function handle(
       save("config", {
         ...config,
         salt,
-        password: hash(body.newPassword, salt),
+        password: await hash(body.newPassword, salt),
       });
       for (const key of sessions.keys()) if (key !== sid) sessions.delete(key);
       persistSessions();

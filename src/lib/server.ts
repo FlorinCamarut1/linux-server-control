@@ -2,7 +2,7 @@ import { execFile, spawn } from "node:child_process";
 import {
   createHash,
   randomBytes,
-  scryptSync,
+  scrypt,
   timingSafeEqual,
   randomUUID,
 } from "node:crypto";
@@ -665,11 +665,9 @@ export async function collectCronRuns() {
   const all = [...parsed, ...active.values()].slice(-500).reverse(); save("cron-runs", all); return all;
 }
 export function hash(password: string, salt: string) {
-  return scryptSync(password, Buffer.from(salt, "hex"), 64, {
-    N: 16384,
-    r: 8,
-    p: 1,
-  }).toString("hex");
+  return new Promise<string>((resolve, reject) =>
+    scrypt(password, Buffer.from(salt, "hex"), 64, { N: 16384, r: 8, p: 1 }, (error, key) =>
+      error ? reject(error) : resolve(key.toString("hex"))));
 }
 export function secureEqual(a: string, b: string) {
   const x = Buffer.from(a),
