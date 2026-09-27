@@ -57,6 +57,7 @@ small {
 }
 .shell {
   min-height: 100vh;
+  min-height: 100dvh;
   display: grid;
   grid-template-columns: var(--sidebar-w) 1fr;
 }
@@ -68,6 +69,7 @@ aside {
   position: sticky;
   top: 0;
   height: 100vh;
+  height: 100dvh;
   background: #0c1015;
 }
 .brand {
@@ -254,6 +256,7 @@ header p,
 }
 .loading-screen {
   min-height: 100vh;
+  min-height: 100dvh;
   display: grid;
   place-items: center;
   text-align: center;
@@ -726,6 +729,7 @@ a.button {
   border-radius: var(--radius-lg);
   width: min(850px, 96vw);
   max-height: 90vh;
+  max-height: 90dvh;
   overflow: auto;
   box-shadow: 0 25px 80px #000;
 }
@@ -1251,6 +1255,7 @@ select:focus {
 }
 .login-wrap {
   min-height: 100vh;
+  min-height: 100dvh;
   display: grid;
   place-items: center;
 }
@@ -1283,6 +1288,15 @@ select:focus {
 }
 .enroll[open] summary {
   margin-bottom: 16px;
+}
+/* Browsers on phones zoom in on fields with text smaller than 16px. */
+@media (pointer: coarse) {
+  input:not([type="checkbox"]):not([type="radio"]),
+  select,
+  textarea,
+  .file-editor textarea {
+    font-size: 16px;
+  }
 }
 .spin {
   animation: spin 1s linear infinite;
@@ -1477,6 +1491,7 @@ select:focus {
   .modal {
     width: 100%;
     max-height: calc(100vh - 20px);
+    max-height: calc(100dvh - 20px);
   }
   .modal .panel-head {
     align-items: center;
