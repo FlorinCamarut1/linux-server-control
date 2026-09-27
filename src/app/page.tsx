@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiError, api } from "@/lib/client-api";
 import { Login, ConnectionUnavailable, Setup } from "@/components/auth";
 import { ContainerRow } from "@/components/containers";
+import { PowerPage } from "@/components/power";
 import { containerLinks } from "@/lib/container-links";
 import { FileExplorer } from "@/components/files";
 import { Overview, HistoryPanel, AlertForm } from "@/components/monitoring";
@@ -12,6 +13,7 @@ import { AppearancePanel, PasswordForm, DevicePanel, ServerSettings, Configurati
 import { appConfirm, Btn, copyText, Panel, Metric, formatBytes, formatPercent, formatUptime, Modal, DialogHost, LiveLogViewer, AppLoading, LoadingScreen } from "@/components/ui";
 import type { S, Schedule, St } from "@/lib/types";
 import {
+  Zap,
   CalendarPlus,
   ChevronDown,
   Clock3,
@@ -190,6 +192,7 @@ export default function Home() {
     ["scripts", FileTerminal, "Scripts"],
     ["files", FolderOpen, "Files"],
     ["cron", Clock3, "Schedules"],
+    ["power", Zap, "Power"],
     ["history", Clock3, "History"],
     ["alerts", Thermometer, "Alerts"],
     ["settings", KeyRound, "Settings"],
@@ -239,6 +242,7 @@ export default function Home() {
                   scripts: "Scripts",
                   files: "Files",
                   cron: "Schedules",
+                  power: "Power",
                   history: "History",
                   alerts: "Alerts",
                   settings: "Settings",
@@ -557,6 +561,7 @@ export default function Home() {
           </Panel>
         )}
         {tab === "history" && <HistoryPanel runs={state.runs || []} cronRuns={state.cronRuns || []} metrics={state.metrics} openLog={(run) => openLogs(`${run.scriptName} run`, "script/log", { id: run.scriptId, runId: run.id })} />}
+        {tab === "power" && <PowerPage />}
         {tab === "alerts" && (
           <Panel title="Alert rules" note="Rules are checked every 5 minutes and on each dashboard refresh; cooldowns prevent repeated notifications." extra={<Btn className="primary" onClick={() => setAlertEditor(null)}>New alert</Btn>}>
             {(state.alerts || []).map((rule) => <div className="schedule-row" key={rule.id}><div className="grow"><b>{rule.name}</b><small>{rule.metric} ≥ {rule.threshold} · cooldown {rule.cooldownMinutes} min{rule.lastTriggeredAt ? ` · last triggered ${new Date(rule.lastTriggeredAt).toLocaleString()}` : ""}</small></div><span className={`badge ${rule.enabled ? "up" : "down"}`}>{rule.enabled ? "Enabled" : "Paused"}</span><div className="actions"><Btn onClick={() => setAlertEditor(rule)}>Edit</Btn><Btn className="danger" onClick={() => action(rule.id, "alerts/delete", { id: rule.id })}><Trash2 size={15}/>Delete</Btn></div></div>)}

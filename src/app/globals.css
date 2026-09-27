@@ -695,9 +695,13 @@ header p,
   height: 2px;
   border-radius: 2px;
 }
+.chart-legend i.square {
+  width: 10px;
+  height: 10px;
+}
 .chart-end-label {
   position: absolute;
-  right: 0;
+  right: 24px;
   transform: translateY(-50%) translateY(-12px);
   color: var(--text-soft);
   font-size: var(--text-xs);
@@ -761,6 +765,30 @@ header p,
   background: var(--surface);
   color: var(--muted);
   font-weight: 600;
+}
+.price-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+  padding: var(--panel-space-y) var(--panel-space-x);
+  border-top: 1px solid var(--line);
+}
+.price-form label {
+  margin: 0;
+  width: 160px;
+}
+.price-feedback {
+  align-self: center;
+  color: var(--success-text);
+}
+.price-feedback.error {
+  color: var(--danger-text);
+}
+.form-note {
+  display: block;
+  margin-top: 12px;
+  color: var(--muted);
 }
 .theme-grid {
   display: grid;

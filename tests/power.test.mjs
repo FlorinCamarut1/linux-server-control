@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 import { createServer } from "node:http";
 import test from "node:test";
-import { loadPower, loadServer } from "./harness.mjs";
+import { loadPower, loadServer, plain } from "./harness.mjs";
 
 const sha256 = (...parts) => createHash("sha256").update(Buffer.concat(parts)).digest();
 const sha1 = (value) => createHash("sha1").update(value).digest();
@@ -125,4 +125,15 @@ test("secrets stay on the server and a blank secret keeps the stored one", async
   assert.equal(stored.config.password, "secret");
   await assert.rejects(power.savePowerDevice({ name: "Other", driver: "tapo", host, username: "me@example.com", password: "wrong" }), /not accepted/);
   assert.equal(readJson("power-devices").length, 1, "a device that cannot be read is not saved");
+});
+
+test("long-range power history shows completed hours only", () => {
+  const { server } = loadServer();
+  const power = loadPower(server);
+  const hour = Math.floor(Date.now() / 3600000) * 3600000;
+  server.save("power-devices", [{ id: "plug", name: "Plug", driver: "shelly", enabled: true, config: { host: "127.0.0.1" } }]);
+  server.save("power", { plug: { recent: [], hourly: [{ at: hour - 3600000, wh: 60, maxW: 70 }, { at: hour, wh: 2, maxW: 60 }] } }, false);
+  const week = power.powerHistory("7d");
+  assert.deepEqual(plain(week.power[0].points.map((point) => point.w)), [60]);
+  assert.equal(week.energy[0].hours.length, 2, "energy still includes the current hour");
 });

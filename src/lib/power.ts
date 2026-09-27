@@ -287,8 +287,9 @@ export function powerHistory(range: "24h" | "7d" | "30d") {
     const live = state[device.id];
     const points = range === "24h"
       ? (live?.recent ?? []).filter((sample) => sample.at >= from).map((sample) => ({ at: sample.at, w: sample.w }))
-      // An hour's energy in Wh equals its average power in W.
-      : (live?.hourly ?? []).filter((hour) => hour.at >= from).map((hour) => ({ at: hour.at + HOUR / 2, w: hour.wh }));
+      // An hour's energy in Wh equals its average power in W, so only
+      // completed hours are shown; the current one would read too low.
+      : (live?.hourly ?? []).filter((hour) => hour.at >= from && hour.at + HOUR <= now).map((hour) => ({ at: hour.at + HOUR / 2, w: hour.wh }));
     return { id: device.id, points };
   });
   const energy = devices.map((device) => ({ id: device.id, hours: (state[device.id]?.hourly ?? []).filter((hour) => hour.at >= now - 31 * 24 * HOUR).map((hour) => ({ at: hour.at, wh: hour.wh })) }));

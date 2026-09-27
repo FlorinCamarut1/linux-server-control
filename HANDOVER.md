@@ -122,6 +122,18 @@ Adjust the example path to the configured directory and confirm permissions on e
 
 Root cron access has a wider trust boundary. The helper can replace root's crontab. Custom commands are permitted only for the normal SSH user; root schedules are restricted by the application to approved scripts. Treat access to this dashboard as administrative access, keep it behind a private LAN or VPN, and enable root cron only where this behavior is intended.
 
+## Power monitoring
+
+The Power page records smart plugs and energy meters. `src/lib/power.ts` defines a driver per device model: the fields of its settings form and a function that reads the current power. Drivers exist for TP-Link Tapo P110/P115 (the local KLAP protocol with the Tapo account, implemented with Node's crypto), Shelly Gen1 and Gen2+ (Gen2+ with authentication disabled), Tasmota, and any Home Assistant power sensor through its REST API and a long-lived token. A new model needs only a new driver in the `DRIVERS` list.
+
+Enabled devices are read every minute by a timer started in `src/instrumentation.ts`. Energy is the power integrated between consecutive readings (trapezoid), not counted across gaps longer than 10 minutes, so every driver is measured the same way. `power.json` keeps 48 hours of minute readings and hourly energy totals for the metric retention period; the browser groups hours into days in its own time zone. Device settings are in `power-devices.json`: passwords and tokens are never sent to the browser, a blank secret on save keeps the stored one, and a device is only saved after a successful reading. The price per kWh and currency, used for the monthly cost, are in `power-settings.json`. Dashboard settings exports do not include power devices, so no plug credentials leave the server.
+
+## Themes and charts
+
+Colors are role tokens in `globals.css`; the Dark default, Light, Nord, Dracula, and Solarized themes assign them, and System follows the device. Each theme passes WCAG AA for text on its surfaces and defines `--series-1` to `--series-8`, the chart palette validated for its surface. The theme is chosen under Settings > Appearance and stored per browser; an inline script in the document head applies it before the first paint.
+
+`src/components/charts.tsx` draws line and stacked column charts as SVG: a legend for two or more series, a crosshair tooltip that also works with the arrow keys, and a table view for every chart. The History page charts CPU and RAM, temperature, and storage use per path from `history/metrics`, which averages a range into at most 288 points.
+
 ## Schedules and logs
 
 Scheduled jobs use guided cron forms and managed comments so the dashboard changes only its own entries. Every `%` in a managed line is escaped, because cron would otherwise treat it as a newline. Crontab updates run one at a time and always install the latest saved schedules. Only a missing crontab (`no crontab for USER`, or BusyBox's `can't open`) is treated as empty; any other read failure aborts the update instead of replacing the user's own entries. The latest 20 crontab backups per user are kept in `DATA_DIR`. Managed schedules emit start/end markers to the remote `schedules.log`; the History page presents a searchable, status-filtered, paginated cron-run view. Manual script runs persist start/end time, exit code, duration, arguments, status, and a per-run captured log. The newest 2,000 runs are kept, and the logs of older runs are deleted. Runs still marked as running when the server starts are marked failed with an interruption note, because the restart ended their SSH session. Container and script log viewers can refresh automatically while live mode is enabled.
@@ -154,7 +166,6 @@ Scheduled jobs use guided cron forms and managed comments so the dashboard chang
 - Folder sizes require a recursive `du` scan. Entries appear first, but size calculation can remain expensive on very large directory trees.
 - The Files API returns at most 300 entries per directory; pagination applies within that bounded result set rather than to arbitrarily large remote directories.
 - Alerts are evaluated by the background monitor and during dashboard refreshes, and written to the audit log. They do not yet send email, push, or chat notifications.
-- Metric history currently appears as latest-value cards and counts; compact time-series charts have not been added yet.
 - The automated tests cover snapshot concurrency, cron synchronization and escaping, configuration restore validation, schedule and alert rules, metric sampling, and run recovery. Authentication, file operations, and responsive UI flows still need integration coverage.
 - Root schedules run the approved script directly from root's crontab, not through `media-dashboard-root-run`, so the root-script directory allowlist does not apply to them. Only scripts registered in the dashboard can be scheduled as root.
 - The dashboard distinguishes a lost SSH connection from a login failure and displays a reconnect screen. Settings can be edited after connectivity returns; the reconnect screen intentionally avoids presenting a configuration form while the server cannot be verified.
@@ -162,7 +173,7 @@ Scheduled jobs use guided cron forms and managed comments so the dashboard chang
 ## Recommended next work
 
 1. Add actual notification delivery for alert rules (email, webhook, or a user-selected provider), while retaining the existing cooldown behavior.
-2. Add compact CPU, RAM, temperature, and disk time-series charts with configurable aggregation and retention.
+2. Test the Tapo driver against more plug firmware versions, and consider switching plugs on and off from the Power page.
 3. Add roles such as administrator and read-only operator if the dashboard will be shared by multiple people.
 4. Expand integration tests around authentication, allowed-path enforcement, file operations, and mobile layouts.
 5. Route root schedules through `media-dashboard-root-run`, so they are restricted to the approved root-script directories like immediate root runs.

@@ -43,12 +43,13 @@ export function formatTime(at: number, spanMs: number) {
     : date.toLocaleDateString([], { day: "2-digit", month: "2-digit" });
 }
 
-function Legend({ series }: { series: { id: string; label: string }[] }) {
+// The key mirrors the mark: a short line for lines, a square for bars.
+function Legend({ series, shape = "line" }: { series: { id: string; label: string }[]; shape?: "line" | "square" }) {
   if (series.length < 2) return null;
   return (
     <ul className="chart-legend">
       {series.map((item, index) => (
-        <li key={item.id}><i style={{ background: seriesColor(index) }} />{item.label}</li>
+        <li key={item.id}><i className={shape} style={{ background: seriesColor(index) }} />{item.label}</li>
       ))}
     </ul>
   );
@@ -231,7 +232,7 @@ export function ColumnChart({ labels, series, unit, digits = 2, empty = "No data
   const hoverLeft = hover === null ? 0 : MARGIN.left + band * hover + band / 2;
   return (
     <div ref={ref} className="chart">
-      <Legend series={series} />
+      <Legend series={series} shape="square" />
       <div className="chart-plot">
         <svg width={width} height={PLOT_HEIGHT + MARGIN.top + MARGIN.bottom} role="img" aria-label={`${unit} per period`} onPointerLeave={() => setHover(null)}>
           {ticks.map((tick) => (
