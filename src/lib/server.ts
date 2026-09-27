@@ -13,6 +13,7 @@ import {
   writeFileSync,
   appendFileSync,
   openSync,
+  closeSync,
   readdirSync,
   statSync,
   rmSync,
@@ -132,6 +133,26 @@ export function persistSessions() {
   save("sessions", Object.fromEntries(sessions));
 }
 export function scriptRuns() { return read<ScriptRun[]>("script-runs", []); }
+const MAX_SCRIPT_RUNS = 2000;
+// Keeps the newest runs and deletes the logs of the records that are dropped.
+function saveScriptRuns(runs: ScriptRun[]) {
+  save("script-runs", runs.slice(0, MAX_SCRIPT_RUNS));
+  const logs = path.join(DATA, "runs") + path.sep;
+  for (const run of runs.slice(MAX_SCRIPT_RUNS))
+    if (run.logPath?.startsWith(logs)) rmSync(/* turbopackIgnore: true */ run.logPath, { force: true });
+}
+// A server restart ends the SSH processes that were streaming running scripts,
+// so their records would otherwise stay "running" forever.
+export function recoverInterruptedRuns() {
+  const runs = scriptRuns();
+  if (!runs.some((item) => item.status === "running")) return;
+  const now = new Date().toISOString();
+  save("script-runs", runs.map((item) => {
+    if (item.status !== "running") return item;
+    try { appendFileSync(/* turbopackIgnore: true */ item.logPath, "\nThe run was interrupted because the dashboard restarted.\n"); } catch {}
+    return { ...item, status: "failed" as const, completedAt: now, durationMs: Date.parse(now) - Date.parse(item.startedAt) };
+  }));
+}
 export function alertRules() { return read<AlertRule[]>("alerts", []); }
 // Samples are cached per file modification time: the file is only re-read after
 // another writer (for example the background monitor) has changed it.
@@ -807,21 +828,34 @@ export async function runScript(s: Script, rawArguments = "", selectedFile = "")
     id: runId, scriptId: s.id, scriptName: s.name, startedAt: new Date(started).toISOString(),
     arguments: rawArguments, status: "running", logPath: log,
   };
-  save("script-runs", [record, ...scriptRuns()].slice(0, 2000));
+  saveScriptRuns([record, ...scriptRuns()]);
   const out = openSync(log, "a");
-  const child = spawn(cmd, args, {
-    stdio: ["ignore", out, out],
-  });
-  child.on("close", (code) => {
-    const finished = Date.now();
+  let finished = false;
+  const finish = (code: number | null) => {
+    if (finished) return;
+    finished = true;
+    const completed = Date.now();
     const all = scriptRuns().map((item) => item.id === runId ? {
-      ...item, completedAt: new Date(finished).toISOString(), durationMs: finished - started,
+      ...item, completedAt: new Date(completed).toISOString(), durationMs: completed - started,
       exitCode: code ?? 1, status: code === 0 ? "success" as const : "failed" as const,
     } : item);
     save("script-runs", all);
     audit(`script ${s.name} ${code === 0 ? "completed" : "failed"} (${runId})`);
-  });
-  child.unref();
+  };
+  try {
+    const child = spawn(cmd, args, {
+      stdio: ["ignore", out, out],
+    });
+    child.on("error", (error) => {
+      appendFileSync(log, `\nThe run could not be started: ${error.message}\n`);
+      finish(null);
+    });
+    child.on("close", finish);
+    child.unref();
+  } finally {
+    // The child keeps its own copy of the descriptor.
+    closeSync(out);
+  }
   audit("run script " + s.name + " (" + runId + ")");
   return record;
 }
