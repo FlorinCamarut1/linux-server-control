@@ -2065,9 +2065,13 @@ function Overview({ state, active, stopped, openLogs }: { state: St; active: num
     <Panel title="Next steps" note="Common admin tasks"><div className="schedule-row"><div className="grow"><b>{state.scripts.length} approved scripts</b><small>{state.schedules.filter((item) => item.enabled).length} active schedules · manage runs in Scripts and Schedules.</small></div></div></Panel>
   </>;
 }
+// Older devices stored a preformatted Romanian date; newer ones store ISO 8601.
+function formatCreated(value: string) {
+  return /^\d{4}-\d{2}-\d{2}T/.test(value) ? new Date(value).toLocaleString() : value;
+}
 function DevicePanel({ devices, revoke, createCode }: { devices: St["devices"]; revoke: (id: string) => void; createCode: () => void }) {
   return <Panel title="Authorized browsers" note="Revoke access for an unknown device" extra={<Btn className="primary" onClick={createCode}><KeyRound size={16}/>Generate access code</Btn>}>
-    {Object.entries(devices).map(([id, device]) => <div className="device-row" key={id}><div className="grow"><b>{device.name}</b><small>Authorized {device.created}</small></div><Btn className="danger" onClick={() => revoke(id)}><Trash2 size={15}/>Revoke</Btn></div>)}
+    {Object.entries(devices).map(([id, device]) => <div className="device-row" key={id}><div className="grow"><b>{device.name}</b><small>Authorized {formatCreated(device.created)}</small></div><Btn className="danger" onClick={() => revoke(id)}><Trash2 size={15}/>Revoke</Btn></div>)}
   </Panel>;
 }
 function ServerSettings() {

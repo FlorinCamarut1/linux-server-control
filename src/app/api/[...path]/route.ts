@@ -142,7 +142,9 @@ async function handle(
           console.log(`\nInitial setup token: ${code}\n`);
         }
       }
-      return NextResponse.json({ configured: Boolean(config.password), server: serverSettings() });
+      // The connection details prefill the setup form; once configured they are
+      // only available to signed-in users.
+      return NextResponse.json(config.password ? { configured: true } : { configured: false, server: serverSettings() });
     }
     if (route === "setup" && body) {
       const existing = read<Record<string, string>>("config", {});
@@ -180,7 +182,7 @@ async function handle(
       save("devices", {
         [deviceDigest]: {
           name: (body.deviceName || "First browser").slice(0, 80),
-          created: new Date().toLocaleString("ro-RO"),
+          created: new Date().toISOString(),
         },
       });
       const sessionId = token();
@@ -294,7 +296,9 @@ async function handle(
     if (
       !session ||
       session.expires < Date.now() ||
-      (session.device !== "demo" && !devices[session.device])
+      (session.device === "demo"
+        ? process.env.NODE_ENV !== "development"
+        : !devices[session.device])
     )
       return fail("Sign in to continue", 401);
     if (route === "enrollment/create" && body) {
@@ -581,6 +585,7 @@ async function handle(
         await syncCron(
           removedSchedules.map((item) => item.runAs || "user"),
         );
+        audit(`script deleted ${s.name} (${s.id})`);
         return NextResponse.json({ ok: true });
       }
     }
@@ -598,8 +603,11 @@ async function handle(
     if (route === "config/export" && !body) return NextResponse.json(exportConfiguration());
     if (route === "config/restore" && body) { await restoreConfiguration(body.payload ? JSON.parse(body.payload) : body); return NextResponse.json({ ok: true }); }
     if (route === "device/revoke" && body) {
+      if (!devices[body.id]) throw Error("Device not found");
+      const name = devices[body.id].name;
       delete devices[body.id];
       save("devices", devices);
+      audit(`device revoked ${name} (${body.id.slice(0, 12)})`);
       return NextResponse.json({ ok: true });
     }
     return fail("Not found", 404);

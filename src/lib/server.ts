@@ -130,6 +130,8 @@ export function loadSessions() {
     if (session.expires > now) sessions.set(id, session);
 }
 export function persistSessions() {
+  const now = Date.now();
+  for (const [id, session] of sessions) if (session.expires <= now) sessions.delete(id);
   save("sessions", Object.fromEntries(sessions));
 }
 export function scriptRuns() { return read<ScriptRun[]>("script-runs", []); }
