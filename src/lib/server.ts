@@ -990,9 +990,10 @@ else:
         "parent": parent if target not in roots and any(inside(parent, root) for root in roots) else None,
         "entries": entries[offset:offset + limit], "total": len(entries), "offset": offset, "limit": limit}))
 `;
-async function remoteFileOperation(request: Record<string, unknown>) {
+type FileChange = { ok: boolean; path?: string };
+async function remoteFileOperation<T = Record<string, unknown>>(request: Record<string, unknown>) {
   const [command, args] = ssh(["python3", "-c", fileOperation]);
-  return new Promise<any>((resolve, reject) => {
+  return new Promise<T>((resolve, reject) => {
     const child = spawn(command, args, { stdio: ["pipe", "pipe", "pipe"] });
     let output = "", error = "";
     const timeout = setTimeout(() => { child.kill(); reject(Error("File operation timed out")); }, 30000);
@@ -1027,7 +1028,7 @@ export async function changeFile(
   destination = "",
   name = "",
 ) {
-  const result = await remoteFileOperation({
+  const result = await remoteFileOperation<FileChange>({
     path: source,
     action,
     source,
@@ -1038,7 +1039,7 @@ export async function changeFile(
   return result;
 }
 export async function createFileOrFolder(directory: string, name: string, kind: "file" | "folder") {
-  const result = await remoteFileOperation({ path: directory, action: "create", name, kind });
+  const result = await remoteFileOperation<FileChange>({ path: directory, action: "create", name, kind });
   audit(`created ${kind} ${result.path}`); return result;
 }
 export async function addScript(input: Record<string, string>) {
