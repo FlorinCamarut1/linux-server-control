@@ -10,6 +10,8 @@ import {
   browseScripts,
   changeFile,
   collectCronRuns,
+  containerSize,
+  cronRuns,
   createCustomScript,
   createFileOrFolder,
   deleteDashboardFolder,
@@ -43,18 +45,9 @@ import { accountRoutes } from "./auth";
 import { demoState } from "./demo";
 import { type Body, type Context, type Routes, ok } from "./http";
 
-async function state({ session, devices }: Context) {
-  if (session.device === "demo") return NextResponse.json(demoState);
-  let snapshot, cronRuns;
-  try {
-    [snapshot, cronRuns] = await Promise.all([hostSnapshot(), collectCronRuns()]);
-  } catch {
-    return NextResponse.json({ error: "Server unavailable. Check the SSH connection in Settings and reconnect.", code: "HOST_UNAVAILABLE" }, { status: 503 });
-  }
-  recordMetricSample(snapshot.stats);
-  const alerts = evaluateAlerts(snapshot);
-  return NextResponse.json({
-    ...snapshot,
+// Dashboard records stored in DATA_DIR; reading them needs no SSH.
+function records(devices: Context["devices"]) {
+  return {
     scripts: scripts(),
     folders: folders(),
     schedules: schedules(),
@@ -63,9 +56,32 @@ async function state({ session, devices }: Context) {
     runs: scriptRuns(),
     alerts: alertRules(),
     metrics: metricsSummary(),
-    alertState: alerts,
-    cronRuns,
     monitoredPaths: monitoredPaths(),
+  };
+}
+
+// ?scope=records returns only the stored records, for pages that show no live
+// host data; the background monitor keeps metrics and alerts current meanwhile.
+// ?scope=history adds the cron runs. The default reads the host as well.
+async function state({ req, session, devices }: Context) {
+  if (session.device === "demo") return NextResponse.json(demoState);
+  const scope = req.nextUrl.searchParams.get("scope");
+  if (scope === "records") return NextResponse.json({ ...records(devices), cronRuns: cronRuns() });
+  if (scope === "history") return NextResponse.json({ ...records(devices), cronRuns: await collectCronRuns() });
+  let snapshot;
+  try {
+    snapshot = await hostSnapshot();
+  } catch {
+    return NextResponse.json({ error: "Server unavailable. Check the SSH connection in Settings and reconnect.", code: "HOST_UNAVAILABLE" }, { status: 503 });
+  }
+  recordMetricSample(snapshot.stats);
+  const alerts = evaluateAlerts(snapshot);
+  const { cronLog, ...host } = snapshot;
+  return NextResponse.json({
+    ...host,
+    ...records(devices),
+    alertState: alerts,
+    cronRuns: await collectCronRuns(cronLog),
   });
 }
 
@@ -124,6 +140,8 @@ const hostRoutes: Routes<Context> = {
         : await run(["docker", body.action, body.name], 45000);
     return NextResponse.json({ output });
   },
+  "POST container/size": async ({ body }) =>
+    NextResponse.json({ size: await containerSize(body.name || "") }),
   "POST storage/add": async ({ body }) =>
     NextResponse.json({ path: await addMonitoredPath(body.path || "") }),
   "POST storage/remove": ({ body }) => {

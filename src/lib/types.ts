@@ -8,7 +8,7 @@ export type C = {
   CreatedAt: string;
   Networks: string;
   Mounts: string;
-  Size: string;
+  Size?: string;
 };
 export type RunOption = { label: string; value: string; description: string; needsFile?: boolean };
 export type S = { id: string; name: string; path: string; cron: string; folder?: string; runAs?: "user" | "root"; argumentHint?: string; runOptions?: RunOption[] };

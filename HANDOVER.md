@@ -90,7 +90,7 @@ A background monitor, started from `src/instrumentation.ts`, records one health 
 
 ## Containers
 
-The Containers page lists active and stopped containers from `docker ps -a`. It supports filtering, details, logs, start, stop, and restart actions.
+The Containers page lists active and stopped containers from `docker ps -a`. It supports filtering, details, logs, start, stop, and restart actions. Container sizes are expensive for Docker to compute, so refreshes skip them and `POST /api/container/size` reads one when its details are opened.
 
 ## Files and scripts
 
@@ -128,7 +128,10 @@ Scheduled jobs use guided cron forms and managed comments so the dashboard chang
 
 - The standard deployment is available at `http://${LAN_IP}:8443`. Port `8443` is retained to avoid collisions with common media-server services even though the protocol is now HTTP.
 - After migration from the former HTTPS deployment, each browser must enroll once under HTTP. The legacy Secure cookies are ignored; account credentials, devices, scripts, schedules, and history remain in `DATA_DIR` and are not reset.
-- Periodic host snapshots use asynchronous SSH reads in parallel. Concurrent snapshot requests share in-flight work; completed snapshots are not cached.
+- Periodic host snapshots use asynchronous SSH reads in parallel. Concurrent snapshot requests share in-flight work; completed snapshots are not cached. The snapshot also reads the schedule log, so a refresh needs no separate cron read.
+- CPU usage is the difference between the CPU counters of consecutive refreshes. Only the first refresh, or one more than 10 minutes after the previous, samples on the host with a 150 ms pause. On the reference server this reduced a refresh from about 220 ms to about 60 ms.
+- The root helpers' availability and root's crontabs are cached for 5 minutes, and refreshed after the dashboard installs root's crontab.
+- `GET /api/state` reads the host. `?scope=records` returns only the records stored in `DATA_DIR` without SSH, and `?scope=history` adds the cron runs. The client uses the full state on Overview, Containers, and Schedules, the history scope on History, and the records scope on the other pages; partial responses are merged into the loaded state.
 - Files loads directory entries first and requests recursive folder sizes separately. Script and file pickers do not calculate recursive sizes. Size failures do not prevent navigation.
 - Automatic dashboard polling pauses while the browser tab is hidden and refreshes when it becomes visible. Scheduled polls do not overlap one another.
 - Run the tests with `npm test`. `tests/harness.mjs` loads `server.ts` against a temporary data directory with scripted host responses.

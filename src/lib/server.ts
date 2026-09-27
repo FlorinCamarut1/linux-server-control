@@ -452,57 +452,66 @@ export type SystemStats = {
   cpuUsagePercent: number;
   cpuCores: number;
 };
-export async function systemStats(): Promise<SystemStats> {
-  const output = await runAsync([
-    "bash",
-    "-lc",
-    [
+type CronUser = "user" | "root";
+const rootCronHelper = "/usr/local/sbin/media-dashboard-root-cron";
+const rootScriptHelper = "/usr/local/sbin/media-dashboard-root-run";
+const STATS_SCRIPT = [
       'read -r mem_total mem_used mem_available < <(free -b | awk \'/^Mem:/ {print $2, $3, $7}\')',
       'read -r disk_total disk_used disk_pct < <(df -B1 -P / | awk \'NR==2 {gsub(/%/, "", $5); print $2, $3, $5}\')',
+      // CPU usage is the difference between two counter readings. Normally the
+      // previous refresh supplies the first reading; with "sample" as $1 the
+      // script takes both itself, 150 ms apart.
       'read -r _ cpu_user cpu_nice cpu_system cpu_idle cpu_iowait cpu_irq cpu_softirq cpu_steal _ < /proc/stat',
-      'cpu_total_1=$((cpu_user + cpu_nice + cpu_system + cpu_idle + cpu_iowait + cpu_irq + cpu_softirq + cpu_steal))',
-      'cpu_idle_1=$((cpu_idle + cpu_iowait))',
-      'sleep 0.15',
-      'read -r _ cpu_user cpu_nice cpu_system cpu_idle cpu_iowait cpu_irq cpu_softirq cpu_steal _ < /proc/stat',
-      'cpu_total_2=$((cpu_user + cpu_nice + cpu_system + cpu_idle + cpu_iowait + cpu_irq + cpu_softirq + cpu_steal))',
-      'cpu_idle_2=$((cpu_idle + cpu_iowait))',
-      'cpu_delta=$((cpu_total_2 - cpu_total_1))',
-      'cpu_idle_delta=$((cpu_idle_2 - cpu_idle_1))',
-      'cpu_pct=$(awk -v total="$cpu_delta" -v idle="$cpu_idle_delta" \'BEGIN {if (total > 0) printf "%.1f", 100 * (total - idle) / total; else print "0.0"}\')',
+      'cpu_total=$((cpu_user + cpu_nice + cpu_system + cpu_idle + cpu_iowait + cpu_irq + cpu_softirq + cpu_steal))',
+      'cpu_idle_total=$((cpu_idle + cpu_iowait))',
+      'cpu_pct=',
+      'if [ "$1" = sample ]; then sleep 0.15; read -r _ cpu_user cpu_nice cpu_system cpu_idle cpu_iowait cpu_irq cpu_softirq cpu_steal _ < /proc/stat; cpu_total_2=$((cpu_user + cpu_nice + cpu_system + cpu_idle + cpu_iowait + cpu_irq + cpu_softirq + cpu_steal)); cpu_idle_2=$((cpu_idle + cpu_iowait)); cpu_pct=$(awk -v total="$((cpu_total_2 - cpu_total))" -v idle="$((cpu_idle_2 - cpu_idle_total))" \'BEGIN {if (total > 0) printf "%.1f", 100 * (total - idle) / total; else print "0.0"}\'); cpu_total=$cpu_total_2; cpu_idle_total=$cpu_idle_2; fi',
       'uptime_s=$(cut -d. -f1 /proc/uptime)',
       'cores=$(nproc)',
       'temp=$(command -v sensors >/dev/null && sensors "coretemp-*" -u 2>/dev/null | awk \'/_input:/ {if ($2 > max) max=$2} END {if (max) printf "%.1f", max}\')',
       'if [ -z "$temp" ]; then temp=$(find -L /sys/class/thermal /sys/class/hwmon -mindepth 2 -maxdepth 2 -type f \\( -name temp -o -name "temp*_input" \\) -readable -exec cat {} + 2>/dev/null | awk \'$1 ~ /^[0-9]+([.][0-9]+)?$/ {v=$1; if (v > 1000) v=v/1000; if (v > 0 && v < 150 && v > max) max=v} END {if (max) printf "%.1f", max}\'); fi',
-      'printf "temperatureC=%s\\nmemoryUsedBytes=%s\\nmemoryTotalBytes=%s\\nmemoryAvailableBytes=%s\\ndiskUsedBytes=%s\\ndiskTotalBytes=%s\\ndiskUsedPercent=%s\\nuptimeSeconds=%s\\ncpuUsagePercent=%s\\ncpuCores=%s\\n" "$temp" "$mem_used" "$mem_total" "$mem_available" "$disk_used" "$disk_total" "$disk_pct" "$uptime_s" "$cpu_pct" "$cores"',
-    ].join("; "),
+      'printf "temperatureC=%s\\nmemoryUsedBytes=%s\\nmemoryTotalBytes=%s\\nmemoryAvailableBytes=%s\\ndiskUsedBytes=%s\\ndiskTotalBytes=%s\\ndiskUsedPercent=%s\\nuptimeSeconds=%s\\ncpuUsagePercent=%s\\ncpuCores=%s\\ncpuTotal=%s\\ncpuIdle=%s\\n" "$temp" "$mem_used" "$mem_total" "$mem_available" "$disk_used" "$disk_total" "$disk_pct" "$uptime_s" "$cpu_pct" "$cores" "$cpu_total" "$cpu_idle_total"',
+].join("; ");
+// The previous CPU counter reading, per SSH target. Readings older than this
+// are not used, so a long pause does not produce a long average.
+const CPU_READING_MAX_AGE_MS = 10 * 60 * 1000;
+let cpuReading: { target: string; at: number; total: number; idle: number } | undefined;
+async function systemStats(): Promise<SystemStats> {
+  const target = serverSettings().sshTarget;
+  const previous = cpuReading?.target === target && Date.now() - cpuReading.at < CPU_READING_MAX_AGE_MS ? cpuReading : undefined;
+  const paths = monitoredPaths();
+  const [output, ...storage] = await Promise.all([
+    runAsync(["bash", "-lc", STATS_SCRIPT, "stats", previous ? "" : "sample"]),
+    ...paths.map((storagePath) => runAsync(["df", "-B1", "-P", "--", storagePath]).then(
+      (out) => parseStorage(storagePath, out), () => parseStorage(storagePath, "")),
+    ),
   ]);
-  const values = Object.fromEntries(
+  const stats = parseStats(output, storage);
+  const values = parseValues(output);
+  const total = Number(values.cpuTotal), idle = Number(values.cpuIdle);
+  if (values.cpuTotal && Number.isFinite(total) && Number.isFinite(idle)) {
+    if (previous && total > previous.total) {
+      const elapsed = total - previous.total;
+      stats.cpuUsagePercent = Math.round(1000 * (elapsed - (idle - previous.idle)) / elapsed) / 10;
+    }
+    cpuReading = { target, at: Date.now(), total, idle };
+  }
+  return stats;
+}
+function parseValues(output: string): Record<string, string> {
+  return Object.fromEntries(
     output
       .trim()
       .split("\n")
       .map((line) => line.split("=", 2)),
   );
+}
+function parseStats(output: string, storage: SystemStats["storage"]): SystemStats {
+  const values = parseValues(output);
   const number = (key: string) => {
     const value = Number(values[key]);
     return Number.isFinite(value) ? value : 0;
   };
-  const storage = await Promise.all(monitoredPaths().map(async (storagePath) => {
-    try {
-      const fields = (await runAsync(["df", "-B1", "-P", storagePath]))
-        .trim()
-        .split("\n")
-        .at(-1)!
-        .trim()
-        .split(/\s+/);
-      const totalBytes = Number(fields[1]);
-      const usedBytes = Number(fields[2]);
-      const usedPercent = Number(fields[4]?.replace("%", ""));
-      if (![totalBytes, usedBytes, usedPercent].every(Number.isFinite)) throw Error();
-      return { path: storagePath, usedBytes, totalBytes, usedPercent };
-    } catch {
-      return { path: storagePath, usedBytes: null, totalBytes: null, usedPercent: null };
-    }
-  }));
   return {
     temperatureC: values.temperatureC ? number("temperatureC") : null,
     memoryUsedBytes: number("memoryUsedBytes"),
@@ -517,34 +526,56 @@ export async function systemStats(): Promise<SystemStats> {
     cpuCores: number("cpuCores"),
   };
 }
-type CronUser = "user" | "root";
-const rootCronHelper = "/usr/local/sbin/media-dashboard-root-cron";
-const rootScriptHelper = "/usr/local/sbin/media-dashboard-root-run";
+function parseStorage(storagePath: string, output: string) {
+  const fields = output.trim().split("\n").at(-1)!.trim().split(/\s+/);
+  const totalBytes = Number(fields[1]);
+  const usedBytes = Number(fields[2]);
+  const usedPercent = Number(fields[4]?.replace("%", ""));
+  return [totalBytes, usedBytes, usedPercent].every(Number.isFinite)
+    ? { path: storagePath, usedBytes, totalBytes, usedPercent }
+    : { path: storagePath, usedBytes: null, totalBytes: null, usedPercent: null };
+}
+// The root helpers' availability and root's crontabs rarely change, so they are
+// read at most every few minutes, and again right after the dashboard changes them.
+type RootStatus = { target: string; at: number; root: { available: boolean; cron: string; system: string }; rootScript: { available: boolean } };
+const ROOT_STATUS_TTL_MS = 5 * 60 * 1000;
+let rootStatus: RootStatus | undefined;
+function cachedRootStatus() {
+  const target = serverSettings().sshTarget;
+  return rootStatus && rootStatus.target === target && Date.now() - rootStatus.at < ROOT_STATUS_TTL_MS ? rootStatus : undefined;
+}
+export function invalidateRootStatus() {
+  rootStatus = undefined;
+}
 // Share only concurrent read requests. Completed snapshots are never cached,
 // so a refresh after a mutation always reads current host state.
 let pendingSnapshot: ReturnType<typeof collectSnapshot> | undefined;
 async function collectSnapshot() {
-  const [containers, userCron, root, rootScript, time, stats] = await Promise.all([
-    runAsync(["docker", "ps", "-a", "--size", "--format", "{{json .}}"])
+  const cached = cachedRootStatus();
+  const logFile = path.posix.join(serverSettings().remoteLogs, "schedules.log");
+  const [containers, userCron, status, time, stats, cronLog] = await Promise.all([
+    runAsync(["docker", "ps", "-a", "--format", "{{json .}}"])
       .then((output) => output.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line))),
     runAsync(["crontab", "-l"]).catch(() => ""),
-    Promise.all([
-      runAsync(["sudo", "-n", rootCronHelper, "list"]),
-      runAsync(["sudo", "-n", rootCronHelper, "system-list"]),
-    ]).then(([cron, system]) => ({ available: true, cron, system }))
-      .catch(() => ({ available: false, cron: "", system: "" })),
-    runAsync(["sudo", "-n", rootScriptHelper, "status"])
-      .then(() => ({ available: true })).catch(() => ({ available: false })),
+    cached ?? Promise.all([rootCronStatus(), rootScriptStatus()]).then(([root, rootScript]) =>
+      (rootStatus = { target: serverSettings().sshTarget, at: Date.now(), root, rootScript })),
     runAsync(["date", "+%d.%m.%Y %H:%M:%S %Z"]).then((value) => value.trim()),
     systemStats(),
+    runAsync(["tail", "-n", "4000", "--", logFile]).catch(() => null),
   ]);
-  return { containers, cron: userCron, root, rootScript, time, stats };
+  return { containers, cron: userCron, root: status.root, rootScript: status.rootScript, time, stats, cronLog };
 }
 export function hostSnapshot() {
   if (!pendingSnapshot) {
     pendingSnapshot = collectSnapshot().finally(() => { pendingSnapshot = undefined; });
   }
   return pendingSnapshot;
+}
+// Container sizes are expensive for Docker to compute, so they are only read
+// when a container's details are opened.
+export async function containerSize(name: string) {
+  if (!/^[\w.-]+$/.test(name)) throw Error("Invalid container name");
+  return (await run(["docker", "ps", "-a", "--size", "--filter", `name=^/${name}$`, "--format", "{{.Size}}"])).trim();
 }
 // Reads a crontab. Only a missing crontab counts as empty: any other failure
 // must abort, or the following install would erase the user's own entries.
@@ -700,14 +731,19 @@ async function installSchedules(extraUsers: CronUser[]) {
       if (schedule.enabled && command) lines.push(cronLine(schedule, command, logFile));
     }
     const data = lines.join("\n") + "\n";
-    if (user === "root")
+    if (user === "root") {
       await runInput(["sudo", "-n", rootCronHelper, "install"], data, 15000);
-    else await runInput(["crontab", "-"], data, 15000);
+      invalidateRootStatus();
+    } else await runInput(["crontab", "-"], data, 15000);
   }
 }
-export async function collectCronRuns() {
-  let output = "";
-  try { output = await run(["tail", "-n", "4000", path.posix.join(serverSettings().remoteLogs, "schedules.log")]); } catch { return cronRuns(); }
+// Parses the schedule log; pass the log when a snapshot has already read it.
+export async function collectCronRuns(log?: string | null) {
+  let output = log ?? "";
+  if (log === null) return cronRuns();
+  if (log === undefined) {
+    try { output = await run(["tail", "-n", "4000", path.posix.join(serverSettings().remoteLogs, "schedules.log")]); } catch { return cronRuns(); }
+  }
   const labels = new Map(schedules().map((item) => [item.id, item.label]));
   const label = (id: string) => labels.get(id) || "Schedule";
   const active = new Map<string, CronRun>(); const parsed: CronRun[] = [];
@@ -1120,7 +1156,7 @@ export function startBackgroundMonitor() {
       const snapshot = await hostSnapshot();
       recordMetricSample(snapshot.stats);
       evaluateAlerts(snapshot);
-      await collectCronRuns();
+      await collectCronRuns(snapshot.cronLog);
       lastError = "";
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

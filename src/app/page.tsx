@@ -29,6 +29,10 @@ import {
   Thermometer,
   Trash2,
 } from "lucide-react";
+function stateScope(tab: string) {
+  if (tab === "overview" || tab === "containers" || tab === "cron") return "full";
+  return tab === "history" ? "history" : "records";
+}
 export default function Home() {
   const [state, setState] = useState<St | null>(null),
     [err, setErr] = useState(""),
@@ -65,13 +69,25 @@ export default function Home() {
       window.removeEventListener("media-control-request-end", end);
     };
   }, []);
+  // Pages without live host data refresh only the stored records, which needs
+  // no SSH; the first load and the host pages read everything.
+  const tabRef = useRef("overview");
+  const hostLoaded = useRef(false);
   const refresh = useCallback(async (silent = false) => {
+    const scope = hostLoaded.current ? stateScope(tabRef.current) : "full";
     try {
-      setState(await api("state", undefined, silent));
+      const data = await api(scope === "full" ? "state" : `state?scope=${scope}`, undefined, silent);
+      if (scope === "full") {
+        hostLoaded.current = true;
+        setState(data);
+      } else setState((previous) => (previous ? { ...previous, ...data } : previous));
       setErr("");
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Error");
-      if (!(e instanceof ApiError) || e.code !== "HOST_UNAVAILABLE") setState(null);
+      if (!(e instanceof ApiError) || e.code !== "HOST_UNAVAILABLE") {
+        hostLoaded.current = false;
+        setState(null);
+      }
       try {
         const setup = await api("setup/status", undefined, true);
         setNeedsSetup(!setup.configured);
@@ -192,7 +208,11 @@ export default function Home() {
             <button
               key={id}
               className={tab === id ? "active" : ""}
-              onClick={() => setTab(id)}
+              onClick={() => {
+                setTab(id);
+                tabRef.current = id;
+                void refresh(true);
+              }}
             >
               <Icon size={18} />
               {label}
@@ -235,6 +255,7 @@ export default function Home() {
               aria-label="Log out"
               onClick={async () => {
                 await api("logout", {});
+                hostLoaded.current = false;
                 setState(null);
               }}
             >

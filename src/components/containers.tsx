@@ -1,4 +1,6 @@
 "use client";
+import { useState } from "react";
+import { api } from "@/lib/client-api";
 import { Btn } from "@/components/ui";
 import type { C } from "@/lib/types";
 import {
@@ -24,8 +26,19 @@ export function ContainerRow({
 }) {
   const up = c.State === "running",
     key = (a: string) => `${c.ID}-${a}`;
+  // Docker computes sizes slowly, so the size is only read when the row is opened.
+  const [size, setSize] = useState<string | null>(null);
   return (
-    <details className="container-row">
+    <details
+      className="container-row"
+      onToggle={(event) => {
+        if (!event.currentTarget.open || size !== null) return;
+        setSize("Loading…");
+        api("container/size", { name: c.Names }, true)
+          .then((result) => setSize(result.size || "—"))
+          .catch(() => setSize("Unavailable"));
+      }}
+    >
       <summary>
         <div className="service-icon">
           <Container size={20} />
@@ -49,7 +62,7 @@ export function ContainerRow({
             ["Networks", c.Networks],
             ["Ports", c.Ports || "No published ports"],
             ["Mounts", c.Mounts],
-            ["Size", c.Size],
+            ["Size", size ?? c.Size],
           ].map(([a, b]) => (
             <div key={a}>
               <dt>{a}</dt>
