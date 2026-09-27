@@ -96,6 +96,31 @@ export function formatUptime(seconds: number) {
   if (hours) return `${hours}h ${minutes}m`;
   return `${minutes}m`;
 }
+// navigator.clipboard only exists in secure contexts (HTTPS or localhost). The
+// dashboard is normally served over plain HTTP on the LAN, so fall back to
+// copying a temporary selection with the legacy copy command.
+export async function copyText(text: string) {
+  if (window.isSecureContext && navigator.clipboard) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {}
+  }
+  const field = document.createElement("textarea");
+  field.value = text;
+  field.setAttribute("readonly", "");
+  field.style.position = "fixed";
+  field.style.opacity = "0";
+  document.body.appendChild(field);
+  field.select();
+  try {
+    return document.execCommand("copy");
+  } catch {
+    return false;
+  } finally {
+    field.remove();
+  }
+}
 export function Modal({
   title,
   close,

@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiError, api } from "@/lib/client-api";
 import { Login, ConnectionUnavailable, Setup } from "@/components/auth";
 import { ContainerRow } from "@/components/containers";
@@ -8,7 +8,7 @@ import { Overview, HistoryPanel, AlertForm } from "@/components/monitoring";
 import { ScheduleForm } from "@/components/schedules";
 import { ScriptForm, CustomScriptForm, RunScriptForm, FolderForm } from "@/components/scripts";
 import { PasswordForm, DevicePanel, ServerSettings, ConfigurationPanel, StorageManager } from "@/components/settings";
-import { appConfirm, Btn, Panel, Metric, formatBytes, formatPercent, formatUptime, Modal, DialogHost, LiveLogViewer, AppLoading, LoadingScreen } from "@/components/ui";
+import { appConfirm, Btn, copyText, Panel, Metric, formatBytes, formatPercent, formatUptime, Modal, DialogHost, LiveLogViewer, AppLoading, LoadingScreen } from "@/components/ui";
 import type { S, Schedule, St } from "@/lib/types";
 import {
   CalendarPlus,
@@ -50,10 +50,11 @@ export default function Home() {
       code: string;
       expires: number;
     } | null>(null),
-    [copied, setCopied] = useState(false),
+    [copied, setCopied] = useState<"idle" | "copied" | "manual">("idle"),
     [needsSetup, setNeedsSetup] = useState(false),
     [initializing, setInitializing] = useState(true),
     [pendingRequests, setPendingRequests] = useState(0);
+  const accessCode = useRef<HTMLElement>(null);
   useEffect(() => {
     const start = () => setPendingRequests((count) => count + 1);
     const end = () => setPendingRequests((count) => Math.max(0, count - 1));
@@ -535,7 +536,7 @@ export default function Home() {
             {!state.alerts?.length && <div className="empty-state"><Thermometer size={22}/><b>No alert rules yet</b><p>Add thresholds for server health and jobs.</p></div>}
           </Panel>
         )}
-        {tab === "settings" && <><ServerSettings /><Panel title="Storage monitoring" note="Choose which mounted paths appear in capacity cards."><div className="panel-body"><Btn onClick={() => setStorageManager(true)}><HardDrive size={16}/>Manage storage paths</Btn></div></Panel><DevicePanel devices={state.devices} revoke={(id) => action(id, "device/revoke", { id })} createCode={async () => { try { setEnrollment(await api("enrollment/create", { minutes: "15" })); setCopied(false); } catch (e) { setErr(e instanceof Error ? e.message : "Error"); } }} /><PasswordForm /><ConfigurationPanel refresh={refresh} /></>}
+        {tab === "settings" && <><ServerSettings /><Panel title="Storage monitoring" note="Choose which mounted paths appear in capacity cards."><div className="panel-body"><Btn onClick={() => setStorageManager(true)}><HardDrive size={16}/>Manage storage paths</Btn></div></Panel><DevicePanel devices={state.devices} revoke={(id) => action(id, "device/revoke", { id })} createCode={async () => { try { setEnrollment(await api("enrollment/create", { minutes: "15" })); setCopied("idle"); } catch (e) { setErr(e instanceof Error ? e.message : "Error"); } }} /><PasswordForm /><ConfigurationPanel refresh={refresh} /></>}
       </main>
       {logs && (
         <LiveLogViewer logs={logs} close={() => setLogs(null)} />
@@ -611,16 +612,19 @@ export default function Home() {
                 minute: "2-digit",
               })}.
             </p>
-            <code>{enrollment.code}</code>
+            <code ref={accessCode}>{enrollment.code}</code>
             <Btn
               className="primary"
               onClick={async () => {
-                await navigator.clipboard.writeText(enrollment.code);
-                setCopied(true);
+                if (await copyText(enrollment.code)) return setCopied("copied");
+                // Leave the code selected so it can be copied from the keyboard.
+                const selection = window.getSelection();
+                if (accessCode.current && selection) selection.selectAllChildren(accessCode.current);
+                setCopied("manual");
               }}
             >
               <Copy size={16} />
-              {copied ? "Copied" : "Copy code"}
+              {copied === "copied" ? "Copied" : copied === "manual" ? "Selected: press Ctrl+C" : "Copy code"}
             </Btn>
           </div>
         </Modal>
