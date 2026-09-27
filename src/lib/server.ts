@@ -553,7 +553,9 @@ export async function cron(user: CronUser = "user") {
   try {
     return await run(["crontab", "-l"]);
   } catch (error) {
-    if (error instanceof CommandError && /no crontab for/i.test(error.message)) return "";
+    // cronie and Debian cron print "no crontab for USER"; BusyBox prints
+    // "crontab: can't open 'USER': No such file or directory".
+    if (error instanceof CommandError && /no crontab for|can't open .*no such file/i.test(error.message)) return "";
     throw error;
   }
 }
