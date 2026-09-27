@@ -2,11 +2,13 @@
 import { useState } from "react";
 import { api } from "@/lib/client-api";
 import { Btn } from "@/components/ui";
+import type { ContainerLink } from "@/lib/container-links";
 import type { C } from "@/lib/types";
 import {
   ChevronDown,
   Circle,
   Container,
+  ExternalLink,
   Loader2,
   Play,
   RotateCcw,
@@ -15,11 +17,13 @@ import {
 } from "lucide-react";
 export function ContainerRow({
   c,
+  links,
   busy,
   act,
   logs,
 }: {
   c: C;
+  links: ContainerLink[];
   busy: string;
   act: (k: string, p: string, b: unknown) => void;
   logs: (t: string, p: string, b: unknown) => void;
@@ -47,6 +51,16 @@ export function ContainerRow({
           <b>{c.Names}</b>
           <span>{c.Image}</span>
         </div>
+        <div className="service-links">
+          {links.slice(0, 2).map((link) => (
+            // Opening a link must not also toggle the row.
+            <a key={link.url} className="link-chip" href={link.url} target="_blank" rel="noopener noreferrer" title={`Open ${link.url}`} onClick={(event) => event.stopPropagation()}>
+              <ExternalLink size={13} />
+              {link.label}
+            </a>
+          ))}
+          {links.length > 2 && <span className="link-chip more" title={links.slice(2).map((link) => link.url).join("\n")}>+{links.length - 2}</span>}
+        </div>
         <span className={`badge ${up ? "up" : "down"}`}>
           <Circle size={8} fill="currentColor" />
           {up ? "Up" : "Down"}
@@ -71,6 +85,12 @@ export function ContainerRow({
           ))}
         </dl>
         <div className="actions">
+          {links.map((link) => (
+            <a key={link.url} className="button" href={link.url} target="_blank" rel="noopener noreferrer" title={link.url}>
+              <ExternalLink size={15} />
+              Open {link.label}
+            </a>
+          ))}
           <Btn
             onClick={() =>
               logs(c.Names, "container", { name: c.Names, action: "logs" })

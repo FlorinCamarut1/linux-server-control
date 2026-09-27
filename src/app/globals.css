@@ -441,7 +441,7 @@ header p,
 .container-row summary {
   list-style: none;
   display: grid;
-  grid-template-columns: var(--icon-box) minmax(180px, 1fr) 92px minmax(172px, 280px) 20px;
+  grid-template-columns: var(--icon-box) minmax(180px, 1fr) auto 92px minmax(172px, 280px) 20px;
   align-items: center;
   gap: 12px;
   padding: var(--panel-row-y) var(--panel-space-x);
@@ -478,6 +478,33 @@ header p,
   color: var(--muted);
   font-size: var(--text-sm);
   margin-top: 4px;
+}
+.service-links {
+  display: flex;
+  gap: 4px;
+}
+.link-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: var(--control-h-sm);
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface2);
+  color: var(--accent);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+  text-decoration: none;
+}
+a.link-chip:hover {
+  background: #202832;
+}
+.link-chip.more {
+  color: var(--muted);
+}
+a.button {
+  text-decoration: none;
 }
 .badge {
   display: inline-flex;
@@ -1316,7 +1343,9 @@ select:focus {
   .container-row summary {
     grid-template-columns: var(--icon-box) 1fr 80px 20px;
   }
-  .uptime {
+  /* On narrow screens the links are shown in the opened details instead. */
+  .uptime,
+  .service-links {
     display: none;
   }
   .details {

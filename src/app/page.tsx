@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiError, api } from "@/lib/client-api";
 import { Login, ConnectionUnavailable, Setup } from "@/components/auth";
 import { ContainerRow } from "@/components/containers";
+import { containerLinks } from "@/lib/container-links";
 import { FileExplorer } from "@/components/files";
 import { Overview, HistoryPanel, AlertForm } from "@/components/monitoring";
 import { ScheduleForm } from "@/components/schedules";
@@ -346,6 +347,7 @@ export default function Home() {
                 <ContainerRow
                   key={c.ID}
                   c={c}
+                  links={containerLinks(c, state.containers, typeof window === "undefined" ? "" : window.location.hostname)}
                   busy={busy}
                   act={action}
                   logs={openLogs}

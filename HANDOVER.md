@@ -92,6 +92,8 @@ A background monitor, started from `src/instrumentation.ts`, records one health 
 
 The Containers page lists active and stopped containers from `docker ps -a`. It supports filtering, details, logs, start, stop, and restart actions. Container sizes are expensive for Docker to compute, so refreshes skip them and `POST /api/container/size` reads one when its details are opened.
 
+Each container row links to its web interface. `src/lib/container-links.ts` turns the published TCP ports into links on the host the browser used to open the dashboard (LAN IP or Tailscale), skipping UDP, unpublished, and loopback-only ports; container ports 443, 8443, and 8920 use HTTPS. Containers without ports of their own, such as apps sharing a VPN container's network, link to their app's default port when another container publishes it. A `lsc.url` label on a container (for example `lsc.url=https://media.example/app`) replaces the detected links. The row shows up to two links; the details show all of them.
+
 ## Files and scripts
 
 `ALLOWED_PATHS` is a comma-separated list of roots available to the file and script browsers. Choose these carefully: every authorized dashboard user can browse and modify files readable by the configured SSH account under these roots.
