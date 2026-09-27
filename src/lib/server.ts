@@ -392,8 +392,8 @@ export function runAsync(args: string[], timeout = 30000, input?: string) {
   return new Promise<string>((resolve, reject) => {
     const child = execFile(command, arguments_, { encoding: "utf8", timeout, maxBuffer: 4e6 }, (error, stdout, stderr) => {
       if (!error) return resolve(stdout);
-      console.error(`Host command failed (${args[0]}):`, error.message);
       const detail = String(stderr || "").trim().split("\n").filter(Boolean).pop();
+      console.error(`Host command failed (${args[0]}): ${detail || (error.killed ? "timed out" : `exit ${error.code}`)}`);
       reject(new CommandError(error.killed ? "The server command timed out" : detail || "The server command failed"));
     });
     child?.stdin?.on("error", () => {});
@@ -442,7 +442,7 @@ export async function systemStats(): Promise<SystemStats> {
       'uptime_s=$(cut -d. -f1 /proc/uptime)',
       'cores=$(nproc)',
       'temp=$(command -v sensors >/dev/null && sensors "coretemp-*" -u 2>/dev/null | awk \'/_input:/ {if ($2 > max) max=$2} END {if (max) printf "%.1f", max}\')',
-      'if [ -z "$temp" ]; then temp=$(find -L /sys/class/thermal /sys/class/hwmon -type f \\( -name temp -o -name "temp*_input" \\) -readable -exec cat {} + 2>/dev/null | awk \'$1 ~ /^[0-9]+([.][0-9]+)?$/ {v=$1; if (v > 1000) v=v/1000; if (v > 0 && v < 150 && v > max) max=v} END {if (max) printf "%.1f", max}\'); fi',
+      'if [ -z "$temp" ]; then temp=$(find -L /sys/class/thermal /sys/class/hwmon -mindepth 2 -maxdepth 2 -type f \\( -name temp -o -name "temp*_input" \\) -readable -exec cat {} + 2>/dev/null | awk \'$1 ~ /^[0-9]+([.][0-9]+)?$/ {v=$1; if (v > 1000) v=v/1000; if (v > 0 && v < 150 && v > max) max=v} END {if (max) printf "%.1f", max}\'); fi',
       'printf "temperatureC=%s\\nmemoryUsedBytes=%s\\nmemoryTotalBytes=%s\\nmemoryAvailableBytes=%s\\ndiskUsedBytes=%s\\ndiskTotalBytes=%s\\ndiskUsedPercent=%s\\nuptimeSeconds=%s\\ncpuUsagePercent=%s\\ncpuCores=%s\\n" "$temp" "$mem_used" "$mem_total" "$mem_available" "$disk_used" "$disk_total" "$disk_pct" "$uptime_s" "$cpu_pct" "$cores"',
     ].join("; "),
   ]);
