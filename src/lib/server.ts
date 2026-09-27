@@ -107,7 +107,8 @@ export type AlertRule = {
   id: string; name: string; metric: "temperature" | "cpu" | "ram" | "disk" | "failedScripts" | "stoppedContainers";
   threshold: number; enabled: boolean; cooldownMinutes: number; lastTriggeredAt?: number;
 };
-export type MetricSample = { at: number; cpu: number; ram: number; temperature: number | null; disk: number };
+// storage maps each monitored path to its used percentage (absent in older samples).
+export type MetricSample = { at: number; cpu: number; ram: number; temperature: number | null; disk: number; storage?: Record<string, number> };
 export type CronRun = { scheduleId: string; label: string; startedAt: string; completedAt?: string; exitCode?: number; status: "running" | "success" | "failed" };
 export const sessions = new Map<string, Session>();
 export function read<T>(name: string, fallback: T): T {
@@ -165,6 +166,35 @@ export function metricSamples() {
   if (metricsCache?.mtimeMs !== mtimeMs) metricsCache = { mtimeMs, samples: read<MetricSample[]>("metrics", []) };
   return metricsCache.samples;
 }
+export const HISTORY_RANGES = { "24h": 86400000, "7d": 7 * 86400000, "30d": 30 * 86400000 } as const;
+export type HistoryRange = keyof typeof HISTORY_RANGES;
+const average = (values: (number | null | undefined)[]) => {
+  const numbers = values.filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+  return numbers.length ? numbers.reduce((sum, value) => sum + value, 0) / numbers.length : null;
+};
+// Samples within the range, averaged into at most `points` equal time buckets
+// so long ranges stay light to send and draw.
+export function metricHistory(range: HistoryRange, points = 288) {
+  const now = Date.now(), span = HISTORY_RANGES[range], from = now - span, bucket = span / points;
+  const groups = new Map<number, MetricSample[]>();
+  for (const sample of metricSamples()) {
+    if (sample.at < from) continue;
+    const index = Math.min(points - 1, Math.floor((sample.at - from) / bucket));
+    groups.set(index, [...(groups.get(index) || []), sample]);
+  }
+  const paths = [...new Set(metricSamples().flatMap((sample) => Object.keys(sample.storage || {})))];
+  return {
+    range, from, to: now,
+    samples: [...groups.entries()].sort(([a], [b]) => a - b).map(([, items]) => ({
+      at: Math.round(average(items.map((item) => item.at))!),
+      cpu: average(items.map((item) => item.cpu)),
+      ram: average(items.map((item) => item.ram)),
+      temperature: average(items.map((item) => item.temperature)),
+      disk: average(items.map((item) => item.disk)),
+      storage: Object.fromEntries(paths.map((storagePath) => [storagePath, average(items.map((item) => item.storage?.[storagePath]))])),
+    })),
+  };
+}
 export function metricsSummary() {
   const samples = metricSamples();
   return { latest: samples.at(-1) ?? null, count: samples.length, intervalMinutes: METRIC_INTERVAL_MS / 60000 };
@@ -201,7 +231,8 @@ export function recordMetricSample(stats: SystemStats) {
   const existing = metricSamples();
   if (existing.length && now - existing[existing.length - 1].at < METRIC_INTERVAL_MS - 5000) return false;
   const cutoff = now - serverSettings().metricsRetentionDays * 86400000;
-  const sample: MetricSample = { at: now, cpu: stats.cpuUsagePercent, ram: stats.memoryTotalBytes ? (stats.memoryUsedBytes / stats.memoryTotalBytes) * 100 : 0, temperature: stats.temperatureC, disk: stats.diskUsedPercent };
+  const storage = Object.fromEntries((stats.storage || []).filter((item) => item.usedPercent !== null).map((item) => [item.path, item.usedPercent as number]));
+  const sample: MetricSample = { at: now, cpu: stats.cpuUsagePercent, ram: stats.memoryTotalBytes ? (stats.memoryUsedBytes / stats.memoryTotalBytes) * 100 : 0, temperature: stats.temperatureC, disk: stats.diskUsedPercent, storage };
   save("metrics", [...existing.filter((item) => item.at > cutoff), sample], false);
   return true;
 }

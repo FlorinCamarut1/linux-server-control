@@ -20,7 +20,9 @@ import {
   folderSizes,
   folders,
   hostSnapshot,
-  metricSamples,
+  HISTORY_RANGES,
+  type HistoryRange,
+  metricHistory,
   metricsSummary,
   monitoredPaths,
   readEditableFile,
@@ -239,7 +241,11 @@ const scriptRoutes: Routes<Context> = {
 
 const historyRoutes: Routes<Context> = {
   "GET history/runs": () => NextResponse.json({ runs: scriptRuns() }),
-  "GET history/metrics": () => NextResponse.json({ metrics: metricSamples() }),
+  "GET history/metrics": ({ req }) => {
+    const range = req.nextUrl.searchParams.get("range") || "24h";
+    if (!(range in HISTORY_RANGES)) throw Error("Choose 24h, 7d or 30d");
+    return NextResponse.json(metricHistory(range as HistoryRange));
+  },
   "POST alerts/save": ({ body }) => {
     saveAlert(body);
     return ok();

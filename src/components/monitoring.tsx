@@ -1,5 +1,6 @@
 "use client";
-import { useState } from "react";
+import { ChartFrame, LineChart } from "@/components/charts";
+import { useEffect, useState } from "react";
 import { api } from "@/lib/client-api";
 import { Btn, Panel, Metric, formatBytes, formatPercent, Modal } from "@/components/ui";
 import type { St } from "@/lib/types";
@@ -49,6 +50,7 @@ export function HistoryPanel({ runs, cronRuns, metrics, openLog }: { runs: St["r
       <Metric label="RAM history" value={latest ? `${latest.ram.toFixed(1)}%` : "No samples"} icon={<Gauge />} />
       <Metric label="Samples retained" value={String(metrics?.count ?? 0)} note={`One sample every ${metrics?.intervalMinutes ?? 5} minutes`} icon={<Clock3 />} />
     </section>
+    <MetricCharts />
     <Panel title="Execution history" note="Search, filter, and review manual script runs or scheduled cron jobs.">
       <div className="panel-toolbar history-toolbar">
         <div className="container-filters" aria-label="History type">
@@ -78,4 +80,49 @@ export function AlertForm({ initial, close, done }: { initial: St["alerts"][numb
     <label><input name="enabled" type="checkbox" value="true" defaultChecked={initial?.enabled !== false} /> Enabled</label>
     {error && <div className="alert">{error}</div>}<Btn className="primary">Save alert</Btn>
   </form></Modal>;
+}
+
+const RANGES = [["24h", "Last 24 hours"], ["7d", "Last 7 days"], ["30d", "Last 30 days"]] as const;
+type History = { from: number; to: number; samples: { at: number; cpu: number | null; ram: number | null; temperature: number | null; disk: number | null; storage: Record<string, number | null> }[] };
+export function RangeFilter({ value, onChange }: { value: string; onChange: (value: "24h" | "7d" | "30d") => void }) {
+  return <div className="chart-filters">
+    <div className="container-filters" role="radiogroup" aria-label="Time range">
+      {RANGES.map(([id, label]) => <button key={id} type="button" role="radio" aria-checked={value === id} className={value === id ? "active" : ""} title={label} onClick={() => onChange(id)}>{label}</button>)}
+    </div>
+  </div>;
+}
+// Server health over time from the samples recorded every 5 minutes.
+export function MetricCharts() {
+  const [range, setRange] = useState<"24h" | "7d" | "30d">("24h");
+  const [history, setHistory] = useState<History | null>(null);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    let current = true;
+    api(`history/metrics?range=${range}`, undefined, true)
+      .then((data: History) => { if (current) { setHistory(data); setError(""); } })
+      .catch((reason) => { if (current) setError(reason instanceof Error ? reason.message : "Could not load metrics"); });
+    return () => { current = false; };
+  }, [range]);
+  const samples = history?.samples || [];
+  const times = samples.map((sample) => sample.at);
+  const when = (at: number) => new Date(at).toLocaleString([], { dateStyle: "short", timeStyle: "short" });
+  const round = (value: number | null) => (value === null ? "—" : value.toFixed(1));
+  // "/" is the system disk, which already has its own series.
+  const paths = [...new Set(samples.flatMap((sample) => Object.keys(sample.storage || {})))].filter((path) => path !== "/");
+  const storageSeries = [{ id: "disk", label: "System disk", values: samples.map((sample) => sample.disk) }, ...paths.map((path) => ({ id: path, label: path, values: samples.map((sample) => sample.storage?.[path] ?? null) }))].slice(0, 8);
+  return <>
+    <RangeFilter value={range} onChange={setRange} />
+    {error && <div className="alert">{error}</div>}
+    <div className="chart-grid-2" style={{ opacity: history ? 1 : 0.6 }}>
+      <ChartFrame title="CPU and RAM" note="Average use, percent" table={{ columns: ["Time", "CPU %", "RAM %"], rows: samples.map((sample) => [when(sample.at), round(sample.cpu), round(sample.ram)]) }}>
+        <LineChart times={times} unit="%" yMax={100} series={[{ id: "cpu", label: "CPU", values: samples.map((sample) => sample.cpu) }, { id: "ram", label: "RAM", values: samples.map((sample) => sample.ram) }]} />
+      </ChartFrame>
+      <ChartFrame title="Temperature" note="Hottest sensor, °C" table={{ columns: ["Time", "°C"], rows: samples.map((sample) => [when(sample.at), round(sample.temperature)]) }}>
+        <LineChart times={times} unit="°C" series={[{ id: "temperature", label: "Temperature", values: samples.map((sample) => sample.temperature) }]} empty="No temperature sensor data in this range." />
+      </ChartFrame>
+    </div>
+    <ChartFrame title="Storage used" note="Percent of capacity per monitored path" table={{ columns: ["Time", ...storageSeries.map((item) => `${item.label} %`)], rows: samples.map((sample, index) => [when(sample.at), ...storageSeries.map((item) => round(item.values[index]))]) }}>
+      <LineChart times={times} unit="%" yMax={100} series={storageSeries} />
+    </ChartFrame>
+  </>;
 }

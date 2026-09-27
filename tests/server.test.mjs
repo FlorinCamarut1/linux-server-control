@@ -177,3 +177,19 @@ test("interrupted runs are marked failed on startup", () => {
   server.recoverInterruptedRuns();
   assert.deepEqual(readJson("script-runs").map((item) => item.status), ["failed", "success"]);
 });
+
+test("metric history keeps the range and averages samples into buckets", () => {
+  const { server } = loadServer();
+  const now = Date.now();
+  const samples = [];
+  for (let minutes = 60 * 48; minutes >= 0; minutes -= 5)
+    samples.push({ at: now - minutes * 60000, cpu: minutes <= 55 ? 80 : 20, ram: 50, temperature: null, disk: 10, storage: { "/mnt/media": 60 } });
+  server.save("metrics", samples, false);
+  const day = server.metricHistory("24h", 24);
+  assert.ok(day.samples.length <= 24 && day.samples.length >= 23);
+  assert.ok(day.samples.every((item) => item.at >= day.from), "older samples are left out");
+  assert.equal(day.samples.at(-1).cpu, 80, "the last hour keeps its own average");
+  assert.equal(day.samples[0].cpu, 20);
+  assert.equal(day.samples[0].temperature, null, "missing values stay missing");
+  assert.equal(day.samples[0].storage["/mnt/media"], 60);
+});
