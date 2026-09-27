@@ -87,7 +87,7 @@ type St = {
   };
   runs: { id: string; scriptId: string; scriptName: string; startedAt: string; completedAt?: string; exitCode?: number; durationMs?: number; arguments: string; status: "running" | "success" | "failed" }[];
   alerts: { id: string; name: string; metric: string; threshold: number; enabled: boolean; cooldownMinutes: number; lastTriggeredAt?: number }[];
-  metrics: { at: number; cpu: number; ram: number; temperature: number | null; disk: number }[];
+  metrics?: { latest: { at: number; cpu: number; ram: number; temperature: number | null; disk: number } | null; count: number; intervalMinutes: number };
   cronRuns: { scheduleId: string; label: string; startedAt: string; completedAt?: string; exitCode?: number; status: "running" | "success" | "failed" }[];
   monitoredPaths: string[];
 };
@@ -625,7 +625,7 @@ export default function Home() {
             </details>
           </Panel>
         )}
-        {tab === "history" && <HistoryPanel runs={state.runs || []} cronRuns={state.cronRuns || []} metrics={state.metrics || []} openLog={(run) => openLogs(`${run.scriptName} run`, "script/log", { id: run.scriptId, runId: run.id })} />}
+        {tab === "history" && <HistoryPanel runs={state.runs || []} cronRuns={state.cronRuns || []} metrics={state.metrics} openLog={(run) => openLogs(`${run.scriptName} run`, "script/log", { id: run.scriptId, runId: run.id })} />}
         {tab === "alerts" && (
           <Panel title="Alert rules" note="Threshold checks run with each dashboard refresh; cooldowns prevent repeated notifications." extra={<Btn className="primary" onClick={() => setAlertEditor(null)}>New alert</Btn>}>
             {(state.alerts || []).map((rule) => <div className="schedule-row" key={rule.id}><div className="grow"><b>{rule.name}</b><small>{rule.metric} ≥ {rule.threshold} · cooldown {rule.cooldownMinutes} min{rule.lastTriggeredAt ? ` · last triggered ${new Date(rule.lastTriggeredAt).toLocaleString()}` : ""}</small></div><span className={`badge ${rule.enabled ? "up" : "down"}`}>{rule.enabled ? "Enabled" : "Paused"}</span><div className="actions"><Btn onClick={() => setAlertEditor(rule)}>Edit</Btn><Btn className="danger" onClick={() => action(rule.id, "alerts/delete", { id: rule.id })}><Trash2 size={15}/>Delete</Btn></div></div>)}
@@ -2080,13 +2080,13 @@ function ServerSettings() {
       <label>Script root <input name="scriptRoot" required defaultValue={settings.scriptRoot} spellCheck={false} /></label>
       <label>Allowed paths <input name="allowedPaths" required defaultValue={settings.allowedPaths.join(", ")} spellCheck={false} /><small>Comma-separated absolute paths. File and script access is limited to these locations.</small></label>
       <label>Remote logs folder <input name="remoteLogs" required defaultValue={settings.remoteLogs} spellCheck={false} /></label>
-      <label>Metric retention (days) <input name="metricsRetentionDays" type="number" min="1" max="365" required defaultValue={settings.metricsRetentionDays} /><small>Older dashboard health samples are removed during refreshes.</small></label>
+      <label>Metric retention (days) <input name="metricsRetentionDays" type="number" min="1" max="365" required defaultValue={settings.metricsRetentionDays} /><small>A health sample is recorded every 5 minutes, even while no browser is open. Older samples are removed.</small></label>
       {message && <div className="success">{message}</div>}{error && <div className="alert">{error}</div>}<Btn className="primary">Save and test connection</Btn>
     </form>}
   </Panel>;
 }
 function HistoryPanel({ runs, cronRuns, metrics, openLog }: { runs: St["runs"]; cronRuns: St["cronRuns"]; metrics: St["metrics"]; openLog: (run: St["runs"][number]) => void }) {
-  const latest = metrics.at(-1);
+  const latest = metrics?.latest;
   const [kind, setKind] = useState<"scripts" | "cron">("scripts");
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("all");
@@ -2103,7 +2103,7 @@ function HistoryPanel({ runs, cronRuns, metrics, openLog }: { runs: St["runs"]; 
     <section className="metrics">
       <Metric label="CPU history" value={latest ? `${latest.cpu.toFixed(1)}%` : "No samples"} icon={<Gauge />} />
       <Metric label="RAM history" value={latest ? `${latest.ram.toFixed(1)}%` : "No samples"} icon={<Gauge />} />
-      <Metric label="Samples retained" value={String(metrics.length)} note="Retention is configurable on the server" icon={<Clock3 />} />
+      <Metric label="Samples retained" value={String(metrics?.count ?? 0)} note={`One sample every ${metrics?.intervalMinutes ?? 5} minutes`} icon={<Clock3 />} />
     </section>
     <Panel title="Execution history" note="Search, filter, and review manual script runs or scheduled cron jobs.">
       <div className="panel-toolbar history-toolbar">
@@ -2128,7 +2128,7 @@ function AlertForm({ initial, close, done }: { initial: St["alerts"][number] | n
   return <Modal title={initial ? "Edit alert" : "New alert"} close={close}><form onSubmit={async (event) => { event.preventDefault(); try { await api("alerts/save", Object.fromEntries(new FormData(event.currentTarget))); done(); } catch (reason) { setError(reason instanceof Error ? reason.message : "Error"); } }}>
     <input type="hidden" name="id" defaultValue={initial?.id} />
     <label>Name<input name="name" defaultValue={initial?.name} required maxLength={80} /></label>
-    <label>Metric<select name="metric" defaultValue={initial?.metric || "temperature"}><option value="temperature">CPU temperature (°C)</option><option value="cpu">CPU use (%)</option><option value="ram">RAM use (%)</option><option value="disk">System disk use (%)</option><option value="failedScripts">Failed script runs</option><option value="stoppedContainers">Stopped containers</option></select></label>
+    <label>Metric<select name="metric" defaultValue={initial?.metric || "temperature"}><option value="temperature">CPU temperature (°C)</option><option value="cpu">CPU use (%)</option><option value="ram">RAM use (%)</option><option value="disk">System disk use (%)</option><option value="failedScripts">Failed script runs (last 24 hours)</option><option value="stoppedContainers">Stopped containers</option></select></label>
     <label>Trigger at or above<input name="threshold" type="number" min="0" step="0.1" defaultValue={initial?.threshold ?? 80} required /></label>
     <label>Cooldown (minutes)<input name="cooldownMinutes" type="number" min="1" max="10080" defaultValue={initial?.cooldownMinutes ?? 30} required /></label>
     <label><input name="enabled" type="checkbox" value="true" defaultChecked={initial?.enabled !== false} /> Enabled</label>

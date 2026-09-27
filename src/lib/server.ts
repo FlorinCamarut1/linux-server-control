@@ -14,6 +14,7 @@ import {
   appendFileSync,
   openSync,
   readdirSync,
+  statSync,
   rmSync,
 } from "node:fs";
 import path from "node:path";
@@ -115,10 +116,10 @@ export function read<T>(name: string, fallback: T): T {
     return fallback;
   }
 }
-export function save(name: string, value: unknown) {
+export function save(name: string, value: unknown, pretty = true) {
   const p = path.join(DATA, name + ".json"),
     t = p + ".tmp";
-  writeFileSync(t, JSON.stringify(value, null, 2), { mode: 0o600 });
+  writeFileSync(t, JSON.stringify(value, null, pretty ? 2 : undefined), { mode: 0o600 });
   renameSync(t, p);
 }
 export function loadSessions() {
@@ -132,7 +133,19 @@ export function persistSessions() {
 }
 export function scriptRuns() { return read<ScriptRun[]>("script-runs", []); }
 export function alertRules() { return read<AlertRule[]>("alerts", []); }
-export function metricSamples() { return read<MetricSample[]>("metrics", []); }
+// Samples are cached per file modification time: the file is only re-read after
+// another writer (for example the background monitor) has changed it.
+let metricsCache: { mtimeMs: number; samples: MetricSample[] } | undefined;
+export function metricSamples() {
+  let mtimeMs: number;
+  try { mtimeMs = statSync(path.join(DATA, "metrics.json")).mtimeMs; } catch { return []; }
+  if (metricsCache?.mtimeMs !== mtimeMs) metricsCache = { mtimeMs, samples: read<MetricSample[]>("metrics", []) };
+  return metricsCache.samples;
+}
+export function metricsSummary() {
+  const samples = metricSamples();
+  return { latest: samples.at(-1) ?? null, count: samples.length, intervalMinutes: METRIC_INTERVAL_MS / 60000 };
+}
 export function monitoredPaths() {
   const configured = read<string[]>("monitored-paths", []);
   if (configured.length) return configured;
@@ -157,16 +170,24 @@ export function removeMonitoredPath(input: string) {
   save("monitored-paths", all); audit("stop monitoring storage path " + input);
 }
 export function cronRuns() { return read<CronRun[]>("cron-runs", []); }
+// One sample per interval, regardless of how many browsers are polling, so the
+// configured retention is what actually limits the history.
+export const METRIC_INTERVAL_MS = 5 * 60 * 1000;
 export function recordMetricSample(stats: SystemStats) {
-  const retentionDays = serverSettings().metricsRetentionDays;
-  const cutoff = Date.now() - retentionDays * 86400000;
-  const sample: MetricSample = { at: Date.now(), cpu: stats.cpuUsagePercent, ram: stats.memoryTotalBytes ? (stats.memoryUsedBytes / stats.memoryTotalBytes) * 100 : 0, temperature: stats.temperatureC, disk: stats.diskUsedPercent };
-  const all = [...metricSamples().filter((item) => item.at > cutoff), sample].slice(-10000);
-  save("metrics", all);
-  return all;
+  const now = Date.now();
+  const existing = metricSamples();
+  if (existing.length && now - existing[existing.length - 1].at < METRIC_INTERVAL_MS - 5000) return false;
+  const cutoff = now - serverSettings().metricsRetentionDays * 86400000;
+  const sample: MetricSample = { at: now, cpu: stats.cpuUsagePercent, ram: stats.memoryTotalBytes ? (stats.memoryUsedBytes / stats.memoryTotalBytes) * 100 : 0, temperature: stats.temperatureC, disk: stats.diskUsedPercent };
+  save("metrics", [...existing.filter((item) => item.at > cutoff), sample], false);
+  return true;
 }
+// Failed-run alerts count recent failures only; counting the whole history kept
+// an alert firing forever once the threshold had been reached.
+export const FAILED_RUN_WINDOW_MS = 24 * 60 * 60 * 1000;
 export function evaluateAlerts(snapshot: { stats: SystemStats; containers: { State: string }[] }) {
-  const failed = scriptRuns().filter((item) => item.status === "failed").length;
+  const since = Date.now() - FAILED_RUN_WINDOW_MS;
+  const failed = scriptRuns().filter((item) => item.status === "failed" && Date.parse(item.startedAt) >= since).length;
   const stopped = snapshot.containers.filter((item) => item.State !== "running").length;
   const values: Record<AlertRule["metric"], number> = {
     temperature: snapshot.stats.temperatureC ?? 0, cpu: snapshot.stats.cpuUsagePercent,
@@ -611,8 +632,8 @@ export function cronLine(schedule: Schedule, command: string, logFile: string) {
 }
 function pruneCronBackups(user: CronUser) {
   const prefix = `cron-backup-${user}-`;
-  const backups = readdirSync(DATA).filter((name) => name.startsWith(prefix) && name.endsWith(".json")).sort();
-  for (const name of backups.slice(0, -MAX_CRON_BACKUPS)) rmSync(path.join(DATA, name), { force: true });
+  const backups = readdirSync(/* turbopackIgnore: true */ DATA).filter((name) => name.startsWith(prefix) && name.endsWith(".json")).sort();
+  for (const name of backups.slice(0, -MAX_CRON_BACKUPS)) rmSync(path.join(/* turbopackIgnore: true */ DATA, name), { force: true });
 }
 // Crontab updates are read-modify-write operations on the host, so they run one at
 // a time and always install the latest saved schedules rather than a caller's copy.
@@ -655,14 +676,18 @@ async function installSchedules(extraUsers: CronUser[]) {
 export async function collectCronRuns() {
   let output = "";
   try { output = await run(["tail", "-n", "4000", path.posix.join(serverSettings().remoteLogs, "schedules.log")]); } catch { return cronRuns(); }
+  const labels = new Map(schedules().map((item) => [item.id, item.label]));
+  const label = (id: string) => labels.get(id) || "Schedule";
   const active = new Map<string, CronRun>(); const parsed: CronRun[] = [];
   for (const line of output.split("\n")) {
     const start = /^MEDIA_DASHBOARD_START\s+(\S+)\s+(.+)$/.exec(line);
-    if (start) { active.set(start[1], { scheduleId: start[1], label: schedules().find((item) => item.id === start[1])?.label || "Schedule", startedAt: start[2], status: "running" }); continue; }
+    if (start) { active.set(start[1], { scheduleId: start[1], label: label(start[1]), startedAt: start[2], status: "running" }); continue; }
     const end = /^MEDIA_DASHBOARD_END\s+(\S+)\s+(\S+)\s+(\d+)$/.exec(line);
-    if (end) { const item = active.get(end[1]) || { scheduleId: end[1], label: schedules().find((x) => x.id === end[1])?.label || "Schedule", startedAt: end[2], status: "running" as const }; parsed.push({ ...item, completedAt: end[2], exitCode: Number(end[3]), status: end[3] === "0" ? "success" : "failed" }); active.delete(end[1]); }
+    if (end) { const item = active.get(end[1]) || { scheduleId: end[1], label: label(end[1]), startedAt: end[2], status: "running" as const }; parsed.push({ ...item, completedAt: end[2], exitCode: Number(end[3]), status: end[3] === "0" ? "success" : "failed" }); active.delete(end[1]); }
   }
-  const all = [...parsed, ...active.values()].slice(-500).reverse(); save("cron-runs", all); return all;
+  const all = [...parsed, ...active.values()].slice(-500).reverse();
+  if (JSON.stringify(all) !== JSON.stringify(cronRuns())) save("cron-runs", all);
+  return all;
 }
 export function hash(password: string, salt: string) {
   return new Promise<string>((resolve, reject) =>
@@ -1034,3 +1059,32 @@ export async function createCustomScript(input: Record<string, string>) {
 
 // Sessions are intentionally persisted without credentials so routine restarts do not sign out every browser.
 loadSessions();
+
+// Samples metrics, evaluates alerts and records cron runs even while no browser
+// is open. Started once per server process from src/instrumentation.ts.
+export function startBackgroundMonitor() {
+  const state = globalThis as { lscMonitor?: ReturnType<typeof setInterval> };
+  if (state.lscMonitor) return;
+  let running = false;
+  let lastError = "";
+  const tick = async () => {
+    if (running || !read<{ password?: string }>("config", {}).password) return;
+    running = true;
+    try {
+      const snapshot = await hostSnapshot();
+      recordMetricSample(snapshot.stats);
+      evaluateAlerts(snapshot);
+      await collectCronRuns();
+      lastError = "";
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message !== lastError) console.error("Background monitor:", message);
+      lastError = message;
+    } finally {
+      running = false;
+    }
+  };
+  state.lscMonitor = setInterval(tick, METRIC_INTERVAL_MS);
+  state.lscMonitor.unref?.();
+  setTimeout(tick, 30000).unref?.();
+}

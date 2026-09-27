@@ -35,6 +35,7 @@ import {
   evaluateAlerts,
   exportConfiguration,
   metricSamples,
+  metricsSummary,
   persistSessions,
   recordMetricSample,
   restoreConfiguration,
@@ -384,13 +385,13 @@ async function handle(
             },
           ],
         });
-      let snapshot;
+      let snapshot, cronRuns;
       try {
-        snapshot = await hostSnapshot();
-      } catch (error) {
+        [snapshot, cronRuns] = await Promise.all([hostSnapshot(), collectCronRuns()]);
+      } catch {
         return NextResponse.json({ error: "Server unavailable. Check the SSH connection in Settings and reconnect.", code: "HOST_UNAVAILABLE" }, { status: 503 });
       }
-      const metrics = recordMetricSample(snapshot.stats);
+      recordMetricSample(snapshot.stats);
       const alerts = evaluateAlerts(snapshot);
       return NextResponse.json({
         ...snapshot,
@@ -401,9 +402,9 @@ async function handle(
         host: serverSettings().sshTarget || "local server",
         runs: scriptRuns(),
         alerts: alertRules(),
-        metrics,
+        metrics: metricsSummary(),
         alertState: alerts,
-        cronRuns: await collectCronRuns(),
+        cronRuns,
         monitoredPaths: monitoredPaths(),
       });
     }
