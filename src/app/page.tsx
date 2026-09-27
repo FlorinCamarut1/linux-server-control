@@ -8,7 +8,7 @@ import { FileExplorer } from "@/components/files";
 import { Overview, HistoryPanel, AlertForm } from "@/components/monitoring";
 import { ScheduleForm } from "@/components/schedules";
 import { ScriptForm, CustomScriptForm, RunScriptForm, FolderForm } from "@/components/scripts";
-import { PasswordForm, DevicePanel, ServerSettings, ConfigurationPanel, StorageManager } from "@/components/settings";
+import { AppearancePanel, PasswordForm, DevicePanel, ServerSettings, ConfigurationPanel, StorageManager } from "@/components/settings";
 import { appConfirm, Btn, copyText, Panel, Metric, formatBytes, formatPercent, formatUptime, Modal, DialogHost, LiveLogViewer, AppLoading, LoadingScreen } from "@/components/ui";
 import type { S, Schedule, St } from "@/lib/types";
 import {
@@ -563,7 +563,7 @@ export default function Home() {
             {!state.alerts?.length && <div className="empty-state"><Thermometer size={22}/><b>No alert rules yet</b><p>Add thresholds for server health and jobs.</p></div>}
           </Panel>
         )}
-        {tab === "settings" && <><ServerSettings /><Panel title="Storage monitoring" note="Choose which mounted paths appear in capacity cards."><div className="panel-body"><Btn onClick={() => setStorageManager(true)}><HardDrive size={16}/>Manage storage paths</Btn></div></Panel><DevicePanel devices={state.devices} revoke={(id) => action(id, "device/revoke", { id })} createCode={async () => { try { setEnrollment(await api("enrollment/create", { minutes: "15" })); setCopied("idle"); } catch (e) { setErr(e instanceof Error ? e.message : "Error"); } }} /><PasswordForm /><ConfigurationPanel refresh={refresh} /></>}
+        {tab === "settings" && <><AppearancePanel /><ServerSettings /><Panel title="Storage monitoring" note="Choose which mounted paths appear in capacity cards."><div className="panel-body"><Btn onClick={() => setStorageManager(true)}><HardDrive size={16}/>Manage storage paths</Btn></div></Panel><DevicePanel devices={state.devices} revoke={(id) => action(id, "device/revoke", { id })} createCode={async () => { try { setEnrollment(await api("enrollment/create", { minutes: "15" })); setCopied("idle"); } catch (e) { setErr(e instanceof Error ? e.message : "Error"); } }} /><PasswordForm /><ConfigurationPanel refresh={refresh} /></>}
       </main>
       {logs && (
         <LiveLogViewer logs={logs} close={() => setLogs(null)} />

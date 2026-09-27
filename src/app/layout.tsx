@@ -28,12 +28,20 @@ export const viewport: Viewport = {
   colorScheme: "dark",
 };
 
+const THEME_BOOTSTRAP = `try{var t=localStorage.getItem("lsc-theme")||"dark";if(t!=="system")document.documentElement.dataset.theme=t;}catch(e){}`;
+
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      suppressHydrationWarning
     >
+      <head>
+        {/* Applies the saved theme before the first paint, so the page never
+            flashes in the wrong colors. Mirrors applyTheme in the theme module. */}
+        <script dangerouslySetInnerHTML={{ __html: THEME_BOOTSTRAP }} />
+      </head>
       <body className="min-h-full flex flex-col">{children}</body>
     </html>
   );

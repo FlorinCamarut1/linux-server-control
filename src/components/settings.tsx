@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/client-api";
 import { appConfirm, Btn, Panel, Modal } from "@/components/ui";
+import { THEMES, applyTheme, savedTheme, type ThemeId } from "@/lib/theme";
 import type { St } from "@/lib/types";
 import {
   KeyRound,
@@ -85,6 +86,19 @@ export function formatCreated(value: string) {
 export function DevicePanel({ devices, revoke, createCode }: { devices: St["devices"]; revoke: (id: string) => void; createCode: () => void }) {
   return <Panel title="Authorized browsers" note="Revoke access for an unknown device" extra={<Btn className="primary" onClick={createCode}><KeyRound size={16}/>Generate access code</Btn>}>
     {Object.entries(devices).map(([id, device]) => <div className="device-row" key={id}><div className="grow"><b>{device.name}</b><small>Authorized {formatCreated(device.created)}</small></div><Btn className="danger" onClick={() => revoke(id)}><Trash2 size={15}/>Revoke</Btn></div>)}
+  </Panel>;
+}
+export function AppearancePanel() {
+  const [current, setCurrent] = useState<ThemeId>(() => savedTheme());
+  return <Panel title="Appearance" note="The theme is saved in this browser, so each device can use its own.">
+    <div className="theme-grid" role="radiogroup" aria-label="Theme">
+      {THEMES.map((theme) => (
+        <button key={theme.id} type="button" role="radio" aria-checked={current === theme.id} className={`theme-option${current === theme.id ? " active" : ""}`} onClick={() => { applyTheme(theme.id); setCurrent(theme.id); }}>
+          <span className="theme-swatch" aria-hidden="true">{theme.colors.map((color) => <i key={color} style={{ background: color }} />)}</span>
+          {theme.name}
+        </button>
+      ))}
+    </div>
   </Panel>;
 }
 export function ServerSettings() {
