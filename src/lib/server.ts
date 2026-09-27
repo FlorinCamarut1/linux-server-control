@@ -376,6 +376,12 @@ export async function restoreConfiguration(payload: Record<string, unknown>) {
   await syncCron(previousUsers);
   audit("configuration restored");
 }
+// Reuses one SSH connection for the many short commands a page load issues,
+// instead of a full handshake for each. The socket lives in the /tmp tmpfs.
+function multiplexOptions() {
+  if (process.env.SSH_MULTIPLEX === "false") return [];
+  return ["-o", "ControlMaster=auto", "-o", "ControlPath=/tmp/lsc-ssh-%C", "-o", "ControlPersist=60"];
+}
 const ssh = (args: string[]): [string, string[]] => {
   const target = serverSettings().sshTarget;
   return target
@@ -392,6 +398,7 @@ const ssh = (args: string[]): [string, string[]] => {
           "/run/ssh/id_ed25519",
           "-o",
           "UserKnownHostsFile=/run/ssh/known_hosts",
+          ...multiplexOptions(),
           target,
           shell(args),
         ],
