@@ -30,6 +30,8 @@
   --panel-space-x: 20px;
   --panel-space-y: 16px;
   --panel-row-y: 12px;
+  /* Space between a modal's edges and its content, header included. */
+  --modal-space: 20px;
   font-family: Inter, ui-sans-serif, system-ui, sans-serif;
   color-scheme: dark;
 }
@@ -417,7 +419,7 @@ header p,
   font-size: var(--text-md);
 }
 .access-code {
-  padding: var(--panel-space-x);
+  padding: var(--modal-space);
 }
 .access-code p {
   margin: 0 0 16px;
@@ -688,7 +690,7 @@ a.button {
 .panel pre,
 .modal pre {
   margin: 0;
-  padding: 20px;
+  padding: var(--panel-space-x);
   white-space: pre-wrap;
   overflow: auto;
   font: var(--text-md)/1.6 ui-monospace,
@@ -701,7 +703,7 @@ a.button {
   justify-content: space-between;
   align-items: center;
   gap: 12px;
-  padding: 12px 20px;
+  padding: 12px var(--modal-space);
   border-bottom: 1px solid var(--line);
   color: var(--muted);
   font-size: var(--text-md);
@@ -733,8 +735,36 @@ a.button {
   overflow: auto;
   box-shadow: 0 25px 80px #000;
 }
-.modal form {
-  padding: 20px;
+.modal .panel-head {
+  padding: 16px var(--modal-space);
+}
+.modal pre {
+  padding: var(--modal-space);
+}
+/* Every modal's content keeps the same distance from the edges. */
+.modal > form,
+.modal-body {
+  padding: var(--modal-space);
+}
+.modal-body > * {
+  margin: 0;
+}
+.modal-body > * + * {
+  margin-top: 16px;
+}
+.modal-body > small {
+  display: block;
+  color: var(--muted);
+}
+.modal-body form {
+  padding: 0;
+}
+.storage-path-list .schedule-row {
+  padding-left: 0;
+  padding-right: 0;
+}
+.storage-path-list .schedule-row:last-child {
+  border-bottom: 0;
 }
 label {
   display: block;
@@ -1068,7 +1098,7 @@ select:focus {
   font-size: var(--text-sm);
 }
 .file-editor {
-  padding: 20px;
+  padding: var(--modal-space);
 }
 .file-editor > code {
   display: block;
@@ -1389,6 +1419,7 @@ select:focus {
 }
 @media (max-width: 540px) {
   :root {
+    --modal-space: 16px;
     --icon-box: 32px;
     --panel-space-x: 12px;
     --panel-space-y: 12px;
@@ -1496,13 +1527,14 @@ select:focus {
   .modal .panel-head {
     align-items: center;
     flex-direction: row;
-    padding: 16px;
+    padding: 16px var(--modal-space);
+  }
+  .modal .panel-head > .button {
+    flex: 0 0 auto;
+    width: auto;
   }
   .modal .panel-head h2 {
     font-size: var(--text-lg);
-  }
-  .modal form {
-    padding: 16px;
   }
   .path-input,
   .file-browser-head,
@@ -1566,9 +1598,6 @@ select:focus {
   .file-explorer-open {
     padding: 12px 12px 12px;
   }
-  .file-editor {
-    padding: 16px;
-  }
   .file-editor textarea {
     min-height: 45vh;
     font-size: var(--text-sm);
@@ -1585,7 +1614,6 @@ select:focus {
   }
   .modal pre {
     max-height: 48vh;
-    padding: 16px;
     font-size: var(--text-sm);
   }
 }

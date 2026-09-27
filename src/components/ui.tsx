@@ -158,10 +158,12 @@ export function DialogHost() {
     <PromptDialog request={request} finish={finish} />
   ) : (
     <Modal title={request.title} close={() => finish(false)}>
-      <p>{request.message}</p>
-      <div className="actions">
-        <Btn onClick={() => finish(false)}>Cancel</Btn>
-        <Btn className={request.danger ? "danger" : "primary"} onClick={() => finish(true)}>{request.confirmLabel}</Btn>
+      <div className="modal-body">
+        <p>{request.message}</p>
+        <div className="actions">
+          <Btn onClick={() => finish(false)}>Cancel</Btn>
+          <Btn className={request.danger ? "danger" : "primary"} onClick={() => finish(true)}>{request.confirmLabel}</Btn>
+        </div>
       </div>
     </Modal>
   );

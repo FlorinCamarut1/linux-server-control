@@ -114,12 +114,12 @@ export function ConfigurationPanel({ refresh }: { refresh: () => Promise<void> }
 }
 export function StorageManager({ paths, close, done }: { paths: string[]; close: () => void; done: () => Promise<void> }) {
   const [error, setError] = useState(""); const [adding, setAdding] = useState(false);
-  return <Modal title="Monitored storage" close={close}>
+  return <Modal title="Monitored storage" close={close}><div className="modal-body">
     <p>Choose the mounted folders whose disk usage should appear on the dashboard. You can track as many paths as needed.</p>
     <form onSubmit={async (event) => { event.preventDefault(); const form = event.currentTarget; setError(""); try { setAdding(true); const path = String(new FormData(form).get("path") || ""); await api("storage/add", { path }); form.reset(); await done(); } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not add path"); } finally { setAdding(false); } }}>
       <label>Absolute folder path<input name="path" placeholder="/mnt/media" required spellCheck={false} /></label><Btn className="primary" disabled={adding}>Add storage path</Btn>
     </form>
     <div className="storage-path-list">{paths.map((path) => <div className="schedule-row" key={path}><div className="grow"><b>{path}</b><small>Monitored storage path</small></div><Btn className="danger" disabled={paths.length < 2} onClick={async () => { if (!await appConfirm(`Stop monitoring ${path}?`, "Remove storage path", "Remove", true)) return; try { await api("storage/remove", { path }); await done(); } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not remove path"); } }}><Trash2 size={15}/>Remove</Btn></div>)}</div>
     {error && <div className="alert">{error}</div>}<small>At least one path must remain monitored.</small>
-  </Modal>;
+  </div></Modal>;
 }
