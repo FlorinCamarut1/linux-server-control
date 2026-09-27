@@ -21,7 +21,6 @@ import {
   readEditableFile,
   run,
   runScript,
-  rootCronStatus,
   save,
   saveEditableFile,
   schedules,
@@ -32,8 +31,6 @@ import {
   hostSnapshot,
   folderSizes,
   token,
-  validCron,
-  DATA,
   alertRules,
   evaluateAlerts,
   exportConfiguration,
@@ -41,13 +38,14 @@ import {
   persistSessions,
   recordMetricSample,
   restoreConfiguration,
+  saveAlert,
+  saveSchedule,
   scriptRuns,
   serverSettings,
   testServerConnection,
   updateServerSettings,
 } from "@/lib/server";
 import { existsSync, readFileSync } from "node:fs";
-import path from "node:path";
 import { randomBytes } from "node:crypto";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -526,36 +524,7 @@ async function handle(
       });
     }
     if (route === "schedule/save" && body) {
-      const script = scripts().find((item) => item.id === body.scriptId);
-      const command = (body.command || "").trim();
-      if (!script && !command) throw Error("Select an existing script");
-      if (command.length > 2000 || /[\r\n]/.test(command))
-        throw Error("The command must be one line shorter than 2,000 characters");
-      const expression = (body.expression || "").trim();
-      validCron(expression);
-      const runAs: "user" | "root" =
-        body.runAs === "root" ? "root" : "user";
-      if (runAs === "root" && !(await rootCronStatus()).available)
-        throw Error("Root cron access has not been enabled on this server");
-      if (runAs === "root" && command)
-        throw Error("Root schedules must use an approved script; custom root commands are disabled");
-      const item = {
-        id: /^[a-f0-9-]{32,36}$/.test(body.id || "")
-          ? body.id
-          : randomBytes(16).toString("hex"),
-        scriptId: script?.id || body.scriptId || "",
-        expression,
-        label: (body.label || "Schedule").trim().slice(0, 80),
-        enabled: body.enabled !== "false",
-        runAs,
-        ...(command ? { command } : {}),
-      };
-      const previous = schedules().find((schedule) => schedule.id === item.id);
-      const all = schedules().filter((schedule) => schedule.id !== item.id);
-      all.push(item);
-      save("schedules", all);
-      await syncCron([previous?.runAs || "user"]);
-      audit("schedule saved " + item.id);
+      await saveSchedule(body);
       return NextResponse.json({ ok: true });
     }
     if ((route === "schedule/delete" || route === "schedule/toggle") && body) {
@@ -618,14 +587,8 @@ async function handle(
     if (route === "history/metrics" && !body)
       return NextResponse.json({ metrics: metricSamples() });
     if (route === "alerts/save" && body) {
-      const metric = body.metric as ReturnType<typeof alertRules>[number]["metric"];
-      if (!['temperature','cpu','ram','disk','failedScripts','stoppedContainers'].includes(metric)) throw Error("Invalid alert metric");
-      const threshold = Number(body.threshold), cooldownMinutes = Number(body.cooldownMinutes);
-      if (!Number.isFinite(threshold) || threshold < 0 || !Number.isFinite(cooldownMinutes) || cooldownMinutes < 1 || cooldownMinutes > 10080) throw Error("Invalid alert values");
-      const id = /^[a-f0-9-]{32,36}$/.test(body.id || "") ? body.id : randomBytes(16).toString("hex");
-      const all = alertRules().filter((item) => item.id !== id);
-      all.push({ id, name: (body.name || "Alert").trim().slice(0, 80), metric, threshold, cooldownMinutes, enabled: body.enabled !== "false" });
-      save("alerts", all); audit("alert saved " + id); return NextResponse.json({ ok: true });
+      saveAlert(body);
+      return NextResponse.json({ ok: true });
     }
     if (route === "alerts/delete" && body) {
       save("alerts", alertRules().filter((item) => item.id !== body.id)); audit("alert deleted " + body.id); return NextResponse.json({ ok: true });

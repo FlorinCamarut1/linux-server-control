@@ -52,6 +52,11 @@ export function serverSettings(): ServerSettings {
   };
 }
 export function updateServerSettings(input: Partial<ServerSettings>) {
+  const settings = validateServerSettings(input);
+  save("server-settings", settings);
+  return settings;
+}
+function validateServerSettings(input: Partial<ServerSettings>): ServerSettings {
   const current = serverSettings();
   const sshTarget = (input.sshTarget ?? current.sshTarget).trim();
   if (sshTarget && !/^[a-zA-Z0-9_.-]+@[a-zA-Z0-9_.:-]+$/.test(sshTarget))
@@ -61,9 +66,7 @@ export function updateServerSettings(input: Partial<ServerSettings>) {
   if (!allowedPaths.length) throw Error("Keep at least one allowed path");
   const retention = Number(input.metricsRetentionDays ?? current.metricsRetentionDays);
   if (!Number.isInteger(retention) || retention < 1 || retention > 365) throw Error("Metric retention must be between 1 and 365 days");
-  const settings = { sshTarget, scriptRoot, allowedPaths: [...new Set(allowedPaths)], remoteLogs: cleanPath(input.remoteLogs ?? current.remoteLogs), metricsRetentionDays: retention };
-  save("server-settings", settings);
-  return settings;
+  return { sshTarget, scriptRoot, allowedPaths: [...new Set(allowedPaths)], remoteLogs: cleanPath(input.remoteLogs ?? current.remoteLogs), metricsRetentionDays: retention };
 }
 export function allowedRoots() { return serverSettings().allowedPaths; }
 mkdirSync(DATA, { recursive: true });
@@ -186,12 +189,148 @@ export function evaluateAlerts(snapshot: { stats: SystemStats; containers: { Sta
 export function exportConfiguration() {
   return { version: 1, exportedAt: new Date().toISOString(), scripts: scripts(), folders: folders(), schedules: schedules(), devices: read("devices", {}), alerts: alertRules(), serverSettings: serverSettings() };
 }
+const RECORD_ID = /^[\w-]{1,64}$/;
+const ALERT_METRICS: AlertRule["metric"][] = ["temperature", "cpu", "ram", "disk", "failedScripts", "stoppedContainers"];
+const oneLine = (value: unknown, max: number) => {
+  const text = typeof value === "string" ? value.trim() : "";
+  if (/[\r\n\0]/.test(text)) throw Error("Text values must be a single line");
+  return text.slice(0, max);
+};
+function folderName(value: unknown) {
+  const name = oneLine(value, 60).replace(/\s+/g, " ");
+  if (name === "Unfiled") throw Error("This folder name is reserved");
+  return name;
+}
+export function parseRunOptions(value: unknown): RunOption[] {
+  try {
+    const parsed = typeof value === "string" ? JSON.parse(value || "[]") : value ?? [];
+    if (!Array.isArray(parsed) || parsed.length > 12) throw Error();
+    return parsed.map((item) => {
+      const label = String(item?.label || "").trim().slice(0, 80);
+      const value = String(item?.value || "").trim().slice(0, 500);
+      const description = String(item?.description || "").trim().slice(0, 180);
+      if (!label || !value || /[\r\n\0]/.test(label + value + description)) throw Error();
+      return { label, value, description, needsFile: item.needsFile === true };
+    });
+  } catch {
+    throw Error("Each run option needs a name and an argument value");
+  }
+}
+// Shared by the schedule form and configuration restore, so both enforce the
+// same rules, in particular that root schedules may only run approved scripts.
+export function normalizeSchedule(input: Record<string, unknown>, knownScripts: Script[], rootCronAvailable: boolean): Schedule {
+  const id = typeof input.id === "string" && RECORD_ID.test(input.id) ? input.id : randomBytes(16).toString("hex");
+  const script = knownScripts.find((item) => item.id === input.scriptId);
+  const command = typeof input.command === "string" ? input.command.trim() : "";
+  if (!script && !command) throw Error("Select an existing script");
+  if (command.length > 2000 || /[\r\n\0]/.test(command))
+    throw Error("The command must be one line shorter than 2,000 characters");
+  const expression = typeof input.expression === "string" ? input.expression.trim() : "";
+  validCron(expression);
+  const runAs = input.runAs === "root" ? "root" : "user";
+  if (runAs === "root" && command)
+    throw Error("Root schedules must use an approved script; custom root commands are disabled");
+  if (runAs === "root" && !rootCronAvailable)
+    throw Error("Root cron access has not been enabled on this server");
+  return {
+    id,
+    scriptId: script?.id || "",
+    expression,
+    label: oneLine(input.label, 80) || "Schedule",
+    enabled: input.enabled !== false && input.enabled !== "false",
+    runAs,
+    ...(command ? { command } : {}),
+  };
+}
+export async function saveSchedule(input: Record<string, unknown>) {
+  const rootCronAvailable = input.runAs === "root" && (await rootCronStatus()).available;
+  const item = normalizeSchedule(input, scripts(), rootCronAvailable);
+  const previous = schedules().find((schedule) => schedule.id === item.id);
+  save("schedules", [...schedules().filter((schedule) => schedule.id !== item.id), item]);
+  await syncCron([previous?.runAs || "user"]);
+  audit("schedule saved " + item.id);
+}
+export function normalizeAlert(input: Record<string, unknown>): AlertRule {
+  const metric = input.metric as AlertRule["metric"];
+  if (!ALERT_METRICS.includes(metric)) throw Error("Invalid alert metric");
+  const threshold = Number(input.threshold), cooldownMinutes = Number(input.cooldownMinutes);
+  if (!Number.isFinite(threshold) || threshold < 0 || !Number.isFinite(cooldownMinutes) || cooldownMinutes < 1 || cooldownMinutes > 10080)
+    throw Error("Invalid alert values");
+  const lastTriggeredAt = Number(input.lastTriggeredAt);
+  return {
+    id: typeof input.id === "string" && RECORD_ID.test(input.id) ? input.id : randomBytes(16).toString("hex"),
+    name: oneLine(input.name, 80) || "Alert",
+    metric, threshold, cooldownMinutes,
+    // An unchecked form checkbox is omitted, so only an explicit true enables the rule.
+    enabled: input.enabled === true || input.enabled === "true",
+    ...(Number.isFinite(lastTriggeredAt) && lastTriggeredAt > 0 ? { lastTriggeredAt } : {}),
+  };
+}
+export function saveAlert(input: Record<string, unknown>) {
+  const rule = normalizeAlert(input);
+  save("alerts", [...alertRules().filter((item) => item.id !== rule.id), rule]);
+  audit("alert saved " + rule.id);
+}
+function restoredScript(input: Record<string, unknown>, roots: string[], knownFolders: string[]): Script {
+  if (typeof input.id !== "string" || !RECORD_ID.test(input.id)) throw Error("A script has an invalid identifier");
+  const name = oneLine(input.name, 80);
+  if (!name) throw Error("Every script needs a name");
+  const scriptPath = typeof input.path === "string" ? input.path : "";
+  // Restore cannot resolve symlinks on the host, so it accepts only already
+  // canonical-looking paths inside the restored allowed locations.
+  if (!scriptPath.startsWith("/") || !scriptPath.endsWith(".sh") || /[\r\n\0]/.test(scriptPath) ||
+      scriptPath.split("/").some((part) => part === "." || part === "..") ||
+      !roots.some((root) => scriptPath.startsWith(root + "/")))
+    throw Error(`Script "${name}" is not a .sh file inside an allowed location`);
+  const folder = folderName(input.folder);
+  if (folder && !knownFolders.includes(folder)) throw Error(`Script "${name}" uses an unknown folder`);
+  return {
+    id: input.id, name, path: scriptPath, cron: "", folder,
+    runAs: input.runAs === "root" ? "root" : "user",
+    argumentHint: oneLine(input.argumentHint, 200) || undefined,
+    runOptions: parseRunOptions(input.runOptions),
+  };
+}
+const objects = (value: unknown, label: string) => {
+  if (!Array.isArray(value) || value.some((item) => !item || typeof item !== "object"))
+    throw Error(`Invalid configuration backup: ${label}`);
+  return value as Record<string, unknown>[];
+};
+// Every record is validated before anything is written, so a rejected backup
+// leaves the current configuration untouched.
 export async function restoreConfiguration(payload: Record<string, unknown>) {
-  if (payload.version !== 1 || !Array.isArray(payload.scripts) || !Array.isArray(payload.schedules) || !Array.isArray(payload.folders) || !Array.isArray(payload.alerts)) throw Error("Invalid configuration backup");
-  save("scripts", payload.scripts); save("schedules", payload.schedules); save("folders", payload.folders); save("alerts", payload.alerts);
-  if (payload.devices && typeof payload.devices === "object") save("devices", payload.devices);
-  if (payload.serverSettings && typeof payload.serverSettings === "object") updateServerSettings(payload.serverSettings as Partial<ServerSettings>);
-  await syncCron(); audit("configuration restored");
+  if (payload.version !== 1) throw Error("Invalid configuration backup");
+  const settings = payload.serverSettings && typeof payload.serverSettings === "object"
+    ? validateServerSettings(payload.serverSettings as Partial<ServerSettings>)
+    : serverSettings();
+  if (!Array.isArray(payload.folders)) throw Error("Invalid configuration backup: folders");
+  const restoredFolders = [...new Set(payload.folders.map(folderName).filter(Boolean))];
+  const restoredScripts = objects(payload.scripts, "scripts").map((item) => restoredScript(item, settings.allowedPaths, [...restoredFolders]));
+  const restoredScheduleInput = objects(payload.schedules, "schedules");
+  const rootCronAvailable = restoredScheduleInput.some((item) => item.runAs === "root") && (await rootCronStatus()).available;
+  const restoredSchedules = restoredScheduleInput.map((item) => {
+    if (typeof item.id !== "string" || !RECORD_ID.test(item.id)) throw Error("A schedule has an invalid identifier");
+    return normalizeSchedule(item, restoredScripts, rootCronAvailable);
+  });
+  const restoredAlerts = objects(payload.alerts, "alerts").map(normalizeAlert);
+  let restoredDevices: Record<string, { name: string; created: string }> | undefined;
+  if (payload.devices !== undefined) {
+    if (!payload.devices || typeof payload.devices !== "object" || Array.isArray(payload.devices)) throw Error("Invalid configuration backup: devices");
+    restoredDevices = Object.fromEntries(Object.entries(payload.devices as Record<string, Record<string, unknown>>).map(([id, device]) => {
+      if (!/^[a-f0-9]{64}$/.test(id) || !device || typeof device !== "object") throw Error("Invalid configuration backup: devices");
+      return [id, { name: oneLine(device.name, 80) || "Browser", created: oneLine(device.created, 40) }];
+    }));
+  }
+  const previousUsers = schedules().map((item) => item.runAs || "user");
+  save("server-settings", settings);
+  save("folders", restoredFolders);
+  save("scripts", restoredScripts);
+  save("schedules", restoredSchedules);
+  save("alerts", restoredAlerts);
+  if (restoredDevices) save("devices", restoredDevices);
+  // Include the previous users so schedules removed by the restore also leave their crontab.
+  await syncCron(previousUsers);
+  audit("configuration restored");
 }
 const ssh = (args: string[]): [string, string[]] => {
   const target = serverSettings().sshTarget;
@@ -842,21 +981,7 @@ export async function addScript(input: Record<string, string>) {
     runAs: "user" | "root" = input.runAs === "root" ? "root" : "user";
   if (!name) throw Error("Enter a name");
   if (/[\r\n]/.test(folder)) throw Error("The folder name must be one line");
-  let runOptions: RunOption[] = [];
-  try {
-    const parsed = JSON.parse(input.runOptions || "[]");
-    if (!Array.isArray(parsed) || parsed.length > 12) throw Error();
-    runOptions = parsed.map((item) => {
-      const label = String(item.label || "").trim().slice(0, 80);
-      const value = String(item.value || "").trim().slice(0, 500);
-      const description = String(item.description || "").trim().slice(0, 180);
-      const needsFile = item.needsFile === true;
-      if (!label || !value || /[\r\n]/.test(label + value + description)) throw Error();
-      return { label, value, description, needsFile };
-    });
-  } catch {
-    throw Error("Each run option needs a name and an argument value");
-  }
+  const runOptions = parseRunOptions(input.runOptions);
   if (folder && !folders().includes(folder)) throw Error("Choose an existing folder");
   if (runAs === "root" && !(await rootScriptStatus()).available)
     throw Error("Root script access has not been enabled on this server");
@@ -872,9 +997,7 @@ export async function addScript(input: Record<string, string>) {
     );
   try { await run(["test", "-f", resolved]); }
   catch { throw Error("The script must be a regular file"); }
-  const id = /^[a-f0-9-]{32,36}$/.test(input.id || "")
-    ? input.id
-    : randomUUID();
+  const id = RECORD_ID.test(input.id || "") ? input.id : randomUUID();
   const all = scripts().filter((x) => x.id !== id);
   all.push({ id, name, path: resolved, cron: expr, folder, runAs, runOptions });
   save("scripts", all);
