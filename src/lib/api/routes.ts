@@ -43,6 +43,7 @@ import {
   testServerConnection,
   updateServerSettings,
 } from "@/lib/server";
+import { DRIVERS, deletePowerDevice, powerHistory, publicDevices, savePowerDevice, savePowerSettings, powerSettings } from "@/lib/power";
 import { accountRoutes } from "./auth";
 import { demoState } from "./demo";
 import { type Body, type Context, type Routes, ok } from "./http";
@@ -262,7 +263,27 @@ const historyRoutes: Routes<Context> = {
   },
 };
 
+const powerRoutes: Routes<Context> = {
+  "GET power/drivers": () => NextResponse.json({ drivers: DRIVERS.map(({ id, name, description, fields }) => ({ id, name, description, fields })) }),
+  "GET power/devices": () => NextResponse.json({ devices: publicDevices(), settings: powerSettings() }),
+  "POST power/device/save": async ({ body }) => ok({ reading: await savePowerDevice(body) }),
+  "POST power/device/delete": ({ body }) => {
+    deletePowerDevice(body.id || "");
+    return ok();
+  },
+  "POST power/settings": ({ body }) => {
+    savePowerSettings(body);
+    return ok();
+  },
+  "GET power/history": ({ req }) => {
+    const range = req.nextUrl.searchParams.get("range") || "24h";
+    if (range !== "24h" && range !== "7d" && range !== "30d") throw Error("Choose 24h, 7d or 30d");
+    return NextResponse.json(powerHistory(range));
+  },
+};
+
 export const routes: Routes<Context> = {
+  ...powerRoutes,
   ...accountRoutes,
   ...hostRoutes,
   ...fileRoutes,

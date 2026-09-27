@@ -56,5 +56,18 @@ export function loadServer({ env = {}, host = () => ({ stdout: "" }), delay = 0 
   };
 }
 
+// Loads src/lib/power.ts on top of a server loaded with loadServer.
+export function loadPower(server) {
+  const source = ts.transpileModule(readFileSync(new URL("../src/lib/power.ts", import.meta.url), "utf8"), {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true },
+  }).outputText;
+  const context = {
+    exports: {}, Buffer, fetch, AbortSignal, URLSearchParams, setTimeout, console,
+    require(name) { return name === "./server" ? server : require(name); },
+  };
+  vm.runInNewContext(source, context);
+  return context.exports;
+}
+
 // Values created inside the VM have that context's prototypes; compare as JSON.
 export const plain = (value) => JSON.parse(JSON.stringify(value));
