@@ -8,11 +8,15 @@ The application uses Next.js with TypeScript, the App Router, and Docker Compose
 
 ## Main files
 
-- `src/app/page.tsx` contains the client dashboard UI and view composition.
+- `src/app/page.tsx` contains the dashboard shell and view composition.
+- `src/components/` contains the client components by area: `ui`, `containers`, `scripts`, `files`, `schedules`, `settings`, `monitoring`, and `auth`.
+- `src/lib/types.ts` contains the client-side data types.
 - `src/lib/client-api.ts` contains the client API helper and structured API errors.
 - `src/app/globals.css` contains the responsive dashboard styles.
-- `src/app/api/[...path]/route.ts` implements authenticated API routes.
-- `src/lib/server.ts` implements SSH, Docker, file, script, cron, and system-statistics helpers.
+- `src/app/api/[...path]/route.ts` checks the request origin, authenticates, and dispatches to the route tables.
+- `src/lib/api/` implements the API: `auth.ts` (setup, sign-in, rate limiting, sessions, devices), `routes.ts` (all signed-in routes, keyed by method and path), `http.ts` (responses and cookies), and `demo.ts` (development demo data).
+- `src/lib/server.ts` implements SSH, Docker, file, script, cron, metric, alert, and system-statistics helpers, plus the validation shared by forms and configuration restore.
+- `src/instrumentation.ts` starts the background monitor and recovers interrupted runs when the server starts.
 - `compose.yaml` builds and exposes the dashboard directly on the configured LAN IP.
 - `compose.github.yaml` is a standalone Compose file that pulls the multi-architecture dashboard image from GHCR.
 - `.github/workflows/container.yml` publishes `latest`, semantic-version, and commit tags for `amd64` and `arm64`.
@@ -65,7 +69,9 @@ After `config.json` contains a password, the setup endpoint refuses further init
 - Sessions use HTTP-only, SameSite-strict cookies. Set `COOKIE_SECURE=true` only when an external HTTPS reverse proxy is added.
 - Cookie names are `lsc_session` and `lsc_device`. They intentionally differ from the earlier HTTPS-only `session` and `device` cookies, because browsers do not allow a plain-HTTP response to overwrite an existing Secure cookie with the same name.
 - POST requests validate their origin.
-- Five failed sign-ins from one source address result in a temporary block.
+- Failed sign-ins are rate-limited per enrolled browser (5 failures) and, for all unknown browsers together, in one shared bucket (10 failures); each block lasts 15 minutes. Client addresses are not used because clients can forge `X-Forwarded-For` when there is no proxy. Guessing from new browsers therefore cannot lock out an enrolled browser.
+- A new browser must present a valid enrollment code before its password is checked, so it cannot learn whether a guessed password is correct.
+- `GET /api/setup/status` returns the server connection details only until setup is complete.
 - Keep the HTTP port on a trusted private LAN; do not expose the dashboard directly to the public internet.
 
 ## Overview and system statistics
@@ -79,6 +85,8 @@ MONITORED_PATHS=/srv/media,/srv/backups
 ```
 
 Invalid or unavailable paths display `Unavailable` without preventing other dashboard statistics from loading.
+
+A background monitor, started from `src/instrumentation.ts`, records one health sample every 5 minutes, evaluates alert rules, and collects cron runs, even while no browser is open. Dashboard polls never add extra samples, so the configured retention is what limits the history. `/api/state` returns only the latest sample and the sample count; `/api/history/metrics` returns the full history.
 
 ## Containers
 
@@ -114,7 +122,7 @@ Root cron access has a wider trust boundary. The helper can replace root's cront
 
 ## Schedules and logs
 
-Scheduled jobs use guided cron forms and managed comments so the dashboard changes only its own entries. Managed schedules emit start/end markers to the remote `schedules.log`; the History page presents a searchable, status-filtered, paginated cron-run view. Manual script runs persist start/end time, exit code, duration, arguments, status, and a per-run captured log. Container and script log viewers can refresh automatically while live mode is enabled.
+Scheduled jobs use guided cron forms and managed comments so the dashboard changes only its own entries. Every `%` in a managed line is escaped, because cron would otherwise treat it as a newline. Crontab updates run one at a time and always install the latest saved schedules. Only a missing crontab (`no crontab for USER`, or BusyBox's `can't open`) is treated as empty; any other read failure aborts the update instead of replacing the user's own entries. The latest 20 crontab backups per user are kept in `DATA_DIR`. Managed schedules emit start/end markers to the remote `schedules.log`; the History page presents a searchable, status-filtered, paginated cron-run view. Manual script runs persist start/end time, exit code, duration, arguments, status, and a per-run captured log. The newest 2,000 runs are kept, and the logs of older runs are deleted. Runs still marked as running when the server starts are marked failed with an interruption note, because the restart ended their SSH session. Container and script log viewers can refresh automatically while live mode is enabled.
 
 ## Operational notes
 
@@ -123,14 +131,16 @@ Scheduled jobs use guided cron forms and managed comments so the dashboard chang
 - Periodic host snapshots use asynchronous SSH reads in parallel. Concurrent snapshot requests share in-flight work; completed snapshots are not cached.
 - Files loads directory entries first and requests recursive folder sizes separately. Script and file pickers do not calculate recursive sizes. Size failures do not prevent navigation.
 - Automatic dashboard polling pauses while the browser tab is hidden and refreshes when it becomes visible. Scheduled polls do not overlap one another.
-- Run the concurrency regression checks with `node --test tests/performance.test.mjs`.
+- Run the tests with `npm test`. `tests/harness.mjs` loads `server.ts` against a temporary data directory with scripted host responses.
+- Host commands run asynchronously over one multiplexed SSH connection (`SSH_MULTIPLEX=false` disables multiplexing). A failed command surfaces as `CommandError` with only the last stderr line; the command line is never returned to the browser.
+- Configuration restores are validated with the same rules as the regular forms, and nothing is written unless every record is valid.
 - Keep the API catch-all route at `src/app/api/[...path]/route.ts`.
 - The dashboard uses SSH for all host operations; it does not mount the host Docker socket.
 - File listing calculates directory sizes with a bounded command. Restricted directories can have an unavailable or partial size.
 - The file menu provides Edit, Copy, Cut, Rename, and Delete actions without crowding each row.
 - All destructive confirmations and name-entry prompts use application modals instead of browser-native dialogs.
 - The History page has separate Script runs and Cron runs tabs, each with search, status filtering, and 20-row pagination.
-- Dashboard metric samples and alert rules are stored in `DATA_DIR`; metric retention defaults to 30 days and is configurable with `METRICS_RETENTION_DAYS`.
+- Dashboard metric samples and alert rules are stored in `DATA_DIR`; metric retention defaults to 30 days and is configurable with `METRICS_RETENTION_DAYS`. The failed-scripts alert counts failures from the last 24 hours.
 - README screenshots under `docs/screenshots/` use anonymized demonstration data only.
 - The interface is responsive for phone screens.
 
@@ -138,9 +148,10 @@ Scheduled jobs use guided cron forms and managed comments so the dashboard chang
 
 - Folder sizes require a recursive `du` scan. Entries appear first, but size calculation can remain expensive on very large directory trees.
 - The Files API returns at most 300 entries per directory; pagination applies within that bounded result set rather than to arbitrarily large remote directories.
-- Alerts are evaluated during dashboard snapshot refreshes and written to the audit log. They do not yet send email, push, or chat notifications.
+- Alerts are evaluated by the background monitor and during dashboard refreshes, and written to the audit log. They do not yet send email, push, or chat notifications.
 - Metric history currently appears as latest-value cards and counts; compact time-series charts have not been added yet.
-- The automated tests cover snapshot concurrency and failure recovery. Authentication, file operations, cron synchronization, and responsive UI flows still need integration coverage.
+- The automated tests cover snapshot concurrency, cron synchronization and escaping, configuration restore validation, schedule and alert rules, metric sampling, and run recovery. Authentication, file operations, and responsive UI flows still need integration coverage.
+- Root schedules run the approved script directly from root's crontab, not through `media-dashboard-root-run`, so the root-script directory allowlist does not apply to them. Only scripts registered in the dashboard can be scheduled as root.
 - The dashboard distinguishes a lost SSH connection from a login failure and displays a reconnect screen. Settings can be edited after connectivity returns; the reconnect screen intentionally avoids presenting a configuration form while the server cannot be verified.
 
 ## Recommended next work
@@ -148,6 +159,6 @@ Scheduled jobs use guided cron forms and managed comments so the dashboard chang
 1. Add actual notification delivery for alert rules (email, webhook, or a user-selected provider), while retaining the existing cooldown behavior.
 2. Add compact CPU, RAM, temperature, and disk time-series charts with configurable aggregation and retention.
 3. Add roles such as administrator and read-only operator if the dashboard will be shared by multiple people.
-4. Expand integration tests around authentication, allowed-path enforcement, file operations, cron changes, history capture, and mobile layouts.
-5. Consider SSH connection multiplexing when deployments use many independent SSH requests and the target supports persistent control sockets.
+4. Expand integration tests around authentication, allowed-path enforcement, file operations, and mobile layouts.
+5. Route root schedules through `media-dashboard-root-run`, so they are restricted to the approved root-script directories like immediate root runs.
 6. Add true remote-directory pagination beyond the current 300-entry safety cap.

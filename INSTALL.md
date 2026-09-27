@@ -65,6 +65,8 @@ METRICS_RETENTION_DAYS=30
 
 Keep `ALLOWED_PATHS` narrow. Do not use `/`, all of `/home`, `.ssh`, or this installation's `data` and `ssh` folders.
 
+The dashboard reuses one SSH connection for consecutive commands, with its control socket in the container's `/tmp`. If you run it without the provided Compose files and `/tmp` is not writable, add `SSH_MULTIPLEX=false`.
+
 ## 4. Create the SSH key
 
 The dashboard container connects to the server with a dedicated key:

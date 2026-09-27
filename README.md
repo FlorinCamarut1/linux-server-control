@@ -53,8 +53,13 @@ docker compose up -d
 ```bash
 npm ci
 npm run dev
+npm run lint
+npm run typecheck
+npm test
 npm run build
 ```
+
+CI runs lint, type checks, and tests before it builds the container image.
 
 ## License
 
