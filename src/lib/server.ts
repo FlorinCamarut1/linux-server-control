@@ -174,8 +174,8 @@ const average = (values: (number | null | undefined)[]) => {
 };
 // Samples within the range, averaged into at most `points` equal time buckets
 // so long ranges stay light to send and draw.
-export function metricHistory(range: HistoryRange, points = 288) {
-  const now = Date.now(), span = HISTORY_RANGES[range], from = now - span, bucket = span / points;
+export function metricHistory(range: HistoryRange, points = 288, now = Date.now()) {
+  const span = HISTORY_RANGES[range], from = now - span, bucket = span / points;
   const groups = new Map<number, MetricSample[]>();
   for (const sample of metricSamples()) {
     if (sample.at < from) continue;

@@ -183,9 +183,9 @@ test("metric history keeps the range and averages samples into buckets", () => {
   const now = Date.now();
   const samples = [];
   for (let minutes = 60 * 48; minutes >= 0; minutes -= 5)
-    samples.push({ at: now - minutes * 60000, cpu: minutes <= 55 ? 80 : 20, ram: 50, temperature: null, disk: 10, storage: { "/mnt/media": 60 } });
+    samples.push({ at: now - minutes * 60000, cpu: minutes <= 60 ? 80 : 20, ram: 50, temperature: null, disk: 10, storage: { "/mnt/media": 60 } });
   server.save("metrics", samples, false);
-  const day = server.metricHistory("24h", 24);
+  const day = server.metricHistory("24h", 24, now);
   assert.ok(day.samples.length <= 24 && day.samples.length >= 23);
   assert.ok(day.samples.every((item) => item.at >= day.from), "older samples are left out");
   assert.equal(day.samples.at(-1).cpu, 80, "the last hour keeps its own average");
