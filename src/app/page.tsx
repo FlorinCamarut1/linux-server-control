@@ -98,6 +98,10 @@ export default function Home() {
       document.removeEventListener("visibilitychange", scheduled);
     };
   }, [refresh]);
+  // On phones the navigation scrolls sideways; keep the active tab visible.
+  useEffect(() => {
+    document.querySelector("nav button.active")?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [tab]);
   const active = useMemo(
     () => state?.containers.filter((c) => c.State === "running").length || 0,
     [state],
@@ -292,8 +296,8 @@ export default function Home() {
                 icon={<Container />}
               />
             </section>
-            <div className="actions" style={{ marginBottom: 18 }}><Btn onClick={() => setStorageManager(true)}><HardDrive size={16} />Manage storage paths</Btn></div>
-            {state.stats.storage.length > storagePerPage && <div className="actions" style={{ marginBottom: 18 }}><Btn disabled={storagePage === 0} onClick={() => setStoragePage((page) => page - 1)}>Previous storage</Btn><small>Storage {storagePage + 1} of {storagePages}</small><Btn disabled={storagePage + 1 >= storagePages} onClick={() => setStoragePage((page) => page + 1)}>Next storage</Btn></div>}
+            <div className="actions"><Btn onClick={() => setStorageManager(true)}><HardDrive size={16} />Manage storage paths</Btn></div>
+            {state.stats.storage.length > storagePerPage && <div className="actions"><Btn disabled={storagePage === 0} onClick={() => setStoragePage((page) => page - 1)}>Previous storage</Btn><small>Storage {storagePage + 1} of {storagePages}</small><Btn disabled={storagePage + 1 >= storagePages} onClick={() => setStoragePage((page) => page + 1)}>Next storage</Btn></div>}
             <Panel
               title="All containers"
               note="Live Docker status and controls"
@@ -531,7 +535,7 @@ export default function Home() {
         )}
         {tab === "history" && <HistoryPanel runs={state.runs || []} cronRuns={state.cronRuns || []} metrics={state.metrics} openLog={(run) => openLogs(`${run.scriptName} run`, "script/log", { id: run.scriptId, runId: run.id })} />}
         {tab === "alerts" && (
-          <Panel title="Alert rules" note="Threshold checks run with each dashboard refresh; cooldowns prevent repeated notifications." extra={<Btn className="primary" onClick={() => setAlertEditor(null)}>New alert</Btn>}>
+          <Panel title="Alert rules" note="Rules are checked every 5 minutes and on each dashboard refresh; cooldowns prevent repeated notifications." extra={<Btn className="primary" onClick={() => setAlertEditor(null)}>New alert</Btn>}>
             {(state.alerts || []).map((rule) => <div className="schedule-row" key={rule.id}><div className="grow"><b>{rule.name}</b><small>{rule.metric} ≥ {rule.threshold} · cooldown {rule.cooldownMinutes} min{rule.lastTriggeredAt ? ` · last triggered ${new Date(rule.lastTriggeredAt).toLocaleString()}` : ""}</small></div><span className={`badge ${rule.enabled ? "up" : "down"}`}>{rule.enabled ? "Enabled" : "Paused"}</span><div className="actions"><Btn onClick={() => setAlertEditor(rule)}>Edit</Btn><Btn className="danger" onClick={() => action(rule.id, "alerts/delete", { id: rule.id })}><Trash2 size={15}/>Delete</Btn></div></div>)}
             {!state.alerts?.length && <div className="empty-state"><Thermometer size={22}/><b>No alert rules yet</b><p>Add thresholds for server health and jobs.</p></div>}
           </Panel>
