@@ -647,6 +647,13 @@ header p,
 .chart-grid-2 > .chart-card {
   margin: 0;
 }
+/* Charts take the width of their column; without this, the drawn chart
+   widened its own column and the measured width never shrank. */
+.chart-grid-2 > *,
+.chart-card,
+.chart {
+  min-width: 0;
+}
 .chart {
   padding: var(--panel-space-y) var(--panel-space-x);
 }
@@ -1935,9 +1942,14 @@ select:focus {
     flex-direction: row;
     padding: 16px var(--modal-space);
   }
-  .modal .panel-head > .button {
+  .modal .panel-head > .button,
+  .chart-card .panel-head > .button {
     flex: 0 0 auto;
     width: auto;
+  }
+  .chart-card .panel-head {
+    align-items: center;
+    flex-direction: row;
   }
   .modal .panel-head h2 {
     font-size: var(--text-lg);

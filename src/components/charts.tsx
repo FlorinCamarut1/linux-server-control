@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 
 // Charts drawn as inline SVG. Colors come from the theme's validated chart
 // palette (--series-N), text uses text tokens, and every chart can also be
@@ -12,15 +12,23 @@ const PLOT_HEIGHT = 200;
 const MARGIN = { top: 12, right: 16, bottom: 28, left: 48 };
 const seriesColor = (index: number) => `var(--series-${(index % 8) + 1})`;
 
+// Measures the chart's container. A callback ref, because the container is a
+// different element while there is no data: a ref read once in an effect kept
+// watching the placeholder and left the chart at its default width.
 function useWidth() {
-  const ref = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(640);
-  useEffect(() => {
-    const element = ref.current;
+  const observer = useRef<ResizeObserver | null>(null);
+  const ref = useCallback((element: HTMLDivElement | null) => {
+    observer.current?.disconnect();
+    observer.current = null;
     if (!element) return;
-    const observer = new ResizeObserver(([entry]) => setWidth(Math.max(240, entry.contentRect.width)));
-    observer.observe(element);
-    return () => observer.disconnect();
+    // Measure right away: observers only report while the page is visible,
+    // and a page opened in a background tab would keep the default width.
+    const style = getComputedStyle(element);
+    const inner = element.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+    if (inner > 0) setWidth(Math.max(240, inner));
+    observer.current = new ResizeObserver(([entry]) => setWidth(Math.max(240, entry.contentRect.width)));
+    observer.current.observe(element);
   }, []);
   return { ref, width };
 }
