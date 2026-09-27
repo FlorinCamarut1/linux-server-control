@@ -81,17 +81,20 @@ export default function Home() {
   }, []);
   useEffect(() => {
     let polling = false;
-    const poll = async () => {
-      if (document.hidden || polling) return;
+    // Automatic refreshes pause in hidden tabs, but the first load always runs,
+    // so a dashboard opened in a background tab is ready when it is shown.
+    const poll = async (initial = false) => {
+      if ((!initial && document.hidden) || polling) return;
       polling = true;
       try { await refresh(true); } finally { polling = false; }
     };
-    void poll();
-    const x = setInterval(poll, 15000);
-    document.addEventListener("visibilitychange", poll);
+    void poll(true);
+    const scheduled = () => void poll();
+    const x = setInterval(scheduled, 15000);
+    document.addEventListener("visibilitychange", scheduled);
     return () => {
       clearInterval(x);
-      document.removeEventListener("visibilitychange", poll);
+      document.removeEventListener("visibilitychange", scheduled);
     };
   }, [refresh]);
   const active = useMemo(
