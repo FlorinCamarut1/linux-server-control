@@ -1,5 +1,4 @@
-import { execFile, execFileSync, spawn } from "node:child_process";
-import { promisify } from "node:util";
+import { execFile, spawn } from "node:child_process";
 import {
   createHash,
   randomBytes,
@@ -134,10 +133,16 @@ export function monitoredPaths() {
   if (configured.length) return configured;
   return [...new Set((process.env.MONITORED_PATHS || "/mnt/storage").split(",").map((item) => item.trim().replace(/\/$/, "")).filter((item) => item.startsWith("/")))];
 }
-export function addMonitoredPath(input: string) {
+export async function addMonitoredPath(input: string) {
   const requested = input.trim().replace(/\/$/, "");
   if (!requested.startsWith("/") || /[\r\n\0]/.test(requested)) throw Error("Enter an absolute storage path");
-  const resolved = run(["realpath", "-e", requested]).trim(); run(["test", "-d", resolved]);
+  let resolved: string;
+  try {
+    resolved = (await run(["realpath", "-e", "--", requested])).trim();
+    await run(["test", "-d", resolved]);
+  } catch {
+    throw Error("This storage path does not exist or is not a folder");
+  }
   const all = monitoredPaths(); if (!all.includes(resolved)) save("monitored-paths", [...all, resolved]);
   audit("monitor storage path " + resolved); return resolved;
 }
@@ -179,12 +184,12 @@ export function evaluateAlerts(snapshot: { stats: SystemStats; containers: { Sta
 export function exportConfiguration() {
   return { version: 1, exportedAt: new Date().toISOString(), scripts: scripts(), folders: folders(), schedules: schedules(), devices: read("devices", {}), alerts: alertRules(), serverSettings: serverSettings() };
 }
-export function restoreConfiguration(payload: Record<string, unknown>) {
+export async function restoreConfiguration(payload: Record<string, unknown>) {
   if (payload.version !== 1 || !Array.isArray(payload.scripts) || !Array.isArray(payload.schedules) || !Array.isArray(payload.folders) || !Array.isArray(payload.alerts)) throw Error("Invalid configuration backup");
   save("scripts", payload.scripts); save("schedules", payload.schedules); save("folders", payload.folders); save("alerts", payload.alerts);
   if (payload.devices && typeof payload.devices === "object") save("devices", payload.devices);
   if (payload.serverSettings && typeof payload.serverSettings === "object") updateServerSettings(payload.serverSettings as Partial<ServerSettings>);
-  syncCron(payload.schedules as Schedule[]); audit("configuration restored");
+  await syncCron(payload.schedules as Schedule[]); audit("configuration restored");
 }
 const ssh = (args: string[]): [string, string[]] => {
   const target = serverSettings().sshTarget;
@@ -217,21 +222,25 @@ export async function testServerConnection() {
 export function shell(args: string[]) {
   return args.map((x) => "'" + x.replaceAll("'", "'\\''") + "'").join(" ");
 }
-export function run(args: string[], timeout = 30000) {
-  const [c, a] = ssh(args);
-  return execFileSync(c, a, { encoding: "utf8", timeout, maxBuffer: 4e6 });
-}
-const execFileAsync = promisify(execFile);
-export async function runAsync(args: string[], timeout = 30000) {
+// Raised when a host command fails. Its message is safe to show in the browser:
+// it never contains the SSH command line, key path, or script arguments.
+export class CommandError extends Error {}
+export function runAsync(args: string[], timeout = 30000, input?: string) {
   const [command, arguments_] = ssh(args);
-  const { stdout } = await execFileAsync(command, arguments_, {
-    encoding: "utf8", timeout, maxBuffer: 4e6,
+  return new Promise<string>((resolve, reject) => {
+    const child = execFile(command, arguments_, { encoding: "utf8", timeout, maxBuffer: 4e6 }, (error, stdout, stderr) => {
+      if (!error) return resolve(stdout);
+      console.error(`Host command failed (${args[0]}):`, error.message);
+      const detail = String(stderr || "").trim().split("\n").filter(Boolean).pop();
+      reject(new CommandError(error.killed ? "The server command timed out" : detail || "The server command failed"));
+    });
+    child?.stdin?.on("error", () => {});
+    child?.stdin?.end(input ?? "");
   });
-  return stdout;
 }
+export const run = runAsync;
 export function runInput(args: string[], input: string, timeout = 30000) {
-  const [c, a] = ssh(args);
-  return execFileSync(c, a, { encoding: "utf8", input, timeout, maxBuffer: 4e6 });
+  return runAsync(args, timeout, input);
 }
 export type SystemStats = {
   temperatureC: number | null;
@@ -345,29 +354,29 @@ export function hostSnapshot() {
   }
   return pendingSnapshot;
 }
-export function cron(user: CronUser = "user") {
+export async function cron(user: CronUser = "user") {
   try {
     return user === "root"
-      ? run(["sudo", "-n", rootCronHelper, "list"])
-      : run(["crontab", "-l"]);
+      ? await run(["sudo", "-n", rootCronHelper, "list"])
+      : await run(["crontab", "-l"]);
   } catch {
     return "";
   }
 }
-export function rootCronStatus() {
+export async function rootCronStatus() {
   try {
-    return {
-      available: true,
-      cron: run(["sudo", "-n", rootCronHelper, "list"]),
-      system: run(["sudo", "-n", rootCronHelper, "system-list"]),
-    };
+    const [cron, system] = await Promise.all([
+      run(["sudo", "-n", rootCronHelper, "list"]),
+      run(["sudo", "-n", rootCronHelper, "system-list"]),
+    ]);
+    return { available: true, cron, system };
   } catch {
     return { available: false, cron: "", system: "" };
   }
 }
-export function rootScriptStatus() {
+export async function rootScriptStatus() {
   try {
-    run(["sudo", "-n", rootScriptHelper, "status"]);
+    await run(["sudo", "-n", rootScriptHelper, "status"]);
     return { available: true };
   } catch {
     return { available: false };
@@ -393,7 +402,7 @@ export function addFolder(input: string) {
   const all = folders();
   if (!all.includes(name)) save("folders", [...all, name]);
 }
-export function deleteDashboardFolder(input: string, deleteScripts = false) {
+export async function deleteDashboardFolder(input: string, deleteScripts = false) {
   const name = input.trim();
   if (!name) throw Error("Choose a dashboard folder");
   const stored = read<string[]>("folders", []);
@@ -411,7 +420,7 @@ export function deleteDashboardFolder(input: string, deleteScripts = false) {
     const removedSchedules = schedules().filter((item) => removedIds.has(item.scriptId));
     const remainingSchedules = schedules().filter((item) => !removedIds.has(item.scriptId));
     save("schedules", remainingSchedules);
-    syncCron(remainingSchedules, removedSchedules.map((item) => item.runAs || "user"));
+    await syncCron(remainingSchedules, removedSchedules.map((item) => item.runAs || "user"));
   }
   audit(`folder deleted ${name} (${removedScripts.length} scripts)`);
   return { deletedScripts: removedScripts.length };
@@ -445,16 +454,16 @@ export function validCron(x: string) {
   )
     throw Error("Invalid cron expression");
 }
-export function syncCron(items: Schedule[], extraUsers: CronUser[] = []) {
+export async function syncCron(items: Schedule[], extraUsers: CronUser[] = []) {
   const remote = serverSettings().remoteLogs;
-  run(["mkdir", "-p", remote]);
+  await run(["mkdir", "-p", remote]);
   const available = scripts();
   const users = new Set<CronUser>([
     ...items.map((item) => item.runAs || "user"),
     ...extraUsers,
   ]);
   for (const user of users) {
-    const old = cron(user);
+    const old = await cron(user);
     save(`cron-backup-${user}-${Date.now()}`, old);
     const lines = old
       .split("\n")
@@ -471,13 +480,13 @@ export function syncCron(items: Schedule[], extraUsers: CronUser[] = []) {
     }
     const data = lines.join("\n") + "\n";
     if (user === "root")
-      runInput(["sudo", "-n", rootCronHelper, "install"], data, 15000);
-    else runInput(["crontab", "-"], data, 15000);
+      await runInput(["sudo", "-n", rootCronHelper, "install"], data, 15000);
+    else await runInput(["crontab", "-"], data, 15000);
   }
 }
-export function collectCronRuns() {
+export async function collectCronRuns() {
   let output = "";
-  try { output = run(["tail", "-n", "4000", path.posix.join(serverSettings().remoteLogs, "schedules.log")]); } catch { return cronRuns(); }
+  try { output = await run(["tail", "-n", "4000", path.posix.join(serverSettings().remoteLogs, "schedules.log")]); } catch { return cronRuns(); }
   const active = new Map<string, CronRun>(); const parsed: CronRun[] = [];
   for (const line of output.split("\n")) {
     const start = /^MEDIA_DASHBOARD_START\s+(\S+)\s+(.+)$/.exec(line);
@@ -536,57 +545,63 @@ function parseArguments(value: string) {
 function isAllowedPath(value: string) {
   return allowedRoots().some((root) => value === root || value.startsWith(root + "/"));
 }
-function resolveAllowedDirectory(requested: string) {
-  const directory = requested
-    ? run(["realpath", "-e", requested]).trim()
-    : allowedRoots()[0];
+async function resolveAllowedDirectory(requested: string) {
+  let directory = allowedRoots()[0];
+  if (requested) {
+    try { directory = (await run(["realpath", "-e", "--", requested])).trim(); }
+    catch { throw Error("Folder not found"); }
+  }
   if (!directory || !isAllowedPath(directory))
     throw Error("This folder is outside the allowed locations");
-  run(["test", "-d", directory]);
+  try { await run(["test", "-d", directory]); }
+  catch { throw Error("Choose a folder"); }
   return directory;
 }
-function resolveSelectedFile(requested: string) {
-  const resolved = run(["realpath", "-e", requested]).trim();
+async function resolveSelectedFile(requested: string) {
+  let resolved: string;
+  try { resolved = (await run(["realpath", "-e", "--", requested])).trim(); }
+  catch { throw Error("File not found"); }
   if (!isAllowedPath(resolved))
     throw Error("The selected file must be inside an allowed location");
-  run(["test", "-f", resolved]);
+  try { await run(["test", "-f", resolved]); }
+  catch { throw Error("Choose a regular file"); }
   return resolved;
 }
 const MAX_EDITABLE_FILE_BYTES = 512 * 1024;
-export function readEditableFile(requested: string) {
-  const resolved = resolveSelectedFile(requested);
-  const size = Number(run(["stat", "-c", "%s", resolved]).trim());
+export async function readEditableFile(requested: string) {
+  const resolved = await resolveSelectedFile(requested);
+  const size = Number((await run(["stat", "-c", "%s", resolved])).trim());
   if (!Number.isFinite(size) || size > MAX_EDITABLE_FILE_BYTES)
     throw Error("Only text files up to 512 KB can be edited here");
-  const mime = run(["file", "--brief", "--mime-type", resolved]).trim();
+  const mime = (await run(["file", "--brief", "--mime-type", resolved])).trim();
   if (!mime.startsWith("text/") && !mime.endsWith("json") && !mime.endsWith("xml"))
     throw Error("This file is not a supported text file");
-  return { path: resolved, content: run(["cat", resolved]) };
+  return { path: resolved, content: await run(["cat", resolved]) };
 }
-export function saveEditableFile(requested: string, content: string) {
-  const resolved = resolveSelectedFile(requested);
+export async function saveEditableFile(requested: string, content: string) {
+  const resolved = await resolveSelectedFile(requested);
   if (Buffer.byteLength(content, "utf8") > MAX_EDITABLE_FILE_BYTES)
     throw Error("Only text files up to 512 KB can be saved here");
   if (content.includes("\0")) throw Error("Binary content cannot be saved here");
-  runInput(["sh", "-c", 'cat > "$1"', "sh", resolved], content, 15000);
+  await runInput(["sh", "-c", 'cat > "$1"', "sh", resolved], content, 15000);
   audit("edited file " + resolved);
 }
-export function deleteEditableFile(requested: string) {
-  const resolved = resolveSelectedFile(requested);
-  run(["rm", "-f", "--", resolved]);
+export async function deleteEditableFile(requested: string) {
+  const resolved = await resolveSelectedFile(requested);
+  await run(["rm", "-f", "--", resolved]);
   audit("deleted file " + resolved);
 }
-export function runScript(s: Script, rawArguments = "", selectedFile = "") {
+export async function runScript(s: Script, rawArguments = "", selectedFile = "") {
   const scriptArguments = parseArguments(rawArguments);
   if (selectedFile) {
     const fileIndex = scriptArguments.indexOf("--file");
     scriptArguments.splice(
       fileIndex >= 0 ? fileIndex + 1 : scriptArguments.length,
       0,
-      resolveSelectedFile(selectedFile),
+      await resolveSelectedFile(selectedFile),
     );
   }
-  if (s.runAs === "root" && !rootScriptStatus().available)
+  if (s.runAs === "root" && !(await rootScriptStatus()).available)
     throw Error("Root script access has not been enabled on this server");
   const command =
       s.runAs === "root"
@@ -790,7 +805,7 @@ export async function createFileOrFolder(directory: string, name: string, kind: 
   const result = await remoteFileOperation({ path: directory, action: "create", name, kind });
   audit(`created ${kind} ${result.path}`); return result;
 }
-export function addScript(input: Record<string, string>) {
+export async function addScript(input: Record<string, string>) {
   const name = (input.name || "").trim().slice(0, 80),
     requested = input.path || "",
     folder = (input.folder || "").trim().replace(/\s+/g, " ").slice(0, 60),
@@ -814,9 +829,11 @@ export function addScript(input: Record<string, string>) {
     throw Error("Each run option needs a name and an argument value");
   }
   if (folder && !folders().includes(folder)) throw Error("Choose an existing folder");
-  if (runAs === "root" && !rootScriptStatus().available)
+  if (runAs === "root" && !(await rootScriptStatus()).available)
     throw Error("Root script access has not been enabled on this server");
-  const resolved = run(["realpath", "-e", requested]).trim();
+  let resolved: string;
+  try { resolved = (await run(["realpath", "-e", "--", requested])).trim(); }
+  catch { throw Error("The script file was not found"); }
   if (
     !isAllowedPath(resolved) ||
     !resolved.endsWith(".sh")
@@ -824,7 +841,8 @@ export function addScript(input: Record<string, string>) {
     throw Error(
       "The script must be an existing .sh file inside an allowed location",
     );
-  run(["test", "-f", resolved]);
+  try { await run(["test", "-f", resolved]); }
+  catch { throw Error("The script must be a regular file"); }
   const id = /^[a-f0-9-]{32,36}$/.test(input.id || "")
     ? input.id
     : randomUUID();
@@ -832,15 +850,15 @@ export function addScript(input: Record<string, string>) {
   all.push({ id, name, path: resolved, cron: expr, folder, runAs, runOptions });
   save("scripts", all);
 }
-export function createCustomScript(input: Record<string, string>) {
-  const directory = resolveAllowedDirectory(input.directory || "");
+export async function createCustomScript(input: Record<string, string>) {
+  const directory = await resolveAllowedDirectory(input.directory || "");
   const filename = (input.filename || "").trim();
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]*\.sh$/.test(filename))
     throw Error("Use a shell-script filename ending in .sh");
   const target = path.posix.join(directory, filename);
   if (!isAllowedPath(target)) throw Error("Choose an allowed script folder");
   try {
-    run(["test", "!", "-e", target]);
+    await run(["test", "!", "-e", target]);
   } catch {
     throw Error("A file or folder with this name already exists");
   }
@@ -850,15 +868,15 @@ export function createCustomScript(input: Record<string, string>) {
   const program = content.startsWith("#!")
     ? content
     : "#!/usr/bin/env bash\nset -eu\n\n" + content;
-  runInput(
+  await runInput(
     ["sh", "-c", 'umask 077; cat > "$1"; chmod 700 "$1"', "sh", target],
     program,
     15000,
   );
   try {
-    addScript({ ...input, path: target });
+    await addScript({ ...input, path: target });
   } catch (error) {
-    run(["rm", "-f", "--", target]);
+    await run(["rm", "-f", "--", target]).catch(() => {});
     throw error;
   }
   audit("created custom script " + target);

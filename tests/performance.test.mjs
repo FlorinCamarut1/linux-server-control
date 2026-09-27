@@ -63,7 +63,7 @@ test("simultaneous snapshots share asynchronous host reads; next refresh reads a
 test("failed reads do not poison later snapshots", async () => {
   const { exports, calls, fail } = harness();
   fail();
-  await assert.rejects(exports.hostSnapshot(), /offline/);
-  await assert.rejects(exports.hostSnapshot(), /offline/);
+  await assert.rejects(exports.hostSnapshot(), /server command failed/);
+  await assert.rejects(exports.hostSnapshot(), /server command failed/);
   assert.equal(calls.filter((name) => name === "docker").length, 2);
 });

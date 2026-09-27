@@ -9,6 +9,7 @@ import {
   changeFile,
   createFileOrFolder,
   collectCronRuns,
+  CommandError,
   addMonitoredPath,
   removeMonitoredPath,
   monitoredPaths,
@@ -403,7 +404,7 @@ async function handle(
         alerts: alertRules(),
         metrics,
         alertState: alerts,
-        cronRuns: collectCronRuns(),
+        cronRuns: await collectCronRuns(),
         monitoredPaths: monitoredPaths(),
       });
     }
@@ -464,8 +465,8 @@ async function handle(
         throw Error("Invalid action");
       const output =
         body.action === "logs"
-          ? run(["docker", "logs", "--tail", "300", "--timestamps", body.name])
-          : run(["docker", body.action, body.name], 45000);
+          ? await run(["docker", "logs", "--tail", "300", "--timestamps", body.name])
+          : await run(["docker", body.action, body.name], 45000);
       return NextResponse.json({ output });
     }
     if (route === "script/browse" && body)
@@ -495,22 +496,22 @@ async function handle(
       return NextResponse.json(await createFileOrFolder(body.path || "", body.name || "", kind));
     }
     if (route === "storage/add" && body)
-      return NextResponse.json({ path: addMonitoredPath(body.path || "") });
+      return NextResponse.json({ path: await addMonitoredPath(body.path || "") });
     if (route === "storage/remove" && body) {
       removeMonitoredPath(body.path || ""); return NextResponse.json({ ok: true });
     }
     if (route === "file/read" && body)
-      return NextResponse.json(readEditableFile(body.path || ""));
+      return NextResponse.json(await readEditableFile(body.path || ""));
     if (route === "file/save" && body) {
-      saveEditableFile(body.path || "", body.content || "");
+      await saveEditableFile(body.path || "", body.content || "");
       return NextResponse.json({ ok: true });
     }
     if (route === "script/save" && body) {
-      addScript(body);
+      await addScript(body);
       return NextResponse.json({ ok: true });
     }
     if (route === "script/create-custom" && body) {
-      createCustomScript(body);
+      await createCustomScript(body);
       return NextResponse.json({ ok: true });
     }
     if (route === "folder/create" && body) {
@@ -521,7 +522,7 @@ async function handle(
     if (route === "folder/delete" && body) {
       return NextResponse.json({
         ok: true,
-        ...deleteDashboardFolder(body.name || "", body.deleteScripts === "true"),
+        ...(await deleteDashboardFolder(body.name || "", body.deleteScripts === "true")),
       });
     }
     if (route === "schedule/save" && body) {
@@ -534,7 +535,7 @@ async function handle(
       validCron(expression);
       const runAs: "user" | "root" =
         body.runAs === "root" ? "root" : "user";
-      if (runAs === "root" && !rootCronStatus().available)
+      if (runAs === "root" && !(await rootCronStatus()).available)
         throw Error("Root cron access has not been enabled on this server");
       if (runAs === "root" && command)
         throw Error("Root schedules must use an approved script; custom root commands are disabled");
@@ -553,7 +554,7 @@ async function handle(
       const all = schedules().filter((schedule) => schedule.id !== item.id);
       all.push(item);
       save("schedules", all);
-      syncCron(all, [previous?.runAs || "user"]);
+      await syncCron(all, [previous?.runAs || "user"]);
       audit("schedule saved " + item.id);
       return NextResponse.json({ ok: true });
     }
@@ -568,7 +569,7 @@ async function handle(
               item.id === body.id ? { ...item, enabled: !item.enabled } : item,
             );
       save("schedules", all);
-      syncCron(all, [current.runAs || "user"]);
+      await syncCron(all, [current.runAs || "user"]);
       audit(route + " " + body.id);
       return NextResponse.json({ ok: true });
     }
@@ -583,8 +584,8 @@ async function handle(
           const selected = s.runOptions[option];
           if (selected.needsFile && !body.file)
             throw Error("Choose a file before running this option");
-          return NextResponse.json({ ok: true, run: runScript(s, selected.value, selected.needsFile ? body.file : "") });
-        } else return NextResponse.json({ ok: true, run: runScript(s) });
+          return NextResponse.json({ ok: true, run: await runScript(s, selected.value, selected.needsFile ? body.file : "") });
+        } else return NextResponse.json({ ok: true, run: await runScript(s) });
       }
       if (route === "script/log") {
         const runRecord = body.runId
@@ -606,7 +607,7 @@ async function handle(
           (item) => item.scriptId !== s.id,
         );
         save("schedules", remainingSchedules);
-        syncCron(
+        await syncCron(
           remainingSchedules,
           removedSchedules.map((item) => item.runAs || "user"),
         );
@@ -631,7 +632,7 @@ async function handle(
       save("alerts", alertRules().filter((item) => item.id !== body.id)); audit("alert deleted " + body.id); return NextResponse.json({ ok: true });
     }
     if (route === "config/export" && !body) return NextResponse.json(exportConfiguration());
-    if (route === "config/restore" && body) { restoreConfiguration(body.payload ? JSON.parse(body.payload) : body); return NextResponse.json({ ok: true }); }
+    if (route === "config/restore" && body) { await restoreConfiguration(body.payload ? JSON.parse(body.payload) : body); return NextResponse.json({ ok: true }); }
     if (route === "device/revoke" && body) {
       delete devices[body.id];
       save("devices", devices);
@@ -639,6 +640,7 @@ async function handle(
     }
     return fail("Not found", 404);
   } catch (e) {
+    if (e instanceof CommandError) return fail(e.message, 502);
     return fail(e instanceof Error ? e.message : "Internal error");
   }
 }
