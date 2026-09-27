@@ -9,3 +9,4 @@ seed-local.py
 next-app/
 node_modules/
 .next/
+*.tsbuildinfo

@@ -743,7 +743,7 @@ export function audit(x: string) {
     new Date().toISOString() + " " + x + "\n",
   );
 }
-function parseArguments(value: string) {
+export function parseArguments(value: string) {
   if (value.length > 2000 || /[\r\n]/.test(value))
     throw Error("Arguments must be a single line shorter than 2,000 characters");
   const args: string[] = [];
