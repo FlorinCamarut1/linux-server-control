@@ -554,7 +554,7 @@ async function handle(
       const all = schedules().filter((schedule) => schedule.id !== item.id);
       all.push(item);
       save("schedules", all);
-      await syncCron(all, [previous?.runAs || "user"]);
+      await syncCron([previous?.runAs || "user"]);
       audit("schedule saved " + item.id);
       return NextResponse.json({ ok: true });
     }
@@ -569,7 +569,7 @@ async function handle(
               item.id === body.id ? { ...item, enabled: !item.enabled } : item,
             );
       save("schedules", all);
-      await syncCron(all, [current.runAs || "user"]);
+      await syncCron([current.runAs || "user"]);
       audit(route + " " + body.id);
       return NextResponse.json({ ok: true });
     }
@@ -608,7 +608,6 @@ async function handle(
         );
         save("schedules", remainingSchedules);
         await syncCron(
-          remainingSchedules,
           removedSchedules.map((item) => item.runAs || "user"),
         );
         return NextResponse.json({ ok: true });

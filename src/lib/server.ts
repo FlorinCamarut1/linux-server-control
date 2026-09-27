@@ -13,6 +13,8 @@ import {
   writeFileSync,
   appendFileSync,
   openSync,
+  readdirSync,
+  rmSync,
 } from "node:fs";
 import path from "node:path";
 export const DATA = process.env.DATA_DIR || "/app/data";
@@ -189,7 +191,7 @@ export async function restoreConfiguration(payload: Record<string, unknown>) {
   save("scripts", payload.scripts); save("schedules", payload.schedules); save("folders", payload.folders); save("alerts", payload.alerts);
   if (payload.devices && typeof payload.devices === "object") save("devices", payload.devices);
   if (payload.serverSettings && typeof payload.serverSettings === "object") updateServerSettings(payload.serverSettings as Partial<ServerSettings>);
-  await syncCron(payload.schedules as Schedule[]); audit("configuration restored");
+  await syncCron(); audit("configuration restored");
 }
 const ssh = (args: string[]): [string, string[]] => {
   const target = serverSettings().sshTarget;
@@ -354,13 +356,15 @@ export function hostSnapshot() {
   }
   return pendingSnapshot;
 }
+// Reads a crontab. Only a missing crontab counts as empty: any other failure
+// must abort, or the following install would erase the user's own entries.
 export async function cron(user: CronUser = "user") {
+  if (user === "root") return run(["sudo", "-n", rootCronHelper, "list"]);
   try {
-    return user === "root"
-      ? await run(["sudo", "-n", rootCronHelper, "list"])
-      : await run(["crontab", "-l"]);
-  } catch {
-    return "";
+    return await run(["crontab", "-l"]);
+  } catch (error) {
+    if (error instanceof CommandError && /no crontab for/i.test(error.message)) return "";
+    throw error;
   }
 }
 export async function rootCronStatus() {
@@ -420,7 +424,7 @@ export async function deleteDashboardFolder(input: string, deleteScripts = false
     const removedSchedules = schedules().filter((item) => removedIds.has(item.scriptId));
     const remainingSchedules = schedules().filter((item) => !removedIds.has(item.scriptId));
     save("schedules", remainingSchedules);
-    await syncCron(remainingSchedules, removedSchedules.map((item) => item.runAs || "user"));
+    await syncCron(removedSchedules.map((item) => item.runAs || "user"));
   }
   audit(`folder deleted ${name} (${removedScripts.length} scripts)`);
   return { deletedScripts: removedScripts.length };
@@ -443,7 +447,7 @@ export function schedules(): Schedule[] {
     }));
 }
 export function validCron(x: string) {
-  if (!x) return;
+  if (!x) throw Error("Choose when the schedule should run");
   if (x === "@reboot") return;
   const f = x.split(/\s+/);
   if (
@@ -454,9 +458,35 @@ export function validCron(x: string) {
   )
     throw Error("Invalid cron expression");
 }
-export async function syncCron(items: Schedule[], extraUsers: CronUser[] = []) {
-  const remote = serverSettings().remoteLogs;
-  await run(["mkdir", "-p", remote]);
+const CRON_MARKER = "# media-dashboard:";
+const MAX_CRON_BACKUPS = 20;
+// Builds one managed crontab line. Cron turns every unescaped "%" in the command
+// into a newline, so all of them are escaped, including those in custom commands.
+export function cronLine(schedule: Schedule, command: string, logFile: string) {
+  if (!/^[\w-]{1,64}$/.test(schedule.id)) throw Error("Invalid schedule identifier");
+  validCron(schedule.expression);
+  if (/[\r\n]/.test(command)) throw Error("The command must be one line");
+  // The markers make scheduled work observable without granting cron any additional privileges.
+  const body = `( printf 'MEDIA_DASHBOARD_START ${schedule.id} %s\\n' "$(date -Is)"; ${command} ; code=$?; printf 'MEDIA_DASHBOARD_END ${schedule.id} %s %s\\n' "$(date -Is)" "$code"; exit "$code" ) >> ${shell([logFile])} 2>&1`;
+  return `${schedule.expression} ${body.replaceAll("%", "\\%")} ${CRON_MARKER}${schedule.id}`;
+}
+function pruneCronBackups(user: CronUser) {
+  const prefix = `cron-backup-${user}-`;
+  const backups = readdirSync(DATA).filter((name) => name.startsWith(prefix) && name.endsWith(".json")).sort();
+  for (const name of backups.slice(0, -MAX_CRON_BACKUPS)) rmSync(path.join(DATA, name), { force: true });
+}
+// Crontab updates are read-modify-write operations on the host, so they run one at
+// a time and always install the latest saved schedules rather than a caller's copy.
+let cronQueue: Promise<unknown> = Promise.resolve();
+export function syncCron(extraUsers: CronUser[] = []) {
+  const next = cronQueue.then(() => installSchedules(extraUsers));
+  cronQueue = next.catch(() => {});
+  return next;
+}
+async function installSchedules(extraUsers: CronUser[]) {
+  const items = schedules();
+  const logFile = path.posix.join(serverSettings().remoteLogs, "schedules.log");
+  await run(["mkdir", "-p", path.posix.dirname(logFile)]);
   const available = scripts();
   const users = new Set<CronUser>([
     ...items.map((item) => item.runAs || "user"),
@@ -465,18 +495,17 @@ export async function syncCron(items: Schedule[], extraUsers: CronUser[] = []) {
   for (const user of users) {
     const old = await cron(user);
     save(`cron-backup-${user}-${Date.now()}`, old);
+    pruneCronBackups(user);
     const lines = old
       .split("\n")
-      .filter((line) => !line.includes("# media-dashboard:"));
+      .filter((line) => !line.includes(CRON_MARKER));
+    while (lines.length && !lines.at(-1)) lines.pop();
     for (const schedule of items.filter(
       (item) => (item.runAs || "user") === user,
     )) {
       const script = available.find((item) => item.id === schedule.scriptId);
-      if (schedule.enabled && (script || schedule.command))
-        // The markers make scheduled work observable without granting cron any additional privileges.
-        lines.push(
-          `${schedule.expression} ( printf 'MEDIA_DASHBOARD_START ${schedule.id} %s\\n' "$(date -Is)"; ${schedule.command ? schedule.command : `/bin/bash ${shell([script!.path])}`} ; code=$?; printf 'MEDIA_DASHBOARD_END ${schedule.id} %s %s\\n' "$(date -Is)" "$code"; exit "$code" ) >> ${shell([remote + "/schedules.log"])} 2>&1 # media-dashboard:${schedule.id}`,
-        );
+      const command = schedule.command || (script ? `/bin/bash ${shell([script.path])}` : "");
+      if (schedule.enabled && command) lines.push(cronLine(schedule, command, logFile));
     }
     const data = lines.join("\n") + "\n";
     if (user === "root")
