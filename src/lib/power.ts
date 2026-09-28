@@ -1,5 +1,5 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from "node:crypto";
-import { audit, read, save, serverSettings } from "./server";
+import { audit, emitDashboardEvent, read, save, serverSettings } from "./server";
 
 // Smart plugs and energy meters. Each device model is a driver: the fields
 // its settings form needs, and how to read the current power. Readings are
@@ -269,8 +269,13 @@ export async function samplePower() {
   }));
   const states = powerState(), now = Date.now();
   for (const result of results) {
-    if (result.reading) recordReading(result.device.id, result.reading, now, states);
-    else {
+    // Announce changes only: a device that was failing and reads again, or the reverse.
+    const wasFailing = Boolean(states[result.device.id]?.error);
+    if (result.reading) {
+      if (wasFailing) emitDashboardEvent({ type: "power-online", severity: "success", title: `${result.device.name} is responding again`, message: `Current power ${Math.round(result.reading.powerW)} W.` });
+      recordReading(result.device.id, result.reading, now, states);
+    } else {
+      if (!wasFailing) emitDashboardEvent({ type: "power-offline", severity: "warning", title: `${result.device.name} stopped responding`, message: result.error ?? "The device could not be read." });
       states[result.device.id] = { ...(states[result.device.id] ?? { recent: [], hourly: [] }), error: result.error, errorAt: now };
       save("power", states, false);
     }

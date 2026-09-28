@@ -797,6 +797,27 @@ header p,
   margin-top: 12px;
   color: var(--muted);
 }
+.event-choices {
+  margin: 0 0 16px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+}
+.event-choices legend {
+  padding: 0 4px;
+  color: var(--text-soft);
+  font-size: var(--text-md);
+}
+.event-choices label {
+  margin: 8px 0 0;
+  color: var(--text);
+}
+.grow small.notice-ok {
+  color: var(--success-text);
+}
+.grow small.notice-error {
+  color: var(--danger-text);
+}
 .theme-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(144px, 1fr));

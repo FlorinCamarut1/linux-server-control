@@ -44,6 +44,8 @@ import {
   updateServerSettings,
 } from "@/lib/server";
 import { DRIVERS, deletePowerDevice, powerHistory, publicDevices, savePowerDevice, savePowerSettings, powerSettings } from "@/lib/power";
+import { CHANNEL_TYPES, deleteChannel, publicChannels, saveChannel, testChannel } from "@/lib/notify";
+import { EVENT_TYPES } from "@/lib/server";
 import { accountRoutes } from "./auth";
 import { demoState } from "./demo";
 import { type Body, type Context, type Routes, ok } from "./http";
@@ -282,7 +284,24 @@ const powerRoutes: Routes<Context> = {
   },
 };
 
+const notificationRoutes: Routes<Context> = {
+  "GET notifications": () => NextResponse.json({ channels: publicChannels(), types: CHANNEL_TYPES, events: EVENT_TYPES }),
+  "POST notifications/save": ({ body }) => {
+    saveChannel(body);
+    return ok();
+  },
+  "POST notifications/delete": ({ body }) => {
+    deleteChannel(body.id || "");
+    return ok();
+  },
+  "POST notifications/test": async ({ body }) => {
+    await testChannel(body.id || "");
+    return ok();
+  },
+};
+
 export const routes: Routes<Context> = {
+  ...notificationRoutes,
   ...powerRoutes,
   ...accountRoutes,
   ...hostRoutes,

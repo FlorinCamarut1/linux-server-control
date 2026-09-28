@@ -7,6 +7,9 @@ import type { St } from "@/lib/types";
 import {
   KeyRound,
   Trash2,
+  Bell,
+  Plus,
+  Send,
 } from "lucide-react";
 export function PasswordForm() {
   const [message, setMessage] = useState("");
@@ -136,4 +139,73 @@ export function StorageManager({ paths, close, done }: { paths: string[]; close:
     <div className="storage-path-list">{paths.map((path) => <div className="schedule-row" key={path}><div className="grow"><b>{path}</b><small>Monitored storage path</small></div><Btn className="danger" disabled={paths.length < 2} onClick={async () => { if (!await appConfirm(`Stop monitoring ${path}?`, "Remove storage path", "Remove", true)) return; try { await api("storage/remove", { path }); await done(); } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not remove path"); } }}><Trash2 size={15}/>Remove</Btn></div>)}</div>
     {error && <div className="alert">{error}</div>}<small>At least one path must remain monitored.</small>
   </div></Modal>;
+}
+
+type ChannelType = { id: string; name: string; placeholder: string; help: string };
+type Channel = { id: string; name: string; type: string; url: string; events: string[]; enabled: boolean; lastSentAt?: number; lastError?: string };
+type NotificationData = { channels: Channel[]; types: ChannelType[]; events: Record<string, string> };
+// Webhooks that receive alerts, failed runs and power device changes.
+export function NotificationsPanel() {
+  const [data, setData] = useState<NotificationData | null>(null);
+  const [editing, setEditing] = useState<Channel | null | undefined>();
+  const [status, setStatus] = useState<Record<string, string>>({});
+  const [error, setError] = useState("");
+  const load = () => api("notifications", undefined, true).then(setData).catch((reason) => setError(reason instanceof Error ? reason.message : "Could not load notification channels"));
+  useEffect(() => { void load(); }, []);
+  return <Panel title="Notifications" note="Send alerts, failed runs and power device changes to Discord, Slack, ntfy or any webhook." extra={<Btn className="primary" onClick={() => setEditing(null)} disabled={!data}><Plus size={16} />Add channel</Btn>}>
+    {error && <div className="panel-body"><div className="alert">{error}</div></div>}
+    {data && !data.channels.length && <div className="empty-state"><Bell size={22} /><b>No notification channels</b><p>Add a webhook to be told when an alert triggers or a run fails.</p></div>}
+    {data?.channels.map((channel) => (
+      <div className="schedule-row" key={channel.id}>
+        <span className="service-icon"><Bell size={18} /></span>
+        <div className="grow">
+          <b>{channel.name}</b>
+          <small>{data.types.find((type) => type.id === channel.type)?.name ?? channel.type} · {channel.url} · {channel.events.length} of {Object.keys(data.events).length} events</small>
+          {(status[channel.id] || channel.lastError) && <small className={status[channel.id] === "Test sent." ? "notice-ok" : "notice-error"}>{status[channel.id] || `Last delivery failed: ${channel.lastError}`}</small>}
+        </div>
+        {!channel.enabled && <span className="badge root">Paused</span>}
+        <div className="actions">
+          <Btn onClick={async () => {
+            setStatus((current) => ({ ...current, [channel.id]: "Sending…" }));
+            try { await api("notifications/test", { id: channel.id }); setStatus((current) => ({ ...current, [channel.id]: "Test sent." })); }
+            catch (reason) { setStatus((current) => ({ ...current, [channel.id]: reason instanceof Error ? reason.message : "The test failed" })); }
+          }}><Send size={15} />Test</Btn>
+          <Btn onClick={() => setEditing(channel)}>Edit</Btn>
+          <Btn className="danger" onClick={async () => {
+            if (!await appConfirm(`Delete the notification channel ${channel.name}?`, "Delete channel", "Delete", true)) return;
+            try { await api("notifications/delete", { id: channel.id }); await load(); } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not delete the channel"); }
+          }}><Trash2 size={15} />Delete</Btn>
+        </div>
+      </div>
+    ))}
+    {editing !== undefined && data && <ChannelForm channel={editing} data={data} close={() => setEditing(undefined)} saved={async () => { setEditing(undefined); await load(); }} />}
+  </Panel>;
+}
+function ChannelForm({ channel, data, close, saved }: { channel: Channel | null; data: NotificationData; close: () => void; saved: () => void }) {
+  const [type, setType] = useState(channel?.type ?? data.types[0].id);
+  const [error, setError] = useState("");
+  const info = data.types.find((item) => item.id === type);
+  return <Modal title={channel ? `Edit ${channel.name}` : "Add notification channel"} close={close}>
+    <form onSubmit={async (event) => {
+      event.preventDefault(); setError("");
+      const form = new FormData(event.currentTarget);
+      try {
+        await api("notifications/save", { id: channel?.id, type, name: form.get("name"), url: form.get("url"), events: form.getAll("events"), enabled: form.get("enabled") === "true" });
+        saved();
+      } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not save the channel"); }
+    }}>
+      <label>Service<select value={type} onChange={(event) => setType(event.target.value)} disabled={!!channel}>{data.types.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+      <label>Name<input name="name" defaultValue={channel?.name} required maxLength={60} placeholder="Server alerts" /></label>
+      <label>Webhook URL<input name="url" type="url" required={!channel} spellCheck={false} autoComplete="off" placeholder={channel ? `Leave blank to keep the saved URL (${channel.url})` : info?.placeholder} />{info && <small>{info.help}</small>}</label>
+      <fieldset className="event-choices">
+        <legend>Send these events</legend>
+        {Object.entries(data.events).map(([id, label]) => (
+          <label key={id}><input type="checkbox" name="events" value={id} defaultChecked={channel ? channel.events.includes(id) : true} /> {label}</label>
+        ))}
+      </fieldset>
+      <label><input name="enabled" type="checkbox" value="true" defaultChecked={channel?.enabled !== false} /> Enabled</label>
+      {error && <div className="alert">{error}</div>}
+      <Btn className="primary">{channel ? "Save channel" : "Add channel"}</Btn>
+    </form>
+  </Modal>;
 }

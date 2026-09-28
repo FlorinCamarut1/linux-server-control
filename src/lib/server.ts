@@ -135,6 +135,28 @@ export function persistSessions() {
   for (const [id, session] of sessions) if (session.expires <= now) sessions.delete(id);
   save("sessions", Object.fromEntries(sessions));
 }
+// Events that notification channels can deliver. Listeners live on globalThis
+// because Next.js loads this module separately for the API routes and for the
+// background monitor; both must reach the same listeners.
+export const EVENT_TYPES = {
+  alert: "Alert triggered",
+  "script-failed": "Script run failed",
+  "cron-failed": "Scheduled run failed",
+  "power-offline": "Power device stopped responding",
+  "power-online": "Power device responding again",
+} as const;
+export type EventType = keyof typeof EVENT_TYPES;
+export type DashboardEvent = { type: EventType; title: string; message: string; severity: "info" | "warning" | "critical" | "success" };
+type EventListener = (event: DashboardEvent) => void;
+const eventBus = globalThis as { lscEventListeners?: EventListener[] };
+export function onDashboardEvent(listener: EventListener) {
+  (eventBus.lscEventListeners ??= []).push(listener);
+}
+export function emitDashboardEvent(event: DashboardEvent) {
+  for (const listener of eventBus.lscEventListeners ?? []) {
+    try { listener(event); } catch (error) { console.error("Event listener failed:", error); }
+  }
+}
 export function scriptRuns() { return read<ScriptRun[]>("script-runs", []); }
 const MAX_SCRIPT_RUNS = 2000;
 // Keeps the newest runs and deletes the logs of the records that are dropped.
@@ -239,6 +261,8 @@ export function recordMetricSample(stats: SystemStats) {
 // Failed-run alerts count recent failures only; counting the whole history kept
 // an alert firing forever once the threshold had been reached.
 export const FAILED_RUN_WINDOW_MS = 24 * 60 * 60 * 1000;
+const ALERT_LABELS: Record<AlertRule["metric"], string> = { temperature: "CPU temperature", cpu: "CPU use", ram: "RAM use", disk: "System disk use", failedScripts: "Failed script runs in the last 24 hours", stoppedContainers: "Stopped containers" };
+const ALERT_UNITS: Record<AlertRule["metric"], string> = { temperature: " °C", cpu: "%", ram: "%", disk: "%", failedScripts: "", stoppedContainers: "" };
 export function evaluateAlerts(snapshot: { stats: SystemStats; containers: { State: string }[] }) {
   const since = Date.now() - FAILED_RUN_WINDOW_MS;
   const failed = scriptRuns().filter((item) => item.status === "failed" && Date.parse(item.startedAt) >= since).length;
@@ -254,7 +278,9 @@ export function evaluateAlerts(snapshot: { stats: SystemStats; containers: { Sta
     const cool = rule.cooldownMinutes * 60000;
     if (rule.enabled && values[rule.metric] >= rule.threshold && (!rule.lastTriggeredAt || now - rule.lastTriggeredAt >= cool)) {
       const next = { ...rule, lastTriggeredAt: now };
-      triggered.push(next); audit(`alert triggered ${rule.name}: ${values[rule.metric]}`); return next;
+      triggered.push(next); audit(`alert triggered ${rule.name}: ${values[rule.metric]}`);
+      emitDashboardEvent({ type: "alert", severity: "warning", title: `Alert: ${rule.name}`, message: `${ALERT_LABELS[rule.metric]} is ${Math.round(values[rule.metric] * 10) / 10}${ALERT_UNITS[rule.metric]}, at or above the threshold of ${rule.threshold}${ALERT_UNITS[rule.metric]}.` });
+      return next;
     }
     return rule;
   });
@@ -785,7 +811,17 @@ export async function collectCronRuns(log?: string | null) {
     if (end) { const item = active.get(end[1]) || { scheduleId: end[1], label: label(end[1]), startedAt: end[2], status: "running" as const }; parsed.push({ ...item, completedAt: end[2], exitCode: Number(end[3]), status: end[3] === "0" ? "success" : "failed" }); active.delete(end[1]); }
   }
   const all = [...parsed, ...active.values()].slice(-500).reverse();
-  if (JSON.stringify(all) !== JSON.stringify(cronRuns())) save("cron-runs", all);
+  const previous = cronRuns();
+  if (JSON.stringify(all) !== JSON.stringify(previous)) {
+    // Announce only failures that are new since the last collection; the first
+    // collection establishes what is already known.
+    const known = new Set(previous.map((run) => `${run.scheduleId} ${run.startedAt}`));
+    if (previous.length)
+      for (const run of all)
+        if (run.status === "failed" && !known.has(`${run.scheduleId} ${run.startedAt}`))
+          emitDashboardEvent({ type: "cron-failed", severity: "critical", title: `Scheduled run failed: ${run.label}`, message: `Started ${run.startedAt}, exit code ${run.exitCode ?? "unknown"}.` });
+    save("cron-runs", all);
+  }
   return all;
 }
 export function hash(password: string, salt: string) {
@@ -919,6 +955,7 @@ export async function runScript(s: Script, rawArguments = "", selectedFile = "")
     } : item);
     save("script-runs", all);
     audit(`script ${s.name} ${code === 0 ? "completed" : "failed"} (${runId})`);
+    if (code !== 0) emitDashboardEvent({ type: "script-failed", severity: "critical", title: `Script failed: ${s.name}`, message: code === null ? "The run could not be started." : `The run ended with exit code ${code} after ${Math.round((completed - started) / 1000)} s.` });
   };
   try {
     const child = spawn(cmd, args, {

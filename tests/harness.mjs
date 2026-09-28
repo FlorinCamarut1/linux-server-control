@@ -114,5 +114,12 @@ export function loadApi(server, env = {}) {
   return { http, auth };
 }
 
+// Loads src/lib/notify.ts on top of a server loaded with loadServer.
+export function loadNotify(server) {
+  const context = { exports: {}, Buffer, fetch, AbortSignal, URL, console: { ...console, error() {} }, require: (name) => (name === "./server" ? server : require(name)) };
+  vm.runInNewContext(transpile("../src/lib/notify.ts"), context);
+  return context.exports;
+}
+
 // Values created inside the VM have that context's prototypes; compare as JSON.
 export const plain = (value) => JSON.parse(JSON.stringify(value));
