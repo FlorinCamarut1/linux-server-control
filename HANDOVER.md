@@ -9,14 +9,19 @@ The application uses Next.js with TypeScript, the App Router, and Docker Compose
 ## Main files
 
 - `src/app/page.tsx` contains the dashboard shell and view composition.
-- `src/components/` contains the client components by area: `ui`, `containers`, `scripts`, `files`, `schedules`, `settings`, `monitoring`, and `auth`.
+- `src/components/` contains the client components by area: `ui`, `charts`, `containers`, `scripts`, `files`, `schedules`, `power`, `settings`, `monitoring`, and `auth`.
 - `src/lib/types.ts` contains the client-side data types.
 - `src/lib/client-api.ts` contains the client API helper and structured API errors.
 - `src/app/globals.css` contains the responsive dashboard styles.
 - `src/app/api/[...path]/route.ts` checks the request origin, authenticates, and dispatches to the route tables.
 - `src/lib/api/` implements the API: `auth.ts` (setup, sign-in, rate limiting, sessions, devices), `routes.ts` (all signed-in routes, keyed by method and path), `http.ts` (responses and cookies), and `demo.ts` (development demo data).
 - `src/lib/server.ts` implements SSH, Docker, file, script, cron, metric, alert, and system-statistics helpers, plus the validation shared by forms and configuration restore.
-- `src/instrumentation.ts` starts the background monitor and recovers interrupted runs when the server starts.
+- `src/lib/power.ts` implements the smart plug drivers, minute sampling, and energy history.
+- `src/lib/notify.ts` implements notification channels and delivery.
+- `src/lib/container-links.ts` builds the links from containers to their web interfaces.
+- `src/lib/theme.ts` lists the themes and applies the chosen one.
+- `src/instrumentation.ts` starts the background monitor and the power sampler, connects notifications to dashboard events, and recovers interrupted runs when the server starts.
+- `docs/USER-GUIDE.md` is the user guide; its screenshots in `docs/screenshots/` come from a demonstration instance.
 - `compose.yaml` builds and exposes the dashboard directly on the configured LAN IP.
 - `compose.github.yaml` is a standalone Compose file that pulls the multi-architecture dashboard image from GHCR.
 - `.github/workflows/container.yml` publishes `latest`, semantic-version, and commit tags for `amd64` and `arm64`.
@@ -60,7 +65,7 @@ After `config.json` contains a password, the setup endpoint refuses further init
 
 ## Image publication
 
-`.github/workflows/container.yml` runs for pushes to `main`, version tags, and pull requests. Pull requests build without publishing. Pushes publish OCI images to GHCR for `linux/amd64` and `linux/arm64`, with BuildKit caching and provenance attestations. The generated tags include `latest` for `main`, semantic-version variants for `v*` tags, and a commit tag.
+`.github/workflows/container.yml` runs for pushes to `main`, version tags, and pull requests. A check job runs lint, type checks, and the test suite first; the image is built only when it passes. Pull requests build without publishing. Pushes publish OCI images to GHCR for `linux/amd64` and `linux/arm64`, with BuildKit caching and provenance attestations. The generated tags include `latest` for `main`, semantic-version variants for `v*` tags, and a commit tag.
 
 ## Access control
 
@@ -76,7 +81,7 @@ After `config.json` contains a password, the setup endpoint refuses further init
 
 ## Overview and system statistics
 
-The Overview page is the default landing screen: it summarizes running/stopped containers, CPU/RAM/disk health, and the latest failed script or scheduled run with a direct log action. The Containers page refreshes every 15 seconds and shows CPU temperature, current CPU utilization, RAM use, system-disk capacity, configured storage mounts, uptime, and container counts.
+The Overview page is the default landing screen: it summarizes running/stopped containers, CPU/RAM/disk health, and the latest failed script or scheduled run with a direct log action. Below, one range selector (24 hours, 7 days, 30 days) scopes the CPU and RAM, temperature, and storage charts, followed by the power tiles and charts once a plug is configured. The Containers page refreshes every 15 seconds and shows CPU temperature, current CPU utilization, RAM use, system-disk capacity, configured storage mounts, uptime, and container counts.
 
 `MONITORED_PATHS` provides the initial comma-separated list of filesystem paths. After first startup, **Settings → Storage monitoring** (also available on Containers) persists additions and removals in `DATA_DIR`, without an `.env` edit. The cards are paginated four at a time. Metric retention can likewise be changed in **Settings → Server connection**; the `.env` value is the initial default. For example:
 
@@ -124,7 +129,9 @@ Root cron access has a wider trust boundary. The helper can replace root's cront
 
 ## Power monitoring
 
-The Power page records smart plugs and energy meters. `src/lib/power.ts` defines a driver per device model: the fields of its settings form and a function that reads the current power. Drivers exist for TP-Link Tapo P110/P115 (the local KLAP protocol with the Tapo account, implemented with Node's crypto), Shelly Gen1 and Gen2+ (Gen2+ with authentication disabled), Tasmota, and any Home Assistant power sensor through its REST API and a long-lived token. A new model needs only a new driver in the `DRIVERS` list.
+The Power page records smart plugs and energy meters; its tiles and charts also appear on Overview. `src/lib/power.ts` defines a driver per device model: the fields of its settings form and a function that reads the current power. Drivers exist for TP-Link Tapo P110/P115 (the local KLAP protocol with the Tapo account, implemented with Node's crypto), Shelly Gen1 and Gen2+ (Gen2+ with authentication disabled), Tasmota, and any Home Assistant power sensor through its REST API and a long-lived token. A new model needs only a new driver in the `DRIVERS` list.
+
+Devices are called with `node:http` and `node:https`, not `fetch`: `fetch` sends header names in lower case, and Tapo plugs answer such requests with HTTP 400. The simulated plug in `tests/power.test.mjs` rejects lower-case headers the same way. Connection failures are reported by cause (refused, no answer, unreachable, unknown name). Tapo firmware from 2025 on keeps the local API closed until **Third-Party Compatibility** is turned on in the Tapo app; a refused Tapo connection says so. When a plug's address is in doubt, UDP discovery on port 20002 from the host reports each Tapo plug's IP address, MAC, protocol, and port.
 
 Enabled devices are read every minute by a timer started in `src/instrumentation.ts`. Energy is the power integrated between consecutive readings (trapezoid), not counted across gaps longer than 10 minutes, so every driver is measured the same way. `power.json` keeps 48 hours of minute readings and hourly energy totals for the metric retention period; the browser groups hours into days in its own time zone. Device settings are in `power-devices.json`: passwords and tokens are never sent to the browser, a blank secret on save keeps the stored one, and a device is only saved after a successful reading. The price per kWh and currency, used for the monthly cost, are in `power-settings.json`. Dashboard settings exports do not include power devices, so no plug credentials leave the server.
 
@@ -132,7 +139,13 @@ Enabled devices are read every minute by a timer started in `src/instrumentation
 
 Colors are role tokens in `globals.css`; the Dark default, Light, Nord, Dracula, and Solarized themes assign them, and System follows the device. Each theme passes WCAG AA for text on its surfaces and defines `--series-1` to `--series-8`, the chart palette validated for its surface. The theme is chosen under Settings > Appearance and stored per browser; an inline script in the document head applies it before the first paint.
 
-`src/components/charts.tsx` draws line and stacked column charts as SVG: a legend for two or more series, a crosshair tooltip that also works with the arrow keys, and a table view for every chart. The History page charts CPU and RAM, temperature, and storage use per path from `history/metrics`, which averages a range into at most 288 points.
+`src/components/charts.tsx` draws line and stacked column charts as SVG: a legend for two or more series, a crosshair tooltip that also works with the arrow keys, and a table view for every chart. Charts measure their container through a callback ref, right away and on resize, and chart columns may shrink below their content, so they fit phone widths. The Overview charts CPU and RAM, temperature, and storage use per path from `history/metrics`, which averages a range into at most 288 points.
+
+## Notifications
+
+**Settings → Notifications** manages channels in `notification-channels.json`: Discord, Slack (also accepted by Mattermost and Rocket.Chat), ntfy, and a generic JSON webhook. Each channel chooses its events: triggered alerts, failed script runs, failed scheduled runs, and power devices that stop or resume responding. **Test** sends a test message, and each channel shows its last delivery error.
+
+Events are emitted through a small bus in `server.ts` kept on `globalThis`, because Next.js loads that module separately for the API routes and for the background monitor; `instrumentation.ts` registers the listener that delivers them. Failed scheduled runs are announced once, when first seen in the schedule log; power devices only when their state changes. Webhook URLs contain credentials, so the browser only sees their host, and editing a channel without a new URL keeps the stored one.
 
 ## Schedules and logs
 
@@ -148,7 +161,7 @@ Scheduled jobs use guided cron forms and managed comments so the dashboard chang
 - `GET /api/state` reads the host. `?scope=records` returns only the records stored in `DATA_DIR` without SSH, and `?scope=history` adds the cron runs. The client uses the full state on Overview, Containers, and Schedules, the history scope on History, and the records scope on the other pages; partial responses are merged into the loaded state.
 - Files loads directory entries first and requests recursive folder sizes separately. Script and file pickers do not calculate recursive sizes. Size failures do not prevent navigation.
 - Automatic dashboard polling pauses while the browser tab is hidden and refreshes when it becomes visible. Scheduled polls do not overlap one another.
-- Run the tests with `npm test`. `tests/harness.mjs` loads `server.ts` against a temporary data directory with scripted host responses.
+- Run the tests with `npm test`. `tests/harness.mjs` loads the server modules against a temporary data directory with scripted host responses. `auth.test.mjs` drives the real setup, sign-in, and session routes through `NextRequest`; `files.test.mjs` runs the real file script with Python on a temporary tree; `power.test.mjs` and `notify.test.mjs` use simulated plugs and webhook receivers.
 - Host commands run asynchronously over one multiplexed SSH connection (`SSH_MULTIPLEX=false` disables multiplexing). A failed command surfaces as `CommandError` with only the last stderr line; the command line is never returned to the browser.
 - Configuration restores are validated with the same rules as the regular forms, and nothing is written unless every record is valid.
 - Keep the API catch-all route at `src/app/api/[...path]/route.ts`.
@@ -158,23 +171,22 @@ Scheduled jobs use guided cron forms and managed comments so the dashboard chang
 - All destructive confirmations and name-entry prompts use application modals instead of browser-native dialogs.
 - The History page has separate Script runs and Cron runs tabs, each with search, status filtering, and 20-row pagination.
 - Dashboard metric samples and alert rules are stored in `DATA_DIR`; metric retention defaults to 30 days and is configurable with `METRICS_RETENTION_DAYS`. The failed-scripts alert counts failures from the last 24 hours.
-- README screenshots under `docs/screenshots/` use anonymized demonstration data only.
+- Screenshots under `docs/screenshots/` come from a demonstration instance with made-up data, run with a demo folder mounted at `/srv`, so they show no real addresses, names, paths, or tokens. Keep new screenshots to demonstration data as well.
 - The interface is responsive for phone screens.
 
 ## Known limitations
 
 - Folder sizes require a recursive `du` scan. Entries appear first, but size calculation can remain expensive on very large directory trees.
 - The Files API returns at most 300 entries per directory; pagination applies within that bounded result set rather than to arbitrarily large remote directories.
-- Alerts are evaluated by the background monitor and during dashboard refreshes, and written to the audit log. They do not yet send email, push, or chat notifications.
-- The automated tests cover snapshot concurrency, cron synchronization and escaping, configuration restore validation, schedule and alert rules, metric sampling, and run recovery. Authentication, file operations, and responsive UI flows still need integration coverage.
+- Alerts are evaluated by the background monitor and during dashboard refreshes, written to the audit log, and sent to notification channels. Email is not a channel type; use a webhook-to-email service if needed.
+- The automated tests cover snapshot concurrency, cron synchronization and escaping, configuration restore validation, schedule and alert rules, metric sampling, run recovery, sign-in and sessions, file operations and allowed paths, plug drivers, and notifications. The browser interface and phone layouts are checked by hand only.
 - Root schedules run the approved script directly from root's crontab, not through `media-dashboard-root-run`, so the root-script directory allowlist does not apply to them. Only scripts registered in the dashboard can be scheduled as root.
 - The dashboard distinguishes a lost SSH connection from a login failure and displays a reconnect screen. Settings can be edited after connectivity returns; the reconnect screen intentionally avoids presenting a configuration form while the server cannot be verified.
 
 ## Recommended next work
 
-1. Add actual notification delivery for alert rules (email, webhook, or a user-selected provider), while retaining the existing cooldown behavior.
+1. Route root schedules through `media-dashboard-root-run`, so they are restricted to the approved root-script directories like immediate root runs.
 2. Test the Tapo driver against more plug firmware versions, and consider switching plugs on and off from the Power page.
-3. Add roles such as administrator and read-only operator if the dashboard will be shared by multiple people.
-4. Expand integration tests around authentication, allowed-path enforcement, file operations, and mobile layouts.
-5. Route root schedules through `media-dashboard-root-run`, so they are restricted to the approved root-script directories like immediate root runs.
-6. Add true remote-directory pagination beyond the current 300-entry safety cap.
+3. Add browser tests for the main flows and phone layouts.
+4. Add roles such as administrator and read-only operator if the dashboard will be shared by multiple people.
+5. Add true remote-directory pagination beyond the current 300-entry safety cap.

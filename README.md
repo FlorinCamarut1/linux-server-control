@@ -6,12 +6,19 @@ It is intended for people comfortable administering their own server. It runs en
 
 ## What it does
 
-- See, start, stop, restart, and inspect Docker containers.
+- See, start, stop, restart, and inspect Docker containers, and open their web interfaces in one click.
 - Run approved shell scripts and follow the exact run log live.
 - Create and manage guided cron schedules.
 - Browse and edit files only inside paths you explicitly allow.
-- See storage, CPU, RAM, disk, and execution history.
+- Chart CPU, RAM, temperature, and storage over the last day, week, or month.
+- Record power use and cost from Tapo, Shelly, Tasmota, or Home Assistant smart plugs.
+- Get alerts, failed runs, and power device changes on Discord, Slack, ntfy, or any webhook.
+- Choose a theme per device: Dark, Light, Nord, Dracula, Solarized, or System.
 - Manage browser devices, password, server connection, storage paths, and dashboard-settings exports from **Settings**.
+
+![Overview with health tiles and charts](docs/screenshots/overview.jpg)
+
+See the **[user guide](docs/USER-GUIDE.md)** for a tour of every page.
 
 ## Install
 
