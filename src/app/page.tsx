@@ -32,6 +32,17 @@ import {
   Thermometer,
   Trash2,
 } from "lucide-react";
+const nav = [
+  ["overview", LayoutGrid, "Overview"],
+  ["containers", Container, "Containers"],
+  ["scripts", FileTerminal, "Scripts"],
+  ["files", FolderOpen, "Files"],
+  ["cron", Clock3, "Schedules"],
+  ["power", Zap, "Power"],
+  ["history", Clock3, "History"],
+  ["alerts", Thermometer, "Alerts"],
+  ["settings", KeyRound, "Settings"],
+] as const;
 function stateScope(tab: string) {
   if (tab === "overview" || tab === "containers" || tab === "cron") return "full";
   return tab === "history" ? "history" : "records";
@@ -141,13 +152,27 @@ export default function Home() {
     const groups = new Map<string, S[]>();
     for (const script of state?.scripts || []) {
       const folder = script.folder || "Unfiled";
-      groups.set(folder, [...(groups.get(folder) || []), script]);
+      const scripts = groups.get(folder);
+      if (scripts) scripts.push(script);
+      else groups.set(folder, [script]);
     }
     return [...groups.entries()].sort(([a], [b]) => {
       if (a === "Unfiled") return 1;
       if (b === "Unfiled") return -1;
       return a.localeCompare(b);
     });
+  }, [state]);
+  // Looked up once per refresh instead of once per script row on every render.
+  const scriptStatus = useMemo(() => {
+    const status = new Map<string, { schedule?: Schedule; lastRun?: St["runs"][number] }>();
+    const entry = (id: string) => status.get(id) ?? status.set(id, {}).get(id)!;
+    for (const schedule of state?.schedules || []) entry(schedule.scriptId).schedule ??= schedule;
+    for (const run of state?.runs || []) entry(run.scriptId).lastRun ??= run;
+    return status;
+  }, [state]);
+  const links = useMemo(() => {
+    const hostname = typeof window === "undefined" ? "" : window.location.hostname;
+    return new Map((state?.containers || []).map((c) => [c.ID, containerLinks(c, state!.containers, hostname)]));
   }, [state]);
   async function action(key: string, path: string, body: unknown) {
     try {
@@ -186,17 +211,6 @@ export default function Home() {
     return <ConnectionUnavailable error={err} retry={() => void refresh()} loading={pendingRequests > 0} />;
   if (!state)
     return <Login error={err} done={refresh} loading={pendingRequests > 0} />;
-  const nav = [
-    ["overview", LayoutGrid, "Overview"],
-    ["containers", Container, "Containers"],
-    ["scripts", FileTerminal, "Scripts"],
-    ["files", FolderOpen, "Files"],
-    ["cron", Clock3, "Schedules"],
-    ["power", Zap, "Power"],
-    ["history", Clock3, "History"],
-    ["alerts", Thermometer, "Alerts"],
-    ["settings", KeyRound, "Settings"],
-  ] as const;
   return (
     <div className="shell">
       {pendingRequests > 0 && <AppLoading />}
@@ -235,19 +249,7 @@ export default function Home() {
         <header>
           <div>
             <h1>
-              {
-                {
-                  overview: "Overview",
-                  containers: "Containers",
-                  scripts: "Scripts",
-                  files: "Files",
-                  cron: "Schedules",
-                  power: "Power",
-                  history: "History",
-                  alerts: "Alerts",
-                  settings: "Settings",
-                }[tab]
-              }
+              {nav.find(([id]) => id === tab)?.[2]}
             </h1>
             <p>Updated {state.time}</p>
           </div>
@@ -351,7 +353,7 @@ export default function Home() {
                 <ContainerRow
                   key={c.ID}
                   c={c}
-                  links={containerLinks(c, state.containers, typeof window === "undefined" ? "" : window.location.hostname)}
+                  links={links.get(c.ID) || []}
                   busy={busy}
                   act={action}
                   logs={openLogs}
@@ -426,7 +428,7 @@ export default function Home() {
                       <div className="grow">
                         <b>{s.name}</b>
                         <small>{s.path}</small>
-                        {(() => { const schedule = state.schedules.find((item) => item.scriptId === s.id); const lastRun = state.runs.find((item) => item.scriptId === s.id); return <small>{schedule ? `${schedule.enabled ? "Scheduled" : "Schedule paused"}: ${schedule.expression}` : "Not scheduled"}{lastRun ? ` · last run ${lastRun.status}` : " · never run"}</small>; })()}
+                        {(() => { const { schedule, lastRun } = scriptStatus.get(s.id) || {}; return <small>{schedule ? `${schedule.enabled ? "Scheduled" : "Schedule paused"}: ${schedule.expression}` : "Not scheduled"}{lastRun ? ` · last run ${lastRun.status}` : " · never run"}</small>; })()}
                         {s.runAs === "root" && <span className="badge root">root</span>}
                       </div>
                       <div className="actions">
@@ -446,7 +448,7 @@ export default function Home() {
                         >
                           Logs
                         </Btn>
-                        <Btn onClick={() => { const schedule = state.schedules.find((item) => item.scriptId === s.id); setScheduleEditor(schedule || { id: "", scriptId: s.id, expression: "0 3 * * *", label: `Run ${s.name}`, enabled: true, runAs: s.runAs || "user" }); }}>Schedule</Btn>
+                        <Btn onClick={() => { const schedule = scriptStatus.get(s.id)?.schedule; setScheduleEditor(schedule || { id: "", scriptId: s.id, expression: "0 3 * * *", label: `Run ${s.name}`, enabled: true, runAs: s.runAs || "user" }); }}>Schedule</Btn>
                         <Btn onClick={() => setEdit(s)}>Edit</Btn>
                         <Btn
                           className="danger"

@@ -200,14 +200,25 @@ export function LiveLogViewer({
   }, [logs]);
   useEffect(() => {
     if (!live) return;
+    // Waits for each response before scheduling the next, so a slow server never
+    // gets overlapping requests, and skips reads while the tab is hidden.
+    let timer = 0, stopped = false;
+    const next = () => {
+      timer = window.setTimeout(async () => {
+        if (!document.hidden) {
+          setLoading(true);
+          await refreshLogs();
+        }
+        if (!stopped) next();
+      }, 2000);
+    };
     // The rule cannot see that refreshLogs only sets state after awaiting.
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    void refreshLogs();
-    const interval = window.setInterval(() => {
-      setLoading(true);
-      void refreshLogs();
-    }, 2000);
-    return () => window.clearInterval(interval);
+    void refreshLogs().then(() => { if (!stopped) next(); });
+    return () => {
+      stopped = true;
+      window.clearTimeout(timer);
+    };
   }, [live, refreshLogs]);
   return (
     <Modal title={logs.title} close={close}>
