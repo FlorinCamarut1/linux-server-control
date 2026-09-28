@@ -86,7 +86,7 @@ export function loadPower(server) {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true },
   }).outputText;
   const context = {
-    exports: {}, Buffer, fetch, AbortSignal, URLSearchParams, setTimeout, console,
+    exports: {}, Buffer, fetch, AbortSignal, URL, URLSearchParams, setTimeout, console,
     require(name) { return name === "./server" ? server : require(name); },
   };
   vm.runInNewContext(source, context);
@@ -116,7 +116,8 @@ export function loadApi(server, env = {}) {
 
 // Loads src/lib/notify.ts on top of a server loaded with loadServer.
 export function loadNotify(server) {
-  const context = { exports: {}, Buffer, fetch, AbortSignal, URL, console: { ...console, error() {} }, require: (name) => (name === "./server" ? server : require(name)) };
+  const power = loadPower(server);
+  const context = { exports: {}, Buffer, fetch, AbortSignal, URL, console: { ...console, error() {} }, require: (name) => (name === "./server" ? server : name === "./power" ? power : require(name)) };
   vm.runInNewContext(transpile("../src/lib/notify.ts"), context);
   return context.exports;
 }

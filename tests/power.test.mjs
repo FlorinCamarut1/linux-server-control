@@ -137,3 +137,22 @@ test("long-range power history shows completed hours only", () => {
   assert.deepEqual(plain(week.power[0].points.map((point) => point.w)), [60]);
   assert.equal(week.energy[0].hours.length, 2, "energy still includes the current hour");
 });
+
+test("connection failures explain themselves instead of 'fetch failed'", async () => {
+  const power = loadPower(loadServer().server);
+  // A port that was just free: nothing listens on it any more.
+  const probe = createServer();
+  await new Promise((resolve) => probe.listen(0, "127.0.0.1", resolve));
+  const port = probe.address().port;
+  await new Promise((resolve) => probe.close(resolve));
+  await assert.rejects(driver(power, "tasmota").read({ host: `127.0.0.1:${port}` }), new RegExp(`127\\.0\\.0\\.1:${port} refused the connection`));
+});
+
+test("a Tapo plug with its local API closed points to the app setting", async () => {
+  const power = loadPower(loadServer().server);
+  const probe = createServer();
+  await new Promise((resolve) => probe.listen(0, "127.0.0.1", resolve));
+  const port = probe.address().port;
+  await new Promise((resolve) => probe.close(resolve));
+  await assert.rejects(driver(power, "tapo").read({ host: `127.0.0.1:${port}`, username: "me@example.com", password: "x" }), /Third-Party Compatibility/);
+});

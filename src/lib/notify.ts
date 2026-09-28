@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { connectionError } from "./power";
 import { EVENT_TYPES, audit, read, save, serverSettings, type DashboardEvent, type EventType } from "./server";
 
 // Notification channels: webhooks that receive dashboard events. Each type
@@ -33,7 +34,12 @@ async function send(channel: Pick<Channel, "type" | "url">, event: DashboardEven
     init = { headers: { Title: event.title.replace(/[^\x20-\x7e]/g, "?"), Priority: priority, Tags: tag }, body: `${event.message}\n${origin}` };
   } else
     init = { headers: { "content-type": "application/json" }, body: JSON.stringify({ source: "linux-server-control", host: origin, event: event.type, severity: event.severity, title: event.title, message: event.message, at: new Date().toISOString() }) };
-  const response = await fetch(channel.url, { ...init, method: "POST", signal: AbortSignal.timeout(10000), cache: "no-store" });
+  let response: Response;
+  try {
+    response = await fetch(channel.url, { ...init, method: "POST", signal: AbortSignal.timeout(10000), cache: "no-store" });
+  } catch (error) {
+    throw connectionError(error, new URL(channel.url).host);
+  }
   if (!response.ok) throw Error(`The webhook answered HTTP ${response.status}`);
 }
 

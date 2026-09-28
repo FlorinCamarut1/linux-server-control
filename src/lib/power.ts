@@ -12,8 +12,22 @@ type Config = Record<string, string>;
 export type Driver = { id: string; name: string; description: string; fields: DriverField[]; read(config: Config): Promise<PowerReading> };
 
 const TIMEOUT_MS = 8000;
+// fetch only says "fetch failed"; the reason is in its cause.
+export function connectionError(error: unknown, target: string) {
+  const code = (error as { cause?: { code?: string } })?.cause?.code ?? (error as { name?: string })?.name;
+  if (code === "ECONNREFUSED") return Error(`${target} refused the connection. Check the IP address; the device may have a new one.`);
+  if (code === "EHOSTUNREACH" || code === "ENETUNREACH") return Error(`${target} cannot be reached from the server. Check that it is on the same network.`);
+  if (code === "TimeoutError" || code === "ETIMEDOUT" || code === "UND_ERR_CONNECT_TIMEOUT") return Error(`${target} did not answer within ${TIMEOUT_MS / 1000} seconds. Check that it is powered and on the same network.`);
+  if (code === "ENOTFOUND" || code === "EAI_AGAIN") return Error(`The name ${target} could not be resolved.`);
+  return Error((error as { message?: string })?.message || String(error));
+}
 async function request(url: string, init: RequestInit = {}) {
-  const response = await fetch(url, { ...init, signal: AbortSignal.timeout(TIMEOUT_MS), cache: "no-store" });
+  let response: Response;
+  try {
+    response = await fetch(url, { ...init, signal: AbortSignal.timeout(TIMEOUT_MS), cache: "no-store" });
+  } catch (error) {
+    throw connectionError(error, new URL(url).host);
+  }
   if (!response.ok) throw Error(`The device answered HTTP ${response.status}`);
   return response;
 }
@@ -88,7 +102,14 @@ const tapo: Driver = {
   ],
   async read(config) {
     const session = new KlapSession(`http://${host(config.host)}`, KlapSession.authHash(config.username.trim(), config.password));
-    await session.handshake();
+    try {
+      await session.handshake();
+    } catch (error) {
+      // Newer firmware closes the local API until it is allowed in the app.
+      if (error instanceof Error && error.message.includes("refused the connection"))
+        throw Error(`${config.host.trim()} refused the connection. In the Tapo app, turn on Me > Third-Party Services > Third-Party Compatibility, then try again.`);
+      throw error;
+    }
     const energy = await session.call("get_energy_usage");
     const info = await session.call("get_device_info").catch(() => null);
     // get_energy_usage reports current_power in milliwatts.
