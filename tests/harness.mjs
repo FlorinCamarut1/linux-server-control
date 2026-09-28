@@ -1,3 +1,5 @@
+import { spawnSync } from "node:child_process";
+import { EventEmitter } from "node:events";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
@@ -39,7 +41,29 @@ export function loadServer({ env = {}, host = () => ({ stdout: "" }), delay = 0 
       };
       return { stdin: { on() {}, end: answer } };
     },
-    spawn() { throw new Error("spawn is not available in tests"); },
+    // A process whose output comes from `host` once its stdin is closed.
+    spawn(command, args) {
+      const child = new EventEmitter();
+      child.stdout = new EventEmitter();
+      child.stderr = new EventEmitter();
+      child.kill = () => {};
+      child.stdin = {
+        on() {},
+        end(input) {
+          const argv = [command, ...args];
+          commands.push({ argv, input });
+          setTimeout(() => {
+            let result;
+            try { result = host(argv, input) ?? {}; }
+            catch (error) { return child.emit("error", error); }
+            if (result.stdout) child.stdout.emit("data", result.stdout);
+            if (result.stderr) child.stderr.emit("data", result.stderr);
+            child.emit("close", result.code ?? 0);
+          }, delay);
+        },
+      };
+      return child;
+    },
   };
   const context = {
     exports: {}, Buffer, setTimeout, clearTimeout, setInterval, clearInterval,
@@ -67,6 +91,27 @@ export function loadPower(server) {
   };
   vm.runInNewContext(source, context);
   return context.exports;
+}
+
+// Runs host commands for real, for tests that work on a temporary directory.
+export function realHost(argv, input) {
+  const result = spawnSync(argv[0], argv.slice(1), { input: input ?? "", encoding: "utf8" });
+  return { stdout: result.stdout, stderr: result.stderr, code: result.status ?? 1 };
+}
+
+const transpile = (path) => ts.transpileModule(readFileSync(new URL(path, import.meta.url), "utf8"), {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true },
+}).outputText;
+// Loads the API's http and auth modules on top of a server loaded with loadServer.
+export function loadApi(server, env = {}) {
+  const load = (path, modules) => {
+    const context = { exports: {}, Buffer, console, process: { env }, require: (name) => modules[name] ?? require(name) };
+    vm.runInNewContext(transpile(path), context);
+    return context.exports;
+  };
+  const http = load("../src/lib/api/http.ts", { "@/lib/server": server });
+  const auth = load("../src/lib/api/auth.ts", { "@/lib/server": server, "./http": http });
+  return { http, auth };
 }
 
 // Values created inside the VM have that context's prototypes; compare as JSON.
