@@ -1,5 +1,6 @@
 "use client";
-import { ChartFrame, LineChart } from "@/components/charts";
+import { ChartFrame, LineChart, RangeFilter, type Range } from "@/components/charts";
+import { PowerPage } from "@/components/power";
 import { useEffect, useState } from "react";
 import { api } from "@/lib/client-api";
 import { Btn, Panel, Metric, formatBytes, formatPercent, Modal } from "@/components/ui";
@@ -27,7 +28,17 @@ export function Overview({ state, active, stopped, openLogs }: { state: St; acti
       {!failed && latestScheduleFailure && <div className="schedule-row"><div className="grow"><b>Latest failed schedule: {latestScheduleFailure.label}</b><small>{new Date(latestScheduleFailure.startedAt).toLocaleString()}</small></div><span className="badge down">Failed</span></div>}
       {!stopped && !failed && !latestScheduleFailure && <div className="empty-state"><Circle size={22}/><b>Everything looks healthy</b><p>No stopped containers or failed recent runs.</p></div>}
     </Panel>
+    <OverviewCharts />
     <Panel title="Next steps" note="Common admin tasks"><div className="schedule-row"><div className="grow"><b>{state.scripts.length} approved scripts</b><small>{state.schedules.filter((item) => item.enabled).length} active schedules · manage runs in Scripts and Schedules.</small></div></div></Panel>
+  </>;
+}
+// Server health and, once devices exist, power, under one range selector.
+function OverviewCharts() {
+  const [range, setRange] = useState<Range>("24h");
+  return <>
+    <RangeFilter value={range} onChange={setRange} />
+    <MetricCharts range={range} />
+    <PowerPage range={range} compact />
   </>;
 }
 export function HistoryPanel({ runs, cronRuns, metrics, openLog }: { runs: St["runs"]; cronRuns: St["cronRuns"]; metrics: St["metrics"]; openLog: (run: St["runs"][number]) => void }) {
@@ -50,7 +61,6 @@ export function HistoryPanel({ runs, cronRuns, metrics, openLog }: { runs: St["r
       <Metric label="RAM history" value={latest ? `${latest.ram.toFixed(1)}%` : "No samples"} icon={<Gauge />} />
       <Metric label="Samples retained" value={String(metrics?.count ?? 0)} note={`One sample every ${metrics?.intervalMinutes ?? 5} minutes`} icon={<Clock3 />} />
     </section>
-    <MetricCharts />
     <Panel title="Execution history" note="Search, filter, and review manual script runs or scheduled cron jobs.">
       <div className="panel-toolbar history-toolbar">
         <div className="container-filters" aria-label="History type">
@@ -82,18 +92,13 @@ export function AlertForm({ initial, close, done }: { initial: St["alerts"][numb
   </form></Modal>;
 }
 
-const RANGES = [["24h", "Last 24 hours"], ["7d", "Last 7 days"], ["30d", "Last 30 days"]] as const;
 type History = { from: number; to: number; samples: { at: number; cpu: number | null; ram: number | null; temperature: number | null; disk: number | null; storage: Record<string, number | null> }[] };
-export function RangeFilter({ value, onChange }: { value: string; onChange: (value: "24h" | "7d" | "30d") => void }) {
-  return <div className="chart-filters">
-    <div className="container-filters" role="radiogroup" aria-label="Time range">
-      {RANGES.map(([id, label]) => <button key={id} type="button" role="radio" aria-checked={value === id} className={value === id ? "active" : ""} title={label} onClick={() => onChange(id)}>{label}</button>)}
-    </div>
-  </div>;
-}
 // Server health over time from the samples recorded every 5 minutes.
-export function MetricCharts() {
-  const [range, setRange] = useState<"24h" | "7d" | "30d">("24h");
+// With a range from the caller the charts follow it; otherwise they show
+// their own range selector.
+export function MetricCharts({ range: controlled }: { range?: Range } = {}) {
+  const [own, setRange] = useState<Range>("24h");
+  const range = controlled ?? own;
   const [history, setHistory] = useState<History | null>(null);
   const [error, setError] = useState("");
   useEffect(() => {
@@ -111,7 +116,7 @@ export function MetricCharts() {
   const paths = [...new Set(samples.flatMap((sample) => Object.keys(sample.storage || {})))].filter((path) => path !== "/");
   const storageSeries = [{ id: "disk", label: "System disk", values: samples.map((sample) => sample.disk) }, ...paths.map((path) => ({ id: path, label: path, values: samples.map((sample) => sample.storage?.[path] ?? null) }))].slice(0, 8);
   return <>
-    <RangeFilter value={range} onChange={setRange} />
+    {!controlled && <RangeFilter value={range} onChange={setRange} />}
     {error && <div className="alert">{error}</div>}
     <div className="chart-grid-2" style={{ opacity: history ? 1 : 0.6 }}>
       <ChartFrame title="CPU and RAM" note="Average use, percent" table={{ columns: ["Time", "CPU %", "RAM %"], rows: samples.map((sample) => [when(sample.at), round(sample.cpu), round(sample.ram)]) }}>

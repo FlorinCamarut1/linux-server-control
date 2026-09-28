@@ -2,8 +2,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Gauge, Pencil, Plug, Plus, Trash2, Wallet, Zap } from "lucide-react";
 import { api } from "@/lib/client-api";
-import { ChartFrame, ColumnChart, LineChart, formatTime } from "@/components/charts";
-import { RangeFilter } from "@/components/monitoring";
+import { ChartFrame, ColumnChart, LineChart, RangeFilter, formatTime, type Range } from "@/components/charts";
 import { appConfirm, Btn, Metric, Modal, Panel } from "@/components/ui";
 
 type Field = { key: string; label: string; secret?: boolean; required?: boolean; placeholder?: string; help?: string };
@@ -20,7 +19,6 @@ type History = {
   energy: { id: string; hours: { at: number; wh: number }[] }[];
   settings: Settings;
 };
-type Range = "24h" | "7d" | "30d";
 const HOUR = 3600000;
 // A reading older than this no longer counts as the current power.
 const STALE_MS = 5 * 60000;
@@ -30,8 +28,11 @@ const formatWatts = (w: number) => (w >= 1000 ? `${(w / 1000).toFixed(2)} kW` : 
 const startOfDay = (at: number) => { const date = new Date(at); date.setHours(0, 0, 0, 0); return date.getTime(); };
 const startOfMonth = (at: number) => { const date = new Date(startOfDay(at)); date.setDate(1); return date.getTime(); };
 
-export function PowerPage() {
-  const [range, setRange] = useState<Range>("24h");
+// compact: the Overview version, with the tiles and charts only, following the
+// caller's range, and nothing at all until a device exists.
+export function PowerPage({ range: controlled, compact = false }: { range?: Range; compact?: boolean } = {}) {
+  const [own, setRange] = useState<Range>("24h");
+  const range = controlled ?? own;
   const [devices, setDevices] = useState<Device[] | null>(null);
   const [settings, setSettings] = useState<Settings>({ pricePerKwh: 0, currency: "lei" });
   const [history, setHistory] = useState<History | null>(null);
@@ -107,16 +108,17 @@ export function PowerPage() {
 
   const span = (history?.to ?? 0) - (history?.from ?? 0);
   const noDevices = devices !== null && devices.length === 0;
+  if (compact && (devices === null || noDevices)) return null;
   return <>
     <section className="metrics">
       <Metric label="Power now" value={live.length ? formatWatts(powerNow) : "—"} note={`${live.length} of ${devices?.filter((device) => device.enabled).length ?? 0} devices reporting`} icon={<Zap />} />
       <Metric label="Today" value={`${kwh(todayWh).toFixed(2)} kWh`} note="Since midnight" icon={<Gauge />} />
       <Metric label="This month" value={`${kwh(monthWh).toFixed(1)} kWh`} note={now ? new Date(now).toLocaleDateString([], { month: "long", year: "numeric" }) : ""} icon={<Plug />} />
-      <Metric label="Cost this month" value={settings.pricePerKwh ? `${cost.toFixed(2)} ${settings.currency}` : "—"} note={settings.pricePerKwh ? `${settings.pricePerKwh} ${settings.currency}/kWh` : "Set a price below"} icon={<Wallet />} />
+      <Metric label="Cost this month" value={settings.pricePerKwh ? `${cost.toFixed(2)} ${settings.currency}` : "—"} note={settings.pricePerKwh ? `${settings.pricePerKwh} ${settings.currency}/kWh` : compact ? "Set a price on the Power page" : "Set a price below"} icon={<Wallet />} />
     </section>
     {error && <div className="alert">{error}</div>}
     {!noDevices && <>
-      <RangeFilter value={range} onChange={setRange} />
+      {!controlled && <RangeFilter value={range} onChange={setRange} />}
       <div className="chart-grid-2" style={{ opacity: history ? 1 : 0.6 }}>
         <ChartFrame
           title="Power"
@@ -134,7 +136,7 @@ export function PowerPage() {
         </ChartFrame>
       </div>
     </>}
-    <Panel title="Devices" note="Smart plugs and energy meters, read every minute on the server." extra={<Btn className="primary" onClick={() => setEditing(null)}><Plus size={16} />Add device</Btn>}>
+    {!compact && <Panel title="Devices" note="Smart plugs and energy meters, read every minute on the server." extra={<Btn className="primary" onClick={() => setEditing(null)}><Plus size={16} />Add device</Btn>}>
       {noDevices && <div className="empty-state"><Plug size={22} /><b>No devices yet</b><p>Add a Tapo, Shelly, Tasmota or Home Assistant device to start recording power.</p></div>}
       {devices?.map((device) => {
         const driver = drivers.find((item) => item.id === device.driver);
@@ -160,7 +162,7 @@ export function PowerPage() {
         </div>;
       })}
       <PriceForm settings={settings} saved={reload} />
-    </Panel>
+    </Panel>}
     {editing !== undefined && <DeviceForm device={editing} drivers={drivers} close={() => setEditing(undefined)} saved={() => { setEditing(undefined); reload(); }} />}
   </>;
 }

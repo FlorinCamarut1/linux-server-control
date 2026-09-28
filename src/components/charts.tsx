@@ -299,3 +299,14 @@ export function ColumnChart({ labels, series, unit, digits = 2, empty = "No data
     </div>
   );
 }
+
+export type Range = "24h" | "7d" | "30d";
+const RANGES = [["24h", "Last 24 hours"], ["7d", "Last 7 days"], ["30d", "Last 30 days"]] as const;
+// One range selector above the charts it scopes.
+export function RangeFilter({ value, onChange }: { value: string; onChange: (value: Range) => void }) {
+  return <div className="chart-filters">
+    <div className="container-filters" role="radiogroup" aria-label="Time range">
+      {RANGES.map(([id, label]) => <button key={id} type="button" role="radio" aria-checked={value === id} className={value === id ? "active" : ""} title={label} onClick={() => onChange(id)}>{label}</button>)}
+    </div>
+  </div>;
+}
