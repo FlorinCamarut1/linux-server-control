@@ -25,6 +25,8 @@ function fakeTapo({ username, password, milliwatts, on }) {
   const auth = sha256(sha1(username), sha1(password));
   let local, remote, session;
   return (req, res, body) => {
+    // Like the real plug, reject requests whose header names are lower case.
+    if (!req.rawHeaders.includes("Content-Length") && req.method === "POST") { res.writeHead(400); return res.end(); }
     const url = new URL(req.url, "http://plug");
     if (url.pathname === "/app/handshake1") {
       local = body; remote = randomBytes(16);

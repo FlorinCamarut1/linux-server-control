@@ -1,4 +1,6 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from "node:crypto";
+import { request as httpRequest } from "node:http";
+import { request as httpsRequest } from "node:https";
 import { audit, emitDashboardEvent, read, save, serverSettings } from "./server";
 
 // Smart plugs and energy meters. Each device model is a driver: the fields
@@ -12,24 +14,46 @@ type Config = Record<string, string>;
 export type Driver = { id: string; name: string; description: string; fields: DriverField[]; read(config: Config): Promise<PowerReading> };
 
 const TIMEOUT_MS = 8000;
-// fetch only says "fetch failed"; the reason is in its cause.
+// fetch only says "fetch failed"; the reason is in its cause (or, for
+// node:http, on the error itself).
 export function connectionError(error: unknown, target: string) {
-  const code = (error as { cause?: { code?: string } })?.cause?.code ?? (error as { name?: string })?.name;
+  const failure = error as { code?: string; name?: string; cause?: { code?: string } };
+  const code = failure?.cause?.code ?? failure?.code ?? failure?.name;
   if (code === "ECONNREFUSED") return Error(`${target} refused the connection. Check the IP address; the device may have a new one.`);
   if (code === "EHOSTUNREACH" || code === "ENETUNREACH") return Error(`${target} cannot be reached from the server. Check that it is on the same network.`);
   if (code === "TimeoutError" || code === "ETIMEDOUT" || code === "UND_ERR_CONNECT_TIMEOUT") return Error(`${target} did not answer within ${TIMEOUT_MS / 1000} seconds. Check that it is powered and on the same network.`);
   if (code === "ENOTFOUND" || code === "EAI_AGAIN") return Error(`The name ${target} could not be resolved.`);
   return Error((error as { message?: string })?.message || String(error));
 }
-async function request(url: string, init: RequestInit = {}) {
-  let response: Response;
-  try {
-    response = await fetch(url, { ...init, signal: AbortSignal.timeout(TIMEOUT_MS), cache: "no-store" });
-  } catch (error) {
-    throw connectionError(error, new URL(url).host);
-  }
-  if (!response.ok) throw Error(`The device answered HTTP ${response.status}`);
-  return response;
+// Each driver reads and checks the fields it needs from its device's JSON.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type DeviceResponse = { status: number; cookie: string; body: Buffer; json(): any };
+// Devices are called with node:http rather than fetch: fetch sends header
+// names in lower case, and Tapo plugs answer such requests with HTTP 400.
+function request(url: string, init: { method?: string; headers?: Record<string, string>; body?: Buffer } = {}) {
+  const target = new URL(url);
+  const send = target.protocol === "https:" ? httpsRequest : httpRequest;
+  return new Promise<DeviceResponse>((resolve, reject) => {
+    const req = send(target, {
+      method: init.method ?? (init.body ? "POST" : "GET"),
+      headers: { Accept: "*/*", ...(init.body ? { "Content-Length": String(init.body.length) } : {}), ...init.headers },
+      timeout: TIMEOUT_MS,
+    }, (res) => {
+      const chunks: Buffer[] = [];
+      res.on("data", (chunk: Buffer) => chunks.push(chunk));
+      res.on("error", (error) => reject(connectionError(error, target.host)));
+      res.on("end", () => {
+        const status = res.statusCode ?? 0;
+        if (status < 200 || status >= 300) return reject(Error(`The device answered HTTP ${status}`));
+        const body = Buffer.concat(chunks);
+        const cookie = (res.headers["set-cookie"]?.[0] ?? "").split(";")[0];
+        resolve({ status, cookie, body, json: () => JSON.parse(body.toString("utf8")) });
+      });
+    });
+    req.on("timeout", () => req.destroy(Object.assign(Error("timed out"), { name: "TimeoutError" })));
+    req.on("error", (error) => reject(connectionError(error, target.host)));
+    req.end(init.body);
+  });
 }
 const host = (value: string) => {
   const trimmed = value.trim().replace(/\/+$/, "");
@@ -58,13 +82,13 @@ export class KlapSession {
   }
   async handshake() {
     const localSeed = randomBytes(16);
-    const first = await request(`${this.base}/app/handshake1`, { method: "POST", body: new Uint8Array(localSeed) });
-    this.cookie = (first.headers.get("set-cookie") || "").split(";")[0];
-    const reply = Buffer.from(await first.arrayBuffer());
+    const first = await request(`${this.base}/app/handshake1`, { method: "POST", body: localSeed });
+    this.cookie = first.cookie;
+    const reply = first.body;
     const remoteSeed = reply.subarray(0, 16);
     if (reply.length < 48 || !sha256(localSeed, remoteSeed, this.auth).equals(reply.subarray(16, 48)))
       throw Error("The Tapo account email or password is not accepted by the plug");
-    await request(`${this.base}/app/handshake2`, { method: "POST", headers: { Cookie: this.cookie }, body: new Uint8Array(sha256(remoteSeed, localSeed, this.auth)) });
+    await request(`${this.base}/app/handshake2`, { method: "POST", headers: { Cookie: this.cookie }, body: sha256(remoteSeed, localSeed, this.auth) });
     const derive = (label: string) => sha256(Buffer.from(label), localSeed, remoteSeed, this.auth);
     this.key = derive("lsk").subarray(0, 16);
     const iv = derive("iv");
@@ -83,9 +107,9 @@ export class KlapSession {
     const cipher = createCipheriv("aes-128-cbc", this.key, iv);
     const encrypted = Buffer.concat([cipher.update(JSON.stringify({ method })), cipher.final()]);
     const body = Buffer.concat([sha256(this.signature, counter, encrypted), encrypted]);
-    const response = await request(`${this.base}/app/request?seq=${this.seq}`, { method: "POST", headers: { Cookie: this.cookie }, body: new Uint8Array(body) });
+    const response = await request(`${this.base}/app/request?seq=${this.seq}`, { method: "POST", headers: { Cookie: this.cookie }, body });
     const decipher = createDecipheriv("aes-128-cbc", this.key, iv);
-    const payload = Buffer.from(await response.arrayBuffer()).subarray(32);
+    const payload = response.body.subarray(32);
     const result = JSON.parse(Buffer.concat([decipher.update(payload), decipher.final()]).toString("utf8"));
     if (result.error_code !== 0) throw Error(`The plug returned error ${result.error_code}`);
     return result.result;
