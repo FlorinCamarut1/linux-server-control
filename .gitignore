@@ -10,3 +10,4 @@ next-app/
 node_modules/
 .next/
 *.tsbuildinfo
+HANDOVER.md
