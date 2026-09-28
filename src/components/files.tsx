@@ -158,7 +158,7 @@ export function FileExplorer() {
     <>
       <Panel
         title="File explorer"
-        note="Browse and edit files under /home and /mnt"
+        note="Browse and edit files inside the allowed folders"
         extra={
           <div className="actions">
             {(data?.roots.length || 0) > 1 && (

@@ -6,7 +6,7 @@ import { ContainerRow } from "@/components/containers";
 import { PowerPage } from "@/components/power";
 import { containerLinks } from "@/lib/container-links";
 import { FileExplorer } from "@/components/files";
-import { Overview, HistoryPanel, AlertForm } from "@/components/monitoring";
+import { Overview, HistoryPanel, AlertForm, describeAlert } from "@/components/monitoring";
 import { ScheduleForm } from "@/components/schedules";
 import { ScriptForm, CustomScriptForm, RunScriptForm, FolderForm } from "@/components/scripts";
 import { AppearancePanel, NotificationsPanel, PasswordForm, DevicePanel, ServerSettings, ConfigurationPanel, StorageManager } from "@/components/settings";
@@ -564,7 +564,7 @@ export default function Home() {
         {tab === "power" && <PowerPage />}
         {tab === "alerts" && (
           <Panel title="Alert rules" note="Rules are checked every 5 minutes and on each dashboard refresh; cooldowns prevent repeated notifications." extra={<Btn className="primary" onClick={() => setAlertEditor(null)}>New alert</Btn>}>
-            {(state.alerts || []).map((rule) => <div className="schedule-row" key={rule.id}><div className="grow"><b>{rule.name}</b><small>{rule.metric} ≥ {rule.threshold} · cooldown {rule.cooldownMinutes} min{rule.lastTriggeredAt ? ` · last triggered ${new Date(rule.lastTriggeredAt).toLocaleString()}` : ""}</small></div><span className={`badge ${rule.enabled ? "up" : "down"}`}>{rule.enabled ? "Enabled" : "Paused"}</span><div className="actions"><Btn onClick={() => setAlertEditor(rule)}>Edit</Btn><Btn className="danger" onClick={() => action(rule.id, "alerts/delete", { id: rule.id })}><Trash2 size={15}/>Delete</Btn></div></div>)}
+            {(state.alerts || []).map((rule) => <div className="schedule-row" key={rule.id}><div className="grow"><b>{rule.name}</b><small>{describeAlert(rule.metric, rule.threshold)} · cooldown {rule.cooldownMinutes} min{rule.lastTriggeredAt ? ` · last triggered ${new Date(rule.lastTriggeredAt).toLocaleString()}` : ""}</small></div><span className={`badge ${rule.enabled ? "up" : "down"}`}>{rule.enabled ? "Enabled" : "Paused"}</span><div className="actions"><Btn onClick={() => setAlertEditor(rule)}>Edit</Btn><Btn className="danger" onClick={() => action(rule.id, "alerts/delete", { id: rule.id })}><Trash2 size={15}/>Delete</Btn></div></div>)}
             {!state.alerts?.length && <div className="empty-state"><Thermometer size={22}/><b>No alert rules yet</b><p>Add thresholds for server health and jobs.</p></div>}
           </Panel>
         )}

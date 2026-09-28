@@ -120,7 +120,7 @@ const tapo: Driver = {
   name: "TP-Link Tapo (P110, P115)",
   description: "Read directly on the LAN with the Tapo account used in the Tapo app.",
   fields: [
-    { key: "host", label: "IP address", required: true, placeholder: "192.168.1.144" },
+    { key: "host", label: "IP address", required: true, placeholder: "192.168.1.40" },
     { key: "username", label: "Tapo account email", required: true },
     { key: "password", label: "Tapo account password", secret: true, required: true },
   ],

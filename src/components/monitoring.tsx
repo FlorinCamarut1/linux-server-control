@@ -41,6 +41,19 @@ function OverviewCharts() {
     <PowerPage range={range} compact />
   </>;
 }
+// How each alert metric reads in the rule list.
+const ALERT_METRICS: Record<string, [string, string]> = {
+  temperature: ["CPU temperature", " °C"],
+  cpu: ["CPU use", "%"],
+  ram: ["RAM use", "%"],
+  disk: ["System disk use", "%"],
+  failedScripts: ["Failed script runs in 24 hours", ""],
+  stoppedContainers: ["Stopped containers", ""],
+};
+export function describeAlert(metric: string, threshold: number) {
+  const [label, unit] = ALERT_METRICS[metric] ?? [metric, ""];
+  return `${label} ≥ ${threshold}${unit}`;
+}
 export function HistoryPanel({ runs, cronRuns, metrics, openLog }: { runs: St["runs"]; cronRuns: St["cronRuns"]; metrics: St["metrics"]; openLog: (run: St["runs"][number]) => void }) {
   const latest = metrics?.latest;
   const [kind, setKind] = useState<"scripts" | "cron">("scripts");
