@@ -116,7 +116,7 @@ Rules that fire when a value reaches a threshold: CPU temperature, CPU, RAM or d
 
 ## Settings
 
-- **Appearance**: choose a theme (Dark, Light, Nord, Dracula, Solarized, or System to follow the device). Each browser keeps its own choice.
+- **Appearance**: choose a theme (Dark, Light, Nord, Dracula, Solarized, Gruvbox, Catppuccin, Tokyo Night, Rosé Pine, Black, Latte, or System to follow the device). Each browser keeps its own choice.
 - **Notifications**: send alerts, failed runs and power device changes to Discord, Slack (also Mattermost and Rocket.Chat), ntfy, or any webhook that accepts JSON. Choose the events per channel and use **Test** to check it.
 - **Server connection**: the SSH target and port, the allowed folders and how long metrics are kept. **Check server requirements** tests what the server provides and names anything missing.
 - **Storage monitoring**: the mounted folders shown as storage cards.

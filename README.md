@@ -13,7 +13,7 @@ It is intended for people comfortable administering their own server. It runs en
 - Chart CPU, RAM, temperature, and storage over the last day, week, or month.
 - Record power use and cost from Tapo, Shelly, Tasmota, or Home Assistant smart plugs.
 - Get alerts, failed runs, and power device changes on Discord, Slack, ntfy, or any webhook.
-- Choose a theme per device: Dark, Light, Nord, Dracula, Solarized, or System.
+- Choose a theme per device: Dark, Light, Nord, Dracula, Solarized, Gruvbox, Catppuccin, Tokyo Night, Rosé Pine, Black, Latte, or System.
 - Add accounts for other people: administrators, or read-only accounts that can look but not change.
 - Manage browser devices, password, server connection, storage paths, and dashboard-settings exports from **Settings**.
 
