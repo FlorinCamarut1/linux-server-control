@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { readFileSync, statSync, writeFileSync } from "node:fs";
+import path from "node:path";
 import test from "node:test";
 import { loadServer, plain } from "./harness.mjs";
 
@@ -97,6 +99,83 @@ test("syncCron treats a missing crontab as empty", async () => {
     await server.syncCron();
     assert.ok(host.crontabs.user.includes("# media-dashboard:nightly"), stderr);
   }
+});
+
+test("root schedules run through the root script helper", async () => {
+  const cron = cronHost({ userCrontab: "" });
+  const { server } = loadServer({ host: cron.host });
+  server.save("scripts", [SCRIPT]);
+  server.save("schedules", [
+    { id: "as-root", scriptId: "backup", expression: "0 4 * * *", label: "", enabled: true, runAs: "root" },
+    { id: "as-user", scriptId: "backup", expression: "0 5 * * *", label: "", enabled: true, runAs: "user" },
+  ]);
+  await server.syncCron();
+  assert.ok(cron.crontabs.root.includes("/usr/local/sbin/media-dashboard-root-run run '/srv/scripts/backup.sh'"), "the allowlist helper runs the script");
+  assert.ok(!cron.crontabs.root.includes("/bin/bash '/srv/scripts/backup.sh'"));
+  assert.ok(cron.crontabs.user.includes("/bin/bash '/srv/scripts/backup.sh'"));
+});
+
+test("saving a root schedule needs both root helpers", async () => {
+  // Root cron answers, the root script helper does not.
+  const cron = cronHost({ userCrontab: "" });
+  const host = (argv, input) => argv[0] === "sudo" && argv[2].endsWith("root-run") ? { code: 1, stderr: "sudo: a password is required" } : cron.host(argv, input);
+  const { server } = loadServer({ host });
+  server.save("scripts", [SCRIPT]);
+  const schedule = { scriptId: "backup", expression: "0 4 * * *", runAs: "root" };
+  await assert.rejects(server.saveSchedule(schedule), /both the root cron helper and the root script helper/);
+  const both = loadServer({ host: cron.host });
+  both.server.save("scripts", [SCRIPT]);
+  await both.server.saveSchedule(schedule);
+  assert.equal(both.readJson("schedules")[0].runAs, "root");
+});
+
+test("the SSH port and key file are passed to ssh", async () => {
+  const { server, commands } = loadServer({ env: { SSH_TARGET: "admin@server", SSH_PORT: "2222", SSH_KEY_FILE: "/run/ssh/id_rsa" } });
+  await server.run(["hostname"]);
+  const argv = commands[0].argv;
+  assert.equal(argv[0], "ssh");
+  assert.equal(argv[argv.indexOf("-p") + 1], "2222");
+  assert.equal(argv[argv.indexOf("-i") + 1], "/run/ssh/id_rsa");
+  assert.equal(server.serverSettings().sshPort, 2222);
+  assert.throws(() => server.updateServerSettings({ sshPort: 70000 }), /SSH port/);
+  server.updateServerSettings({ sshPort: 22 });
+  await server.run(["hostname"]);
+  assert.equal(commands[1].argv[commands[1].argv.indexOf("-p") + 1], "22");
+});
+
+test("preflight names what is missing on the server", async () => {
+  const output = [
+    "tool:bash=ok", "tool:free=ok", "tool:df=ok", "tool:python3=missing", "tool:file=ok", "tool:crontab=missing", "tool:docker=ok",
+    "gnu=ok", "docker=permission denied while trying to connect to the Docker daemon socket",
+    "logs=ok", "path:/srv/scripts=missing", "rootrun=missing", "rootcron=missing",
+  ].join("\n");
+  const { server, commands } = loadServer({ env: { SSH_TARGET: "admin@server" }, host: (argv) => argv.at(-1) === "'hostname'" ? { stdout: "example\n" } : { stdout: output } });
+  const result = await server.preflight();
+  const status = Object.fromEntries(result.checks.map((check) => [check.id, check.status]));
+  assert.equal(result.host, "example");
+  assert.equal(status["tool:bash"], "ok");
+  assert.equal(status["tool:python3"], "warning");
+  assert.equal(status["tool:crontab"], "warning");
+  assert.equal(status.docker, "warning");
+  assert.match(result.checks.find((check) => check.id === "docker").detail, /docker group/);
+  assert.equal(status["path:/srv/scripts"], "warning");
+  assert.equal(status.root, "info");
+  assert.ok(commands.at(-1).argv.at(-1).endsWith(" 'sh' '/tmp/media-dashboard' '/srv/scripts'"), "the logs folder and allowed paths are passed as arguments");
+});
+
+test("container names may not start with a dash", () => {
+  const { server } = loadServer();
+  for (const name of ["jellyfin", "app_1", "my.app-2"]) assert.ok(server.CONTAINER_NAME.test(name), name);
+  for (const name of ["--follow", "-f", "", "a b", "a;id"]) assert.ok(!server.CONTAINER_NAME.test(name), name);
+});
+
+test("the audit log is rotated once it grows large", () => {
+  const { server, data } = loadServer();
+  writeFileSync(path.join(data, "audit.log"), "x".repeat(5 * 1024 * 1024 + 1));
+  server.audit("after rotation");
+  assert.ok(statSync(path.join(data, "audit.log.1")).size > 5 * 1024 * 1024);
+  assert.match(readFileSync(path.join(data, "audit.log"), "utf8"), /after rotation\n$/);
+  assert.ok(statSync(path.join(data, "audit.log")).size < 200);
 });
 
 function backup(overrides = {}) {

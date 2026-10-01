@@ -12,3 +12,7 @@ node_modules
 .next
 server.py
 index.html
+e2e
+playwright.config.ts
+test-results
+playwright-report

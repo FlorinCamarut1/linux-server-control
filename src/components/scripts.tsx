@@ -208,7 +208,7 @@ export function CustomScriptForm({
         </label>
         <label>
           Script filename
-          <input name="filename" required pattern="[A-Za-z0-9][A-Za-z0-9._-]*\\.sh" placeholder="maintenance.sh" />
+          <input name="filename" required pattern="[A-Za-z0-9][A-Za-z0-9._\-]*\.sh" placeholder="maintenance.sh" />
           <small>Only letters, numbers, dots, dashes, and underscores. The filename must end in .sh.</small>
         </label>
         <label>

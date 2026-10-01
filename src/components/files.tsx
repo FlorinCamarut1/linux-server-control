@@ -44,16 +44,14 @@ export function useDirectory<T>(endpoint: string, directory: string, includeSize
       if (current !== generation.current) return;
       setData(result);
       setLoading(false);
-      if (includeSizes && result.entries.some((entry: FileBrowserData["entries"][number]) => entry.type === "directory")) {
+      // A listing sorted by size arrives with its folder sizes already measured.
+      if (includeSizes && result.entries.some((entry: FileBrowserData["entries"][number]) => entry.type === "directory" && entry.size === null)) {
         setSizesLoading(true);
         try {
           const measured = await api("file/sizes", { path: result.path }, true);
           if (current === generation.current) {
             const entries = result.entries.map((entry: FileBrowserData["entries"][number]) =>
               entry.type === "directory" ? { ...entry, size: measured.sizes[entry.path] ?? null } : entry);
-            if (requestOptions.sort === "size")
-              entries.sort((a: FileBrowserData["entries"][number], b: FileBrowserData["entries"][number]) =>
-                (b.size ?? -1) - (a.size ?? -1) || a.name.localeCompare(b.name));
             setData({ ...result, entries });
           }
         } catch {
@@ -82,6 +80,12 @@ export function useDirectory<T>(endpoint: string, directory: string, includeSize
     return fetchDirectory();
   }, [fetchDirectory]);
   return { data, error, setError, loading, sizesLoading, load };
+}
+// Pickers have no paging: they load one large page and say when a folder holds more.
+const PICKER_PAGE = { limit: 1000 };
+function PickerOverflow({ data }: { data: { entries: unknown[]; total?: number } | null }) {
+  if (!data?.total || data.total <= data.entries.length) return null;
+  return <div className="file-browser-empty">Showing the first {data.entries.length} of {data.total} items. Use the Files page to reach the rest.</div>;
 }
 export function currentLocation(data: FileBrowserData | ScriptBrowserData | null, directory: string) {
   const current = directory || data?.path || "";
@@ -396,7 +400,7 @@ export function FileEditor({
 }
 export function FileBrowser({ choose }: { choose: (path: string) => void }) {
   const [directory, setDirectory] = useState("");
-  const { data, error, loading } = useDirectory<FileBrowserData>("file/browse", directory);
+  const { data, error, loading } = useDirectory<FileBrowserData>("file/browse", directory, false, PICKER_PAGE);
   return (
     <section className="file-browser" aria-label="File browser">
       <div className="file-browser-head">
@@ -418,17 +422,18 @@ export function FileBrowser({ choose }: { choose: (path: string) => void }) {
           </button>
         ))}
         {!loading && !error && data && !data.entries.length && <div className="file-browser-empty">No folders or files here.</div>}
+        {!loading && !error && <PickerOverflow data={data} />}
       </div>
     </section>
   );
 }
 export function DirectoryBrowser({ choose }: { choose: (path: string) => void }) {
   const [directory, setDirectory] = useState("");
-  const { data, error, loading } = useDirectory<FileBrowserData>("file/browse", directory);
+  const { data, error, loading } = useDirectory<FileBrowserData>("file/browse", directory, false, PICKER_PAGE);
   return (
     <section className="file-browser" aria-label="Folder browser">
       <div className="file-browser-head">
-        <div><b>Choose a folder</b><small>{data?.path || "Loading folderâ€¦"}</small></div>
+        <div><b>Choose a folder</b><small>{data?.path || "Loading folder…"}</small></div>
         {(data?.roots.length || 0) > 1 && (
           <select className="file-browser-roots" aria-label="Location" value={currentLocation(data, directory)} onChange={(event) => setDirectory(event.target.value)}>
             {data?.roots.map((root) => <option key={root} value={root}>{root}</option>)}
@@ -437,13 +442,14 @@ export function DirectoryBrowser({ choose }: { choose: (path: string) => void })
         <Btn type="button" disabled={!data?.parent} onClick={() => data?.parent && setDirectory(data.parent)}><ChevronLeft size={16} />Up</Btn>
       </div>
       <div className="file-browser-list">
-        {loading && !error && <div className="file-browser-empty"><Loader2 className="spin" size={18} /> Loading foldersâ€¦</div>}
+        {loading && !error && <div className="file-browser-empty"><Loader2 className="spin" size={18} /> Loading folders…</div>}
         {error && <div className="file-browser-empty">{error}</div>}
         {!loading && !error && data?.entries.filter((entry) => entry.type === "directory").map((entry) => (
           <button key={entry.path} type="button" className="file-browser-row" onClick={() => setDirectory(entry.path)}>
             <Folder size={17} /><span>{entry.name}</span><small>Folder</small>
           </button>
         ))}
+        {!loading && !error && <PickerOverflow data={data} />}
       </div>
       <div className="file-browser-footer">
         <small>{data?.path || "Select a folder"}</small>
@@ -455,7 +461,7 @@ export function DirectoryBrowser({ choose }: { choose: (path: string) => void })
 export function ScriptBrowser({ choose }: { choose: (path: string) => void }) {
   const [directory, setDirectory] = useState(""),
     [selected, setSelected] = useState<string | null>(null);
-  const { data, error, loading } = useDirectory<ScriptBrowserData>("script/browse", directory);
+  const { data, error, loading } = useDirectory<ScriptBrowserData>("script/browse", directory, false, PICKER_PAGE);
   const [selectionDirectory, setSelectionDirectory] = useState(directory);
   if (selectionDirectory !== directory) {
     setSelectionDirectory(directory);
@@ -509,6 +515,7 @@ export function ScriptBrowser({ choose }: { choose: (path: string) => void }) {
           </button>
         ))}
         {!loading && !error && data && !data.entries.length && <div className="file-browser-empty">No folders or .sh files here.</div>}
+        {!loading && !error && <PickerOverflow data={data} />}
       </div>
       <div className="file-browser-footer">
         <small>{selected ? selected : "Select a .sh file to continue."}</small>

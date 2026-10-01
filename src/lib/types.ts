@@ -22,8 +22,12 @@ export type Schedule = {
   runAs?: "user" | "root";
   command?: string;
 };
+export type User = { name: string; role: "admin" | "viewer" };
 export type St = {
+  user?: User;
   containers: C[];
+  // Set when Docker could not be read while the server itself answered.
+  containerError?: string | null;
   scripts: S[];
   schedules: Schedule[];
   folders: string[];
@@ -62,10 +66,13 @@ export type ScriptBrowserData = {
   parent: string | null;
   roots: string[];
   entries: { name: string; path: string; type: "directory" | "script" }[];
+  total?: number;
 };
 export type FileBrowserData = {
   path: string;
   parent: string | null;
   roots: string[];
+  total?: number;
   entries: { name: string; path: string; type: "directory" | "file"; size: number | null }[];
 };
+export type PreflightCheck = { id: string; label: string; status: "ok" | "warning" | "error" | "info"; detail: string };

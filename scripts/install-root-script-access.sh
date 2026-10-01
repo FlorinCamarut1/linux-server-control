@@ -16,8 +16,9 @@ case "$dashboard_ssh_user" in
 esac
 [ "$#" -gt 0 ] || { echo "Provide at least one allowed script directory."; exit 64; }
 
-project_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-install -m 0755 "$project_dir/scripts/media-dashboard-root-run" /usr/local/sbin/media-dashboard-root-run
+# The helper sits next to this installer, in a clone or in a copy of the folder.
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+install -m 0755 "$script_dir/media-dashboard-root-run" /usr/local/sbin/media-dashboard-root-run
 install -d -m 0755 /etc/media-dashboard
 : > /etc/media-dashboard/root-script-paths
 for requested in "$@"; do

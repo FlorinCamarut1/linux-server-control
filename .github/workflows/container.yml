@@ -26,8 +26,31 @@ jobs:
       - run: npm run typecheck
       - run: npm test
 
+  browser:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run build
+      - run: npm run test:e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: |
+            playwright-report
+            test-results
+          retention-days: 7
+
   build:
-    needs: check
+    needs: [check, browser]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7

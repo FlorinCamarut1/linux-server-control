@@ -30,7 +30,7 @@ const startOfMonth = (at: number) => { const date = new Date(startOfDay(at)); da
 
 // compact: the Overview version, with the tiles and charts only, following the
 // caller's range, and nothing at all until a device exists.
-export function PowerPage({ range: controlled, compact = false }: { range?: Range; compact?: boolean } = {}) {
+export function PowerPage({ range: controlled, compact = false, readOnly = false }: { range?: Range; compact?: boolean; readOnly?: boolean } = {}) {
   const [own, setRange] = useState<Range>("24h");
   const range = controlled ?? own;
   const [devices, setDevices] = useState<Device[] | null>(null);
@@ -136,8 +136,8 @@ export function PowerPage({ range: controlled, compact = false }: { range?: Rang
         </ChartFrame>
       </div>
     </>}
-    {!compact && <Panel title="Devices" note="Smart plugs and energy meters, read every minute on the server." extra={<Btn className="primary" onClick={() => setEditing(null)}><Plus size={16} />Add device</Btn>}>
-      {noDevices && <div className="empty-state"><Plug size={22} /><b>No devices yet</b><p>Add a Tapo, Shelly, Tasmota or Home Assistant device to start recording power.</p></div>}
+    {!compact && <Panel title="Devices" note="Smart plugs and energy meters, read every minute on the server." extra={readOnly ? undefined : <Btn className="primary" onClick={() => setEditing(null)}><Plus size={16} />Add device</Btn>}>
+      {noDevices && <div className="empty-state"><Plug size={22} /><b>No devices yet</b><p>{readOnly ? "An administrator can add smart plugs and energy meters." : "Add a Tapo, Shelly, Tasmota or Home Assistant device to start recording power."}</p></div>}
       {devices?.map((device) => {
         const driver = drivers.find((item) => item.id === device.driver);
         const status = device.status;
@@ -152,16 +152,16 @@ export function PowerPage({ range: controlled, compact = false }: { range?: Rang
             : status?.error ? <span className="badge down">Unreachable</span>
             : fresh && status?.powerW !== null ? <span className="badge up">{formatWatts(status!.powerW!)}{status?.on === false ? " · off" : ""}</span>
             : <span className="badge root">Waiting</span>}
-          <div className="actions">
+          {!readOnly && <div className="actions">
             <Btn onClick={() => setEditing(device)}><Pencil size={15} />Edit</Btn>
             <Btn className="danger" onClick={async () => {
               if (!await appConfirm(`Delete ${device.name} and its recorded power history?`, "Delete device", "Delete", true)) return;
               try { await api("power/device/delete", { id: device.id }); reload(); } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not delete the device"); }
             }}><Trash2 size={15} />Delete</Btn>
-          </div>
+          </div>}
         </div>;
       })}
-      <PriceForm settings={settings} saved={reload} />
+      {!readOnly && <PriceForm settings={settings} saved={reload} />}
     </Panel>}
     {editing !== undefined && <DeviceForm device={editing} drivers={drivers} close={() => setEditing(undefined)} saved={() => { setEditing(undefined); reload(); }} />}
   </>;

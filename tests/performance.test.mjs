@@ -2,11 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { loadServer } from "./harness.mjs";
 
-function snapshotHost({ failDocker = false } = {}) {
+function snapshotHost({ dockerError = "", failStats = false } = {}) {
   return (argv) => {
-    if (argv[0] === "docker") return failDocker ? { code: 1, stderr: "Cannot connect to the Docker daemon" } : { stdout: '{"Names":"example"}\n' };
+    if (argv[0] === "docker") return dockerError ? { code: 1, stderr: dockerError } : { stdout: '{"Names":"example"}\n' };
     if (argv[0] === "df") return { stdout: "Filesystem 1-blocks Used Available Capacity Mounted\n/dev/example 1000 200 800 20% /srv/example\n" };
-    if (argv[0] === "bash") return { stdout: "cpuUsagePercent=12.5\nmemoryTotalBytes=1000\n" };
+    if (argv[0] === "bash") return failStats ? { code: 255, stderr: "ssh: connect to host server port 22: Connection refused" } : { stdout: "cpuUsagePercent=12.5\nmemoryTotalBytes=1000\n" };
     return { stdout: "" };
   };
 }
@@ -27,14 +27,31 @@ test("simultaneous snapshots share asynchronous host reads; next refresh reads a
 });
 
 test("failed reads do not poison later snapshots and do not leak the command line", async () => {
-  const { server, commands } = loadServer({ host: snapshotHost({ failDocker: true }) });
+  const { server, commands } = loadServer({ host: snapshotHost({ failStats: true }) });
   await assert.rejects(server.hostSnapshot(), (error) => {
-    assert.equal(error.message, "Cannot connect to the Docker daemon");
-    assert.ok(!error.message.includes("docker ps"));
+    assert.equal(error.message, "ssh: connect to host server port 22: Connection refused");
+    assert.ok(!error.message.includes("bash -lc"));
     return true;
   });
-  await assert.rejects(server.hostSnapshot(), /Docker daemon/);
-  assert.equal(commands.filter((item) => item.argv[0] === "docker").length, 2);
+  await assert.rejects(server.hostSnapshot(), /Connection refused/);
+  assert.equal(commands.filter((item) => item.argv[0] === "bash").length, 2);
+});
+
+test("a Docker failure empties the container list instead of failing the snapshot", async () => {
+  const cases = [
+    ["permission denied while trying to connect to the Docker daemon socket", /docker group/],
+    ["bash: line 1: docker: command not found", /not installed/],
+    ["Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?", /not running/],
+  ];
+  for (const [dockerError, expected] of cases) {
+    const { server } = loadServer({ host: snapshotHost({ dockerError }) });
+    const snapshot = await server.hostSnapshot();
+    assert.equal(snapshot.containers.length, 0);
+    assert.match(snapshot.containerError, expected);
+    assert.equal(snapshot.stats.cpuUsagePercent, 12.5, "the rest of the snapshot is still read");
+  }
+  const healthy = await loadServer({ host: snapshotHost() }).server.hostSnapshot();
+  assert.equal(healthy.containerError, null);
 });
 
 // A host whose CPU counters advance between refreshes: 1,000 jiffies each time,

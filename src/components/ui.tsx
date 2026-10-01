@@ -1,6 +1,7 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
 import { api } from "@/lib/client-api";
+import type { PreflightCheck } from "@/lib/types";
 import {
   Loader2,
   Play,
@@ -257,5 +258,25 @@ export function LoadingScreen() {
         <p>Loading Linux Server Control…</p>
       </div>
     </main>
+  );
+}
+// The server requirement checks from setup and Settings, problems first.
+const CHECK_BADGES: Record<PreflightCheck["status"], [className: string, label: string]> = {
+  error: ["down", "Required"],
+  warning: ["down", "Missing"],
+  info: ["root", "Optional"],
+  ok: ["up", "OK"],
+};
+export function PreflightList({ checks }: { checks: PreflightCheck[] }) {
+  const order = ["error", "warning", "info", "ok"];
+  return (
+    <ul className="preflight">
+      {[...checks].sort((a, b) => order.indexOf(a.status) - order.indexOf(b.status)).map((check) => (
+        <li key={check.id}>
+          <span className={`badge ${CHECK_BADGES[check.status][0]}`}>{CHECK_BADGES[check.status][1]}</span>
+          <div><b>{check.label}</b><small>{check.detail}</small></div>
+        </li>
+      ))}
+    </ul>
   );
 }

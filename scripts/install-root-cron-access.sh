@@ -6,7 +6,8 @@ if [ "$(id -u)" -ne 0 ]; then
   exit 1
 fi
 
-project_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+# The helper sits next to this installer, in a clone or in a copy of the folder.
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 dashboard_ssh_user=${1:-${SUDO_USER:-}}
 case "$dashboard_ssh_user" in
   ""|*[!a-zA-Z0-9_-]*)
@@ -14,7 +15,7 @@ case "$dashboard_ssh_user" in
     exit 64
     ;;
 esac
-install -m 0755 "$project_dir/scripts/media-dashboard-root-cron" /usr/local/sbin/media-dashboard-root-cron
+install -m 0755 "$script_dir/media-dashboard-root-cron" /usr/local/sbin/media-dashboard-root-cron
 printf '%s ALL=(root) NOPASSWD: /usr/local/sbin/media-dashboard-root-cron list, /usr/local/sbin/media-dashboard-root-cron install, /usr/local/sbin/media-dashboard-root-cron system-list\n' "$dashboard_ssh_user" > /etc/sudoers.d/media-dashboard-root-cron
 chmod 0440 /etc/sudoers.d/media-dashboard-root-cron
 visudo -cf /etc/sudoers.d/media-dashboard-root-cron

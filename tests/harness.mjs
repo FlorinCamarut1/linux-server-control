@@ -4,14 +4,35 @@ import { mkdtempSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import vm from "node:vm";
 import ts from "typescript";
 
 const require = createRequire(import.meta.url);
-const source = ts.transpileModule(
-  readFileSync(new URL("../src/lib/server.ts", import.meta.url), "utf8"),
-  { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true } },
-).outputText;
+const transpiled = new Map();
+function transpile(file) {
+  if (!transpiled.has(file))
+    transpiled.set(file, ts.transpileModule(readFileSync(file, "utf8"), {
+      compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true },
+    }).outputText);
+  return transpiled.get(file);
+}
+// Runs a TypeScript module and the modules it imports by relative path in one
+// VM context. `modules` answers every other import; anything it leaves out
+// comes from Node.
+function loadModule(entry, globals, modules = () => undefined) {
+  const context = vm.createContext(globals);
+  const loaded = new Map();
+  const load = (file) => {
+    if (loaded.has(file)) return loaded.get(file).exports;
+    const unit = { exports: {} };
+    loaded.set(file, unit);
+    const requireFrom = (name) => modules(name) ?? (name.startsWith(".") ? load(path.resolve(path.dirname(file), name) + ".ts") : require(name));
+    vm.runInContext(`(function (exports, require, module) {${transpile(file)}\n})`, context)(unit.exports, requireFrom, unit);
+    return unit.exports;
+  };
+  return load(fileURLToPath(new URL(entry, import.meta.url)));
+}
 
 // Loads src/lib/server.ts in its own context with a fresh DATA_DIR. Host commands
 // never run: `host(args, input)` answers them with { stdout, stderr, code } or a
@@ -65,16 +86,14 @@ export function loadServer({ env = {}, host = () => ({ stdout: "" }), delay = 0 
       return child;
     },
   };
-  const context = {
-    exports: {}, Buffer, setTimeout, clearTimeout, setInterval, clearInterval,
+  const server = loadModule("../src/lib/server.ts", {
+    Buffer, setTimeout, clearTimeout, setInterval, clearInterval,
     console: { ...console, error() {} },
     process: { env: { DATA_DIR: data, SSH_TARGET: "", ALLOWED_PATHS: "/srv/scripts", SCRIPT_ROOT: "/srv/scripts", MONITORED_PATHS: "/srv/example", ...env } },
-    require(name) { return name === "node:child_process" ? childProcess : require(name); },
-  };
-  vm.runInNewContext(source, context);
+  }, (name) => (name === "node:child_process" ? childProcess : undefined));
   const file = (name) => path.join(data, name + ".json");
   return {
-    server: context.exports, commands, data,
+    server, commands, data,
     readJson: (name) => JSON.parse(readFileSync(file(name), "utf8")),
     fileText: (name) => { try { return readFileSync(file(name), "utf8"); } catch { return null; } },
   };
@@ -82,15 +101,8 @@ export function loadServer({ env = {}, host = () => ({ stdout: "" }), delay = 0 
 
 // Loads src/lib/power.ts on top of a server loaded with loadServer.
 export function loadPower(server) {
-  const source = ts.transpileModule(readFileSync(new URL("../src/lib/power.ts", import.meta.url), "utf8"), {
-    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true },
-  }).outputText;
-  const context = {
-    exports: {}, Buffer, fetch, AbortSignal, URL, URLSearchParams, setTimeout, console,
-    require(name) { return name === "./server" ? server : require(name); },
-  };
-  vm.runInNewContext(source, context);
-  return context.exports;
+  return loadModule("../src/lib/power.ts", { Buffer, fetch, AbortSignal, URL, URLSearchParams, setTimeout, console },
+    (name) => (name === "./server" ? server : undefined));
 }
 
 // Runs host commands for real, for tests that work on a temporary directory.
@@ -99,16 +111,9 @@ export function realHost(argv, input) {
   return { stdout: result.stdout, stderr: result.stderr, code: result.status ?? 1 };
 }
 
-const transpile = (path) => ts.transpileModule(readFileSync(new URL(path, import.meta.url), "utf8"), {
-  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true },
-}).outputText;
 // Loads the API's http and auth modules on top of a server loaded with loadServer.
 export function loadApi(server, env = {}) {
-  const load = (path, modules) => {
-    const context = { exports: {}, Buffer, console, process: { env }, require: (name) => modules[name] ?? require(name) };
-    vm.runInNewContext(transpile(path), context);
-    return context.exports;
-  };
+  const load = (entry, modules) => loadModule(entry, { Buffer, console, process: { env } }, (name) => modules[name]);
   const http = load("../src/lib/api/http.ts", { "@/lib/server": server });
   const auth = load("../src/lib/api/auth.ts", { "@/lib/server": server, "./http": http });
   return { http, auth };
@@ -117,9 +122,8 @@ export function loadApi(server, env = {}) {
 // Loads src/lib/notify.ts on top of a server loaded with loadServer.
 export function loadNotify(server) {
   const power = loadPower(server);
-  const context = { exports: {}, Buffer, fetch, AbortSignal, URL, console: { ...console, error() {} }, require: (name) => (name === "./server" ? server : name === "./power" ? power : require(name)) };
-  vm.runInNewContext(transpile("../src/lib/notify.ts"), context);
-  return context.exports;
+  return loadModule("../src/lib/notify.ts", { Buffer, fetch, AbortSignal, URL, console: { ...console, error() {} } },
+    (name) => (name === "./server" ? server : name === "./power" ? power : undefined));
 }
 
 // Values created inside the VM have that context's prototypes; compare as JSON.

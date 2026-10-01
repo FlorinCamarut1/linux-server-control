@@ -1,7 +1,8 @@
 "use client";
 import { useEffect, useState } from "react";
 import { api } from "@/lib/client-api";
-import { Btn } from "@/components/ui";
+import { Btn, PreflightList } from "@/components/ui";
+import type { PreflightCheck } from "@/lib/types";
 import {
   Loader2,
 } from "lucide-react";
@@ -22,7 +23,7 @@ export function Login({
           <img src="/icon.svg" alt="" />
         </div>
         <h1>Linux Server Control</h1>
-        <p>Secure administration for your media server.</p>
+        <p>Secure administration for your Linux server.</p>
         {msg && <div className="alert">{msg}</div>}
         <form
           onSubmit={async (e) => {
@@ -72,8 +73,22 @@ export function ConnectionUnavailable({ error, retry, loading }: { error: string
 }
 export function Setup({ done, loading }: { done: () => void; loading: boolean }) {
   const [message, setMessage] = useState("");
-  const [server, setServer] = useState<{ sshTarget: string; scriptRoot: string; allowedPaths: string[]; remoteLogs: string } | null>(null);
+  const [server, setServer] = useState<{ sshTarget: string; sshPort: number; scriptRoot: string; allowedPaths: string[]; remoteLogs: string } | null>(null);
+  const [checks, setChecks] = useState<PreflightCheck[] | null>(null);
   useEffect(() => { void api("setup/status", undefined, true).then((data) => setServer(data.server)).catch(() => {}); }, []);
+  // Setup succeeded, but the server lacks something a page needs: say so before continuing.
+  if (checks)
+    return (
+      <main className="login-wrap">
+        <section className="login-card">
+          <div className="login-logo"><img src="/icon.svg" alt="" /></div>
+          <h1>Setup complete</h1>
+          <p>The account was created and the server answered. Some features need the items below; you can install them later and check again under Settings → Server connection.</p>
+          <PreflightList checks={checks.filter((check) => check.status === "error" || check.status === "warning")} />
+          <Btn className="primary full" onClick={done}>Continue to the dashboard</Btn>
+        </section>
+      </main>
+    );
   return (
     <main className="login-wrap">
       <section className="login-card">
@@ -81,11 +96,13 @@ export function Setup({ done, loading }: { done: () => void; loading: boolean })
         <h1>Set up Linux Server Control</h1>
         <p>Create the administrator account and verify the server connection.</p>
         {message && <div className="alert">{message}</div>}
-        <form key={server?.sshTarget || "loading"} onSubmit={async (event) => {
+        <form key={server ? "loaded" : "loading"} onSubmit={async (event) => {
           event.preventDefault();
           try {
-            await api("setup", Object.fromEntries(new FormData(event.currentTarget)));
-            done();
+            const result = await api("setup", Object.fromEntries(new FormData(event.currentTarget)));
+            const found: PreflightCheck[] = result.checks || [];
+            if (found.some((check) => check.status === "error" || check.status === "warning")) setChecks(found);
+            else done();
           } catch (reason) {
             setMessage(reason instanceof Error ? reason.message : "Setup failed");
           }
@@ -96,6 +113,7 @@ export function Setup({ done, loading }: { done: () => void; loading: boolean })
           <label>Confirm password<input name="confirmPassword" type="password" minLength={12} required autoComplete="new-password" /></label>
           <label>Device name<input name="deviceName" defaultValue="First browser" maxLength={80} /></label>
           <label>SSH target<input name="sshTarget" placeholder="user@server" defaultValue={server?.sshTarget || ""} spellCheck={false} /><small>Leave empty only when this container runs directly on the server.</small></label>
+          <label>SSH port<input name="sshPort" type="number" min={1} max={65535} defaultValue={server?.sshPort || 22} required /></label>
           <label>Script root<input name="scriptRoot" defaultValue={server?.scriptRoot || "/home"} required spellCheck={false} /></label>
           <label>Allowed paths<input name="allowedPaths" defaultValue={server?.allowedPaths.join(", ") || "/home"} required spellCheck={false} /><small>Comma-separated absolute paths the dashboard may browse or run scripts from.</small></label>
           <label>Remote logs folder<input name="remoteLogs" defaultValue={server?.remoteLogs || "/tmp/media-dashboard"} required spellCheck={false} /></label>

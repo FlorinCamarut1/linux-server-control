@@ -1,0 +1,237 @@
+// File browsing and editing on the server, confined to the allowed locations.
+import { spawn } from "node:child_process";
+import { audit } from "./store";
+import { allowedRoots, run, runInput, ssh } from "./ssh";
+export function isAllowedPath(value: string) {
+  return allowedRoots().some((root) => value === root || value.startsWith(root + "/"));
+}
+export async function resolveAllowedDirectory(requested: string) {
+  let directory = allowedRoots()[0];
+  if (requested) {
+    try { directory = (await run(["realpath", "-e", "--", requested])).trim(); }
+    catch { throw Error("Folder not found"); }
+  }
+  if (!directory || !isAllowedPath(directory))
+    throw Error("This folder is outside the allowed locations");
+  try { await run(["test", "-d", directory]); }
+  catch { throw Error("Choose a folder"); }
+  return directory;
+}
+export async function resolveSelectedFile(requested: string) {
+  let resolved: string;
+  try { resolved = (await run(["realpath", "-e", "--", requested])).trim(); }
+  catch { throw Error("File not found"); }
+  if (!isAllowedPath(resolved))
+    throw Error("The selected file must be inside an allowed location");
+  try { await run(["test", "-f", resolved]); }
+  catch { throw Error("Choose a regular file"); }
+  return resolved;
+}
+const MAX_EDITABLE_FILE_BYTES = 512 * 1024;
+export async function readEditableFile(requested: string) {
+  const resolved = await resolveSelectedFile(requested);
+  const size = Number((await run(["stat", "-c", "%s", resolved])).trim());
+  if (!Number.isFinite(size) || size > MAX_EDITABLE_FILE_BYTES)
+    throw Error("Only text files up to 512 KB can be edited here");
+  // An empty file has no content type yet; it opens so that it can be written.
+  const mime = size ? (await run(["file", "--brief", "--mime-type", resolved])).trim() : "text/plain";
+  if (!mime.startsWith("text/") && !mime.endsWith("json") && !mime.endsWith("xml"))
+    throw Error("This file is not a supported text file");
+  return { path: resolved, content: await run(["cat", resolved]) };
+}
+export async function saveEditableFile(requested: string, content: string) {
+  const resolved = await resolveSelectedFile(requested);
+  if (Buffer.byteLength(content, "utf8") > MAX_EDITABLE_FILE_BYTES)
+    throw Error("Only text files up to 512 KB can be saved here");
+  if (content.includes("\0")) throw Error("Binary content cannot be saved here");
+  await runInput(["sh", "-c", 'cat > "$1"', "sh", resolved], content, 15000);
+  audit("edited file " + resolved);
+}
+export async function deleteEditableFile(requested: string) {
+  const resolved = await resolveSelectedFile(requested);
+  await run(["rm", "-f", "--", resolved]);
+  audit("deleted file " + resolved);
+}
+export type ScriptBrowserEntry = {
+  name: string;
+  path: string;
+  type: "directory" | "script";
+};
+const fileOperation = String.raw`
+import json, os, sys, shutil, subprocess
+request = json.load(sys.stdin)
+roots = [os.path.realpath(root) for root in request["roots"]]
+target = os.path.realpath(request["path"] or roots[0])
+def inside(value, root):
+    return value == root or value.startswith(root.rstrip("/") + "/")
+def allowed(value):
+    return any(inside(value, root) for root in roots)
+def protected(value):
+    return any(inside(root, value) for root in roots)
+if not any(inside(target, root) for root in roots):
+    raise ValueError("This path is outside the allowed locations")
+if request["action"] == "delete":
+    if not request["path"] or protected(target):
+        raise ValueError("Allowed locations and their parents cannot be deleted")
+    if os.path.islink(request["path"]):
+        raise ValueError("Deleting symbolic links is not supported")
+    if os.path.isdir(target):
+        shutil.rmtree(target)
+    elif os.path.isfile(target):
+        os.unlink(target)
+    else:
+        raise ValueError("File or folder not found")
+    print(json.dumps({"ok": True}))
+elif request["action"] == "create":
+    parent = target
+    name = request.get("name") or ""
+    if not name or name in (".", "..") or "/" in name or "\\" in name or len(name) > 255:
+        raise ValueError("Enter a valid name")
+    if not allowed(parent) or not os.path.isdir(parent):
+        raise ValueError("Choose an allowed destination folder")
+    output = os.path.realpath(os.path.join(parent, name))
+    if not allowed(output) or os.path.exists(output):
+        raise ValueError("A file or folder with this name already exists")
+    if request.get("kind") == "folder":
+        os.mkdir(output)
+    else:
+        open(output, "x").close()
+    print(json.dumps({"ok": True, "path": output}))
+elif request["action"] in ("copy", "move", "rename"):
+    source = os.path.realpath(request.get("source") or "")
+    if not source or not allowed(source) or protected(source):
+        raise ValueError("The selected file or folder cannot be changed")
+    if os.path.islink(request.get("source") or ""):
+        raise ValueError("Symbolic links are not supported")
+    if not (os.path.isfile(source) or os.path.isdir(source)):
+        raise ValueError("File or folder not found")
+    if request["action"] == "rename":
+        name = request.get("name") or ""
+        if not name or name in (".", "..") or "/" in name or "\\" in name or len(name) > 255:
+            raise ValueError("Enter a valid name")
+        destination = os.path.dirname(source)
+        output = os.path.realpath(os.path.join(destination, name))
+    else:
+        destination = os.path.realpath(request.get("destination") or "")
+        if not allowed(destination) or not os.path.isdir(destination):
+            raise ValueError("Choose an allowed destination folder")
+        output = os.path.realpath(os.path.join(destination, os.path.basename(source)))
+    if not allowed(output) or output == source:
+        raise ValueError("Choose a different allowed destination")
+    if os.path.exists(output):
+        raise ValueError("A file or folder with this name already exists there")
+    if os.path.isdir(source) and inside(destination, source):
+        raise ValueError("A folder cannot be pasted inside itself")
+    if request["action"] == "copy":
+        if os.path.isdir(source):
+            shutil.copytree(source, output, symlinks=True)
+        else:
+            shutil.copy2(source, output, follow_symlinks=False)
+    else:
+        shutil.move(source, output)
+    print(json.dumps({"ok": True, "path": output}))
+else:
+    entries = []
+    sizes = {}
+    if request["action"] == "sizes":
+        try:
+            measured = subprocess.run(
+                ["du", "-b", "--max-depth=1", "--", target],
+                capture_output=True, text=True, timeout=20, check=False)
+            for line in measured.stdout.splitlines():
+                amount, name = line.split("\t", 1)
+                sizes[os.path.realpath(name)] = int(amount)
+        except (OSError, ValueError, subprocess.TimeoutExpired):
+            pass
+        print(json.dumps({"path": target, "sizes": sizes}))
+        sys.exit(0)
+    ordering = request.get("sort") or "name"
+    if ordering == "size":
+        # Sorting by size across pages needs every folder's size first.
+        try:
+            measured = subprocess.run(
+                ["du", "-b", "--max-depth=1", "--", target],
+                capture_output=True, text=True, timeout=20, check=False)
+            for line in measured.stdout.splitlines():
+                amount, name = line.split("\t", 1)
+                sizes[os.path.realpath(name)] = int(amount)
+        except (OSError, ValueError, subprocess.TimeoutExpired):
+            pass
+    with os.scandir(target) as items:
+        for item in items:
+            if item.is_dir(follow_symlinks=False):
+                kind = "directory"
+            elif item.is_file(follow_symlinks=False):
+                if request["scripts"] and not item.name.endswith(".sh"):
+                    continue
+                kind = "script" if request["scripts"] else "file"
+            else:
+                continue
+            size = sizes.get(os.path.realpath(item.path)) if kind == "directory" else item.stat(follow_symlinks=False).st_size
+            entries.append({"name": item.name, "path": item.path, "type": kind, "size": size})
+    query = str(request.get("search") or "").lower()
+    if query:
+        entries = [item for item in entries if query in item["name"].lower()]
+    if ordering == "size":
+        entries.sort(key=lambda item: (item.get("size") is None, -(item.get("size") or 0), item["name"].lower()))
+    else:
+        entries.sort(key=lambda item: (item["type"] != "directory", item["name"].lower()))
+    offset = max(0, int(request.get("offset") or 0))
+    limit = min(1000, max(1, int(request.get("limit") or 100)))
+    parent = os.path.dirname(target)
+    print(json.dumps({"path": target, "roots": roots,
+        "parent": parent if target not in roots and any(inside(parent, root) for root in roots) else None,
+        "entries": entries[offset:offset + limit], "total": len(entries), "offset": offset, "limit": limit}))
+`;
+type FileChange = { ok: boolean; path?: string };
+async function remoteFileOperation<T = Record<string, unknown>>(request: Record<string, unknown>) {
+  const [command, args] = ssh(["python3", "-c", fileOperation]);
+  return new Promise<T>((resolve, reject) => {
+    const child = spawn(command, args, { stdio: ["pipe", "pipe", "pipe"] });
+    let output = "", error = "";
+    const timeout = setTimeout(() => { child.kill(); reject(Error("File operation timed out")); }, 30000);
+    child.stdout.on("data", (chunk) => { output += chunk; });
+    child.stderr.on("data", (chunk) => { error += chunk; });
+    child.on("error", (reason) => { clearTimeout(timeout); reject(reason); });
+    child.on("close", (code) => {
+      clearTimeout(timeout);
+      if (code !== 0) return reject(Error(error.trim().split("\n").pop() || "File operation failed"));
+      try { resolve(JSON.parse(output)); } catch { reject(Error("Invalid file response")); }
+    });
+    child.stdin.on("error", () => {});
+    child.stdin.end(JSON.stringify({ ...request, roots: allowedRoots() }));
+  });
+}
+export function browseScripts(requested = "") {
+  return remoteFileOperation({ path: requested, action: "browse", scripts: true });
+}
+export function browseFiles(requested = "", options: { search?: string; sort?: string; offset?: number; limit?: number } = {}) {
+  return remoteFileOperation({ path: requested, action: "browse", scripts: false, ...options });
+}
+export function folderSizes(requested: string) {
+  return remoteFileOperation({ path: requested, action: "sizes", scripts: false });
+}
+export async function deleteFolder(requested: string) {
+  await remoteFileOperation({ path: requested, action: "delete" });
+  audit("deleted folder " + requested);
+}
+export async function changeFile(
+  action: "delete" | "copy" | "move" | "rename",
+  source: string,
+  destination = "",
+  name = "",
+) {
+  const result = await remoteFileOperation<FileChange>({
+    path: source,
+    action,
+    source,
+    destination,
+    name,
+  });
+  audit(`${action} ${source}${result.path ? " -> " + result.path : ""}`);
+  return result;
+}
+export async function createFileOrFolder(directory: string, name: string, kind: "file" | "folder") {
+  const result = await remoteFileOperation<FileChange>({ path: directory, action: "create", name, kind });
+  audit(`created ${kind} ${result.path}`); return result;
+}

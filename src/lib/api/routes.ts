@@ -10,6 +10,7 @@ import {
   browseScripts,
   changeFile,
   collectCronRuns,
+  CONTAINER_NAME,
   containerSize,
   cronRuns,
   createCustomScript,
@@ -25,6 +26,7 @@ import {
   metricHistory,
   metricsSummary,
   monitoredPaths,
+  preflight,
   readEditableFile,
   recordMetricSample,
   removeMonitoredPath,
@@ -51,8 +53,9 @@ import { demoState } from "./demo";
 import { type Body, type Context, type Routes, ok } from "./http";
 
 // Dashboard records stored in DATA_DIR; reading them needs no SSH.
-function records(devices: Context["devices"]) {
+function records({ devices, user }: Context) {
   return {
+    user,
     scripts: scripts(),
     folders: folders(),
     schedules: schedules(),
@@ -68,11 +71,12 @@ function records(devices: Context["devices"]) {
 // ?scope=records returns only the stored records, for pages that show no live
 // host data; the background monitor keeps metrics and alerts current meanwhile.
 // ?scope=history adds the cron runs. The default reads the host as well.
-async function state({ req, session, devices }: Context) {
-  if (session.device === "demo") return NextResponse.json(demoState);
+async function state(context: Context) {
+  const { req, session } = context;
+  if (session.device === "demo") return NextResponse.json({ ...demoState, user: context.user });
   const scope = req.nextUrl.searchParams.get("scope");
-  if (scope === "records") return NextResponse.json({ ...records(devices), cronRuns: cronRuns() });
-  if (scope === "history") return NextResponse.json({ ...records(devices), cronRuns: await collectCronRuns() });
+  if (scope === "records") return NextResponse.json({ ...records(context), cronRuns: cronRuns() });
+  if (scope === "history") return NextResponse.json({ ...records(context), cronRuns: await collectCronRuns() });
   let snapshot;
   try {
     snapshot = await hostSnapshot();
@@ -84,7 +88,7 @@ async function state({ req, session, devices }: Context) {
   const { cronLog, ...host } = snapshot;
   return NextResponse.json({
     ...host,
-    ...records(devices),
+    ...records(context),
     alertState: alerts,
     cronRuns: await collectCronRuns(cronLog),
   });
@@ -120,6 +124,7 @@ const hostRoutes: Routes<Context> = {
     try {
       const settings = updateServerSettings({
         sshTarget: body.sshTarget,
+        ...(body.sshPort ? { sshPort: Number(body.sshPort) } : {}),
         scriptRoot: body.scriptRoot,
         allowedPaths: (body.allowedPaths || "").split(",").filter(Boolean),
         remoteLogs: body.remoteLogs,
@@ -133,10 +138,11 @@ const hostRoutes: Routes<Context> = {
       throw error;
     }
   },
+  "GET preflight": async () => NextResponse.json(await preflight()),
   "POST container": async ({ body }) => {
     if (
       !["start", "stop", "restart", "logs"].includes(body.action) ||
-      !/^[\w.-]+$/.test(body.name)
+      !CONTAINER_NAME.test(body.name || "")
     )
       throw Error("Invalid action");
     const output =

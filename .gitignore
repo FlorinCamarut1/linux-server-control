@@ -11,3 +11,6 @@ node_modules/
 .next/
 *.tsbuildinfo
 HANDOVER.md
+e2e/.tmp/
+test-results/
+playwright-report/

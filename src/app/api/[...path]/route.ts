@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { CommandError } from "@/lib/server";
-import { authenticate, publicRoutes } from "@/lib/api/auth";
+import { authenticate, permitted, publicRoutes } from "@/lib/api/auth";
 import { type Body, fail, sameOrigin } from "@/lib/api/http";
 import { routes } from "@/lib/api/routes";
 export const runtime = "nodejs";
@@ -31,6 +31,7 @@ async function handle(req: NextRequest, route: string, body: Body) {
     if (!signedIn) return fail("Sign in to continue", 401);
     const handler = routes[route];
     if (!handler) return fail("Not found", 404);
+    if (!permitted(route, signedIn.user.role, body)) return fail("This account is read-only.", 403);
     return await handler({ req, body, ...signedIn });
   } catch (error) {
     if (error instanceof CommandError) return fail(error.message, 502);

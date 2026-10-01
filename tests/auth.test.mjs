@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createRequire } from "node:module";
-import { loadApi, loadServer } from "./harness.mjs";
+import { loadApi, loadServer, plain } from "./harness.mjs";
 
 // The same CommonJS instance the modules under test load.
 const { NextRequest } = createRequire(import.meta.url)("next/server");
@@ -96,4 +96,50 @@ test("sessions end on logout, expiry, device revocation and password change", as
   assert.equal(signedIn(fourth), null, "revoked device");
   server.sessions.set("demo-session", { device: "demo", expires: Date.now() + 60000, created: Date.now() });
   assert.equal(signedIn("demo-session"), null, "demo sessions are refused outside development");
+});
+
+test("read-only accounts sign in but may only read", async () => {
+  const { auth, server, device, session, readJson } = await configured();
+  const owner = auth.authenticate(request("state", { cookies: { lsc_session: session } }));
+  assert.deepEqual(plain(owner.user), { name: "admin", role: "admin" });
+  const save = (body) => auth.accountRoutes["POST users/save"]({ ...owner, req: request("users/save", { body }), body });
+  assert.equal((await save({ username: "guest", role: "viewer", password: "short" })).status, 400);
+  assert.equal((await save({ username: "admin", role: "viewer", password: "another-long-password" })).status, 400, "the owner cannot be demoted");
+  assert.equal((await save({ username: "bad name", role: "viewer", password: "another-long-password" })).status, 400);
+  assert.equal((await save({ username: "guest", role: "viewer", password: "guest-long-password" })).status, 200);
+  assert.ok(!JSON.stringify(readJson("users")).includes("guest-long-password"), "only the hash is stored");
+
+  const guestSession = cookieOf(await login(auth, { username: "guest", password: "guest-long-password" }, { lsc_device: device }), "lsc_session");
+  const guest = auth.authenticate(request("state", { cookies: { lsc_session: guestSession } }));
+  assert.deepEqual(plain(guest.user), { name: "guest", role: "viewer" });
+  for (const route of ["GET state", "GET history/runs", "POST script/log", "POST logout", "POST account/password"])
+    assert.ok(auth.permitted(route, "viewer", {}), route);
+  for (const route of ["POST script/run", "POST file/save", "POST file/browse", "POST schedule/save", "POST users/save", "GET users", "GET config/export", "POST settings/server", "POST enrollment/create", "POST device/revoke", "GET preflight", "GET notifications"])
+    assert.ok(!auth.permitted(route, "viewer", {}), route);
+  assert.ok(auth.permitted("POST container", "viewer", { action: "logs" }));
+  assert.ok(!auth.permitted("POST container", "viewer", { action: "stop" }));
+  assert.ok(auth.permitted("POST script/run", "admin", {}));
+
+  // A viewer changes its own password without touching the owner's.
+  const changed = await auth.accountRoutes["POST account/password"]({ ...guest, req: request("account/password", { body: {} }), body: { currentPassword: "guest-long-password", newPassword: "guest-newer-password", confirmPassword: "guest-newer-password" } });
+  assert.equal(changed.status, 200);
+  assert.ok(auth.authenticate(request("state", { cookies: { lsc_session: session } })), "the owner stays signed in");
+  assert.equal((await login(auth, { username: "admin", password: PASSWORD }, { lsc_device: device })).status, 200);
+  assert.equal((await login(auth, { username: "guest", password: "guest-long-password" }, { lsc_device: device })).status, 401);
+
+  // Promotion takes effect on the next request; deletion signs the account out.
+  await save({ username: "guest", role: "admin" });
+  assert.equal(auth.authenticate(request("state", { cookies: { lsc_session: guestSession } })).user.role, "admin");
+  assert.equal((await login(auth, { username: "guest", password: "guest-newer-password" }, { lsc_device: device })).status, 200, "an edit without a password keeps it");
+  const remove = (username) => auth.accountRoutes["POST users/delete"]({ ...owner, req: request("users/delete", { body: {} }), body: { username } });
+  assert.equal((await remove("admin")).status, 404, "the owner is not a deletable account");
+  assert.equal((await remove("guest")).status, 200);
+  assert.equal(auth.authenticate(request("state", { cookies: { lsc_session: guestSession } })), null);
+  assert.equal([...server.sessions.values()].filter((item) => item.user === "guest").length, 0);
+});
+
+test("sessions from before accounts existed belong to the owner", async () => {
+  const { auth, server, session } = await configured();
+  delete server.sessions.get(session).user;
+  assert.deepEqual(plain(auth.authenticate(request("state", { cookies: { lsc_session: session } })).user), { name: "admin", role: "admin" });
 });

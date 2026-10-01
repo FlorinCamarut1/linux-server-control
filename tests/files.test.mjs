@@ -67,6 +67,8 @@ test("the editor reads and saves text files inside the root only", async () => {
   await server.saveEditableFile(path.join(root, "notes.txt"), "changed\n");
   assert.equal(readFileSync(path.join(root, "notes.txt"), "utf8"), "changed\n");
   await assert.rejects(server.readEditableFile(path.join(root, "image.bin")), /not a supported text file/);
+  writeFileSync(path.join(root, "empty.txt"), "");
+  assert.equal(plain(await server.readEditableFile(path.join(root, "empty.txt"))).content, "", "a new, empty file opens");
   await assert.rejects(server.readEditableFile(path.join(outside, "secret.txt")), /inside an allowed location/);
   await assert.rejects(server.saveEditableFile(path.join(root, "escape", "secret.txt"), "x"), /inside an allowed location/);
   assert.equal(readFileSync(path.join(outside, "secret.txt"), "utf8"), "secret\n");
@@ -81,4 +83,18 @@ test("new files and folders are created inside the root with valid names only", 
   assert.ok(existsSync(path.join(root, "new-folder", "empty.txt")));
   await assert.rejects(server.createFileOrFolder(root, "../outside.txt", "file"), /valid name/);
   await assert.rejects(server.createFileOrFolder(root, "notes.txt", "file"), /already exists/);
+});
+
+test("sorting by size measures folders first and pages through the whole folder", async () => {
+  const { server, root } = tree();
+  writeFileSync(path.join(root, "docs", "large.txt"), "x".repeat(50000));
+  writeFileSync(path.join(root, "medium.txt"), "x".repeat(20000));
+  const bySize = plain(await server.browseFiles(root, { sort: "size" }));
+  assert.deepEqual(bySize.entries.slice(0, 2).map((entry) => entry.name), ["docs", "medium.txt"], "largest first, folders by their contents");
+  assert.ok(bySize.entries[0].size >= 50000);
+  const second = plain(await server.browseFiles(root, { sort: "size", offset: 1, limit: 1 }));
+  assert.deepEqual(second.entries.map((entry) => entry.name), ["medium.txt"]);
+  assert.equal(second.total, bySize.total, "every page reports the full count");
+  const byName = plain(await server.browseFiles(root));
+  assert.equal(byName.entries[0].size, null, "name listings leave folder sizes for later");
 });

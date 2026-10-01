@@ -4,7 +4,9 @@ import type { Session } from "@/lib/server";
 export type Body = Record<string, string>;
 export type Devices = Record<string, { name: string; created: string }>;
 export type PublicContext = { req: NextRequest; body: Body };
-export type Context = PublicContext & { sid: string; session: Session; devices: Devices };
+export type Role = "admin" | "viewer";
+export type User = { name: string; role: Role };
+export type Context = PublicContext & { sid: string; session: Session; devices: Devices; user: User };
 export type Handler<C> = (context: C) => Response | Promise<Response>;
 // Keyed by "METHOD path", for example "POST schedule/save".
 export type Routes<C> = Record<string, Handler<C>>;

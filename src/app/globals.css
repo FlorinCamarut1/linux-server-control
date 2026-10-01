@@ -1123,6 +1123,25 @@ a.button {
   padding: var(--panel-space-x);
   max-width: 520px;
 }
+.preflight {
+  list-style: none;
+  margin: 0 0 16px;
+  padding: 0;
+  display: grid;
+  gap: 12px;
+}
+.preflight li {
+  display: grid;
+  grid-template-columns: 84px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+.preflight small {
+  display: block;
+  color: var(--muted);
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+}
 .configuration-actions > .button,
 .configuration-actions > label.button {
   box-sizing: border-box;

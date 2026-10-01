@@ -1,6 +1,6 @@
 export async function register() {
   if (process.env.NEXT_RUNTIME === "nodejs") {
-    const { onDashboardEvent, recoverInterruptedRuns, startBackgroundMonitor } = await import("@/lib/server");
+    const { announceSetupToken, onDashboardEvent, recoverInterruptedRuns, startBackgroundMonitor } = await import("@/lib/server");
     const { samplePower } = await import("@/lib/power");
     const { deliver } = await import("@/lib/notify");
     // Registered once per process; events from every module instance reach it.
@@ -9,6 +9,7 @@ export async function register() {
       events.lscNotifications = true;
       onDashboardEvent((event) => void deliver(event));
     }
+    announceSetupToken();
     recoverInterruptedRuns();
     startBackgroundMonitor();
     // Smart plugs are read every minute, independently of the host snapshot.

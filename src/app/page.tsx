@@ -9,7 +9,7 @@ import { FileExplorer } from "@/components/files";
 import { Overview, HistoryPanel, AlertForm, describeAlert } from "@/components/monitoring";
 import { ScheduleForm } from "@/components/schedules";
 import { ScriptForm, CustomScriptForm, RunScriptForm, FolderForm } from "@/components/scripts";
-import { AppearancePanel, NotificationsPanel, PasswordForm, DevicePanel, ServerSettings, ConfigurationPanel, StorageManager } from "@/components/settings";
+import { AppearancePanel, NotificationsPanel, PasswordForm, DevicePanel, ServerSettings, ConfigurationPanel, StorageManager, UsersPanel } from "@/components/settings";
 import { appConfirm, Btn, copyText, Panel, Metric, formatBytes, formatPercent, formatUptime, Modal, DialogHost, LiveLogViewer, AppLoading, LoadingScreen } from "@/components/ui";
 import type { S, Schedule, St } from "@/lib/types";
 import {
@@ -211,6 +211,8 @@ export default function Home() {
     return <ConnectionUnavailable error={err} retry={() => void refresh()} loading={pendingRequests > 0} />;
   if (!state)
     return <Login error={err} done={refresh} loading={pendingRequests > 0} />;
+  // Read-only accounts see the pages without the controls; the API refuses the rest.
+  const readOnly = state.user?.role === "viewer";
   return (
     <div className="shell">
       {pendingRequests > 0 && <AppLoading />}
@@ -222,7 +224,7 @@ export default function Home() {
           <b>Linux Server Control</b>
         </div>
         <nav>
-          {nav.map(([id, Icon, label]) => (
+          {nav.filter(([id]) => !readOnly || id !== "files").map(([id, Icon, label]) => (
             <button
               key={id}
               className={tab === id ? "active" : ""}
@@ -251,7 +253,7 @@ export default function Home() {
             <h1>
               {nav.find(([id]) => id === tab)?.[2]}
             </h1>
-            <p>Updated {state.time}</p>
+            <p>Updated {state.time}{state.user ? ` · ${state.user.name}${readOnly ? " (read-only)" : ""}` : ""}</p>
           </div>
           <div className="actions">
             <Btn onClick={() => refresh()}>
@@ -275,6 +277,9 @@ export default function Home() {
             {err}
             <button onClick={() => setErr("")}>×</button>
           </div>
+        )}
+        {state.containerError && (tab === "overview" || tab === "containers") && (
+          <div className="alert">Containers cannot be read: {state.containerError}</div>
         )}
         {tab === "overview" && <Overview state={state} active={active} stopped={stopped} openLogs={openLogs} />}
         {tab === "containers" && (
@@ -324,7 +329,7 @@ export default function Home() {
                 icon={<Container />}
               />
             </section>
-            <div className="actions"><Btn onClick={() => setStorageManager(true)}><HardDrive size={16} />Manage storage paths</Btn></div>
+            {!readOnly && <div className="actions"><Btn onClick={() => setStorageManager(true)}><HardDrive size={16} />Manage storage paths</Btn></div>}
             {state.stats.storage.length > storagePerPage && <div className="actions"><Btn disabled={storagePage === 0} onClick={() => setStoragePage((page) => page - 1)}>Previous storage</Btn><small>Storage {storagePage + 1} of {storagePages}</small><Btn disabled={storagePage + 1 >= storagePages} onClick={() => setStoragePage((page) => page + 1)}>Next storage</Btn></div>}
             <Panel
               title="All containers"
@@ -357,6 +362,7 @@ export default function Home() {
                   busy={busy}
                   act={action}
                   logs={openLogs}
+                  readOnly={readOnly}
                 />
               ))}
               {!visibleContainers.length && (
@@ -377,7 +383,7 @@ export default function Home() {
           <Panel
             title="Quick actions"
             note="Run and schedule approved scripts"
-            extra={
+            extra={readOnly ? undefined : (
               <div className="actions">
                 <Btn onClick={() => setFolderEditor(true)}>
                   <Folder size={16} />
@@ -390,7 +396,7 @@ export default function Home() {
                   New custom script
                 </Btn>
               </div>
-            }
+            )}
           >
             {scriptFolders.length ? (
               scriptFolders.map(([folder, scripts]) => (
@@ -401,7 +407,7 @@ export default function Home() {
                       <b>{folder}</b>
                       <small>{scripts.length} script{scripts.length === 1 ? "" : "s"}</small>
                     </span>
-                    <Btn
+                    {!readOnly && <Btn
                       className="danger folder-delete"
                       disabled={!!busy}
                       title={`Delete ${folder}`}
@@ -417,7 +423,7 @@ export default function Home() {
                     >
                       <Trash2 size={15} />
                       Delete folder
-                    </Btn>
+                    </Btn>}
                     <ChevronDown className="chevron" size={18} />
                   </summary>
                   {scripts.map((s) => (
@@ -432,7 +438,7 @@ export default function Home() {
                         {s.runAs === "root" && <span className="badge root">root</span>}
                       </div>
                       <div className="actions">
-                        <Btn
+                        {!readOnly && <Btn
                           disabled={!!busy}
                           onClick={() =>
                             s.runOptions?.length
@@ -442,13 +448,13 @@ export default function Home() {
                         >
                           <Play size={15} />
                           Run
-                        </Btn>
+                        </Btn>}
                         <Btn
                           onClick={() => openLogs(s.name, "script/log", { id: s.id })}
                         >
                           Logs
                         </Btn>
-                        <Btn onClick={() => { const schedule = scriptStatus.get(s.id)?.schedule; setScheduleEditor(schedule || { id: "", scriptId: s.id, expression: "0 3 * * *", label: `Run ${s.name}`, enabled: true, runAs: s.runAs || "user" }); }}>Schedule</Btn>
+                        {!readOnly && <><Btn onClick={() => { const schedule = scriptStatus.get(s.id)?.schedule; setScheduleEditor(schedule || { id: "", scriptId: s.id, expression: "0 3 * * *", label: `Run ${s.name}`, enabled: true, runAs: s.runAs || "user" }); }}>Schedule</Btn>
                         <Btn onClick={() => setEdit(s)}>Edit</Btn>
                         <Btn
                           className="danger"
@@ -460,7 +466,7 @@ export default function Home() {
                         >
                           <Trash2 size={15} />
                           Delete
-                        </Btn>
+                        </Btn></>}
                       </div>
                     </div>
                   ))}
@@ -470,7 +476,7 @@ export default function Home() {
               <div className="empty-state">
                 <FileTerminal size={22} />
                 <b>No scripts yet</b>
-                <p>Add a script to run it or create a schedule.</p>
+                <p>{readOnly ? "An administrator can add scripts." : "Add a script to run it or create a schedule."}</p>
               </div>
             )}
           </Panel>
@@ -480,7 +486,7 @@ export default function Home() {
           <Panel
             title="Scheduled jobs"
             note="Choose a script, schedule, and the account that runs it"
-            extra={
+            extra={readOnly ? undefined : (
               <Btn
                 className="primary"
                 disabled={!state.scripts.length}
@@ -489,7 +495,7 @@ export default function Home() {
                 <CalendarPlus size={16} />
                 New schedule
               </Btn>
-            }
+            )}
           >
             {state.schedules.length ? (
               state.schedules.map((schedule) => {
@@ -515,7 +521,7 @@ export default function Home() {
                     {(schedule.runAs || "user") === "root" && (
                       <span className="badge root">root</span>
                     )}
-                    <div className="actions">
+                    {!readOnly && <div className="actions">
                       <Btn onClick={() => setScheduleEditor(schedule)}>Edit</Btn>
                       <Btn
                         onClick={() =>
@@ -537,7 +543,7 @@ export default function Home() {
                         <Trash2 size={15} />
                         Delete
                       </Btn>
-                    </div>
+                    </div>}
                   </div>
                 );
               })
@@ -563,14 +569,15 @@ export default function Home() {
           </Panel>
         )}
         {tab === "history" && <HistoryPanel runs={state.runs || []} cronRuns={state.cronRuns || []} metrics={state.metrics} openLog={(run) => openLogs(`${run.scriptName} run`, "script/log", { id: run.scriptId, runId: run.id })} />}
-        {tab === "power" && <PowerPage />}
+        {tab === "power" && <PowerPage readOnly={readOnly} />}
         {tab === "alerts" && (
-          <Panel title="Alert rules" note="Rules are checked every 5 minutes and on each dashboard refresh; cooldowns prevent repeated notifications." extra={<Btn className="primary" onClick={() => setAlertEditor(null)}>New alert</Btn>}>
-            {(state.alerts || []).map((rule) => <div className="schedule-row" key={rule.id}><div className="grow"><b>{rule.name}</b><small>{describeAlert(rule.metric, rule.threshold)} · cooldown {rule.cooldownMinutes} min{rule.lastTriggeredAt ? ` · last triggered ${new Date(rule.lastTriggeredAt).toLocaleString()}` : ""}</small></div><span className={`badge ${rule.enabled ? "up" : "down"}`}>{rule.enabled ? "Enabled" : "Paused"}</span><div className="actions"><Btn onClick={() => setAlertEditor(rule)}>Edit</Btn><Btn className="danger" onClick={() => action(rule.id, "alerts/delete", { id: rule.id })}><Trash2 size={15}/>Delete</Btn></div></div>)}
+          <Panel title="Alert rules" note="Rules are checked every 5 minutes and on each dashboard refresh; cooldowns prevent repeated notifications." extra={readOnly ? undefined : <Btn className="primary" onClick={() => setAlertEditor(null)}>New alert</Btn>}>
+            {(state.alerts || []).map((rule) => <div className="schedule-row" key={rule.id}><div className="grow"><b>{rule.name}</b><small>{describeAlert(rule.metric, rule.threshold)} · cooldown {rule.cooldownMinutes} min{rule.lastTriggeredAt ? ` · last triggered ${new Date(rule.lastTriggeredAt).toLocaleString()}` : ""}</small></div><span className={`badge ${rule.enabled ? "up" : "down"}`}>{rule.enabled ? "Enabled" : "Paused"}</span>{!readOnly && <div className="actions"><Btn onClick={() => setAlertEditor(rule)}>Edit</Btn><Btn className="danger" onClick={() => action(rule.id, "alerts/delete", { id: rule.id })}><Trash2 size={15}/>Delete</Btn></div>}</div>)}
             {!state.alerts?.length && <div className="empty-state"><Thermometer size={22}/><b>No alert rules yet</b><p>Add thresholds for server health and jobs.</p></div>}
           </Panel>
         )}
-        {tab === "settings" && <><AppearancePanel /><NotificationsPanel /><ServerSettings /><Panel title="Storage monitoring" note="Choose which mounted paths appear in capacity cards."><div className="panel-body"><Btn onClick={() => setStorageManager(true)}><HardDrive size={16}/>Manage storage paths</Btn></div></Panel><DevicePanel devices={state.devices} revoke={(id) => action(id, "device/revoke", { id })} createCode={async () => { try { setEnrollment(await api("enrollment/create", { minutes: "15" })); setCopied("idle"); } catch (e) { setErr(e instanceof Error ? e.message : "Error"); } }} /><PasswordForm /><ConfigurationPanel refresh={refresh} /></>}
+        {tab === "settings" && readOnly && <><AppearancePanel /><PasswordForm /></>}
+        {tab === "settings" && !readOnly && <><AppearancePanel /><NotificationsPanel /><ServerSettings /><Panel title="Storage monitoring" note="Choose which mounted paths appear in capacity cards."><div className="panel-body"><Btn onClick={() => setStorageManager(true)}><HardDrive size={16}/>Manage storage paths</Btn></div></Panel><DevicePanel devices={state.devices} revoke={(id) => action(id, "device/revoke", { id })} createCode={async () => { try { setEnrollment(await api("enrollment/create", { minutes: "15" })); setCopied("idle"); } catch (e) { setErr(e instanceof Error ? e.message : "Error"); } }} /><UsersPanel current={state.user?.name || ""} /><PasswordForm /><ConfigurationPanel refresh={refresh} /></>}
       </main>
       {logs && (
         <LiveLogViewer logs={logs} close={() => setLogs(null)} />
@@ -617,7 +624,7 @@ export default function Home() {
         <ScheduleForm
           initial={scheduleEditor}
           scripts={state.scripts}
-          rootAccess={state.root.available}
+          rootAccess={state.root.available && state.rootScript.available}
           close={() => setScheduleEditor(undefined)}
           done={async () => {
             setScheduleEditor(undefined);

@@ -1,11 +1,12 @@
 "use client";
 import { useEffect, useState } from "react";
 import { api } from "@/lib/client-api";
-import { appConfirm, Btn, Panel, Modal } from "@/components/ui";
+import { appConfirm, Btn, Panel, Modal, PreflightList } from "@/components/ui";
 import { THEMES, applyTheme, savedTheme, type ThemeId } from "@/lib/theme";
-import type { St } from "@/lib/types";
+import type { PreflightCheck, St } from "@/lib/types";
 import {
   KeyRound,
+  UserPlus,
   Trash2,
   Bell,
   Plus,
@@ -105,25 +106,30 @@ export function AppearancePanel() {
   </Panel>;
 }
 export function ServerSettings() {
-  const [settings, setSettings] = useState<{ sshTarget: string; scriptRoot: string; allowedPaths: string[]; remoteLogs: string; metricsRetentionDays: number } | null>(null);
+  const [checks, setChecks] = useState<PreflightCheck[] | null>(null); const [checking, setChecking] = useState(false);
+  const [settings, setSettings] = useState<{ sshTarget: string; sshPort: number; scriptRoot: string; allowedPaths: string[]; remoteLogs: string; metricsRetentionDays: number } | null>(null);
   const [message, setMessage] = useState(""); const [error, setError] = useState("");
   useEffect(() => { void api("settings/server").then(setSettings).catch((reason) => setError(reason instanceof Error ? reason.message : "Could not load server settings")); }, []);
   return <Panel title="Server connection" note="The SSH key and known_hosts stay in Docker mounts; this page stores only the connection and permitted paths.">
     {!settings ? <div className="panel-body"><p>{error || "Loading server settings…"}</p></div> : <form className="account-form" onSubmit={async (event) => { event.preventDefault(); setMessage(""); setError(""); try { const result = await api("settings/server", Object.fromEntries(new FormData(event.currentTarget))); setSettings(result.settings); setMessage(`Connection verified: ${result.connection.host}.`); } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not save settings"); } }}>
       <label>SSH target <input name="sshTarget" defaultValue={settings.sshTarget} placeholder="user@server" spellCheck={false} /><small>Leave empty only when the dashboard runs on the server itself.</small></label>
+      <label>SSH port <input name="sshPort" type="number" min={1} max={65535} required defaultValue={settings.sshPort} /></label>
       <label>Script root <input name="scriptRoot" required defaultValue={settings.scriptRoot} spellCheck={false} /></label>
       <label>Allowed paths <input name="allowedPaths" required defaultValue={settings.allowedPaths.join(", ")} spellCheck={false} /><small>Comma-separated absolute paths. File and script access is limited to these locations.</small></label>
       <label>Remote logs folder <input name="remoteLogs" required defaultValue={settings.remoteLogs} spellCheck={false} /></label>
       <label>Metric retention (days) <input name="metricsRetentionDays" type="number" min="1" max="365" required defaultValue={settings.metricsRetentionDays} /><small>A health sample is recorded every 5 minutes, even while no browser is open. Older samples are removed.</small></label>
-      {message && <div className="success">{message}</div>}{error && <div className="alert">{error}</div>}<Btn className="primary">Save and test connection</Btn>
+      {message && <div className="success">{message}</div>}{error && <div className="alert">{error}</div>}
+      <div className="actions"><Btn className="primary">Save and test connection</Btn>
+        <Btn type="button" disabled={checking} onClick={async () => { setError(""); setChecking(true); try { setChecks((await api("preflight", undefined, true)).checks); } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not check the server"); } finally { setChecking(false); } }}>{checking ? "Checking…" : "Check server requirements"}</Btn></div>
     </form>}
+    {checks && <div className="panel-body"><PreflightList checks={checks} /></div>}
   </Panel>;
 }
 export function ConfigurationPanel({ refresh }: { refresh: () => Promise<void> }) {
   const [message, setMessage] = useState(""); const [error, setError] = useState("");
   return <Panel title="Dashboard settings backup" note="Exports dashboard scripts, schedules, folders, alerts, and authorized devices. It does not contain server files, Docker data, passwords, SSH keys, or sessions.">
     <div className="panel-body">
-      <div className="actions configuration-actions"><Btn onClick={async () => { const data = await api("config/export"); const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }); const link = document.createElement("a"); link.href = URL.createObjectURL(blob); link.download = "media-dashboard-settings.json"; link.click(); URL.revokeObjectURL(link.href); setMessage("Settings export downloaded."); }}>Export dashboard settings</Btn>
+      <div className="actions configuration-actions"><Btn onClick={async () => { const data = await api("config/export"); const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }); const link = document.createElement("a"); link.href = URL.createObjectURL(blob); link.download = "linux-server-control-settings.json"; link.click(); URL.revokeObjectURL(link.href); setMessage("Settings export downloaded."); }}>Export dashboard settings</Btn>
         <label className="button">Restore dashboard settings<input type="file" accept="application/json" hidden onChange={async (event) => { const file = event.target.files?.[0]; if (!file || !await appConfirm("Restore dashboard settings and overwrite scripts, folders, schedules, devices and alerts?", "Restore dashboard settings", "Restore", true)) return; try { await api("config/restore", { payload: await file.text() }); await refresh(); setMessage("Dashboard settings restored."); } catch (reason) { setError(reason instanceof Error ? reason.message : "Restore failed"); } }} /></label></div>
       {message && <div className="success panel-feedback">{message}</div>}{error && <div className="alert panel-feedback">{error}</div>}
     </div>
@@ -206,6 +212,55 @@ function ChannelForm({ channel, data, close, saved }: { channel: Channel | null;
       <label><input name="enabled" type="checkbox" value="true" defaultChecked={channel?.enabled !== false} /> Enabled</label>
       {error && <div className="alert">{error}</div>}
       <Btn className="primary">{channel ? "Save channel" : "Add channel"}</Btn>
+    </form>
+  </Modal>;
+}
+
+type Account = { username: string; role: "admin" | "viewer"; owner: boolean; created?: string };
+const ROLE_LABELS = { admin: "Administrator", viewer: "Read-only" };
+// Accounts besides the owner: administrators, and read-only accounts that can
+// see status, history and logs but change nothing.
+export function UsersPanel({ current }: { current: string }) {
+  const [users, setUsers] = useState<Account[] | null>(null);
+  const [editing, setEditing] = useState<Account | null | undefined>();
+  const [error, setError] = useState("");
+  const load = () => api("users", undefined, true).then((data) => setUsers(data.users)).catch((reason) => setError(reason instanceof Error ? reason.message : "Could not load accounts"));
+  useEffect(() => { void load(); }, []);
+  return <Panel title="Accounts" note="Administrators can change everything. Read-only accounts see status, history and logs, and cannot change anything." extra={<Btn className="primary" onClick={() => setEditing(null)} disabled={!users}><UserPlus size={16} />Add account</Btn>}>
+    {error && <div className="panel-body"><div className="alert">{error}</div></div>}
+    {users?.map((user) => (
+      <div className="device-row" key={user.username}>
+        <div className="grow">
+          <b>{user.username}{user.username === current ? " (you)" : ""}</b>
+          <small>{user.owner ? "Owner, created at setup" : user.created ? `Created ${formatCreated(user.created)}` : ""}</small>
+        </div>
+        <span className={`badge ${user.role === "admin" ? "up" : "root"}`}>{ROLE_LABELS[user.role]}</span>
+        {!user.owner && <div className="actions">
+          <Btn onClick={() => setEditing(user)}>Edit</Btn>
+          <Btn className="danger" disabled={user.username === current} onClick={async () => {
+            if (!await appConfirm(`Delete the account ${user.username}? It is signed out everywhere.`, "Delete account", "Delete", true)) return;
+            try { await api("users/delete", { username: user.username }); await load(); } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not delete the account"); }
+          }}><Trash2 size={15} />Delete</Btn>
+        </div>}
+      </div>
+    ))}
+    {editing !== undefined && <AccountForm account={editing} self={editing?.username === current} close={() => setEditing(undefined)} saved={async () => { setEditing(undefined); await load(); }} />}
+  </Panel>;
+}
+function AccountForm({ account, self, close, saved }: { account: Account | null; self: boolean; close: () => void; saved: () => void }) {
+  const [error, setError] = useState("");
+  return <Modal title={account ? `Edit ${account.username}` : "Add account"} close={close}>
+    <form onSubmit={async (event) => {
+      event.preventDefault(); setError("");
+      const values = Object.fromEntries(new FormData(event.currentTarget)) as Record<string, string>;
+      try { await api("users/save", { ...values, username: account?.username ?? values.username, role: self ? account!.role : values.role }); saved(); }
+      catch (reason) { setError(reason instanceof Error ? reason.message : "Could not save the account"); }
+    }}>
+      {!account && <label>Username<input name="username" required maxLength={40} pattern="[a-zA-Z0-9_.\-]+" autoComplete="off" spellCheck={false} /></label>}
+      <label>Role<select name="role" defaultValue={account?.role ?? "viewer"} disabled={self}><option value="viewer">Read-only</option><option value="admin">Administrator</option></select>{self && <small>You cannot change your own role.</small>}</label>
+      <label>Password<input name="password" type="password" minLength={12} required={!account} autoComplete="new-password" placeholder={account ? "Leave blank to keep the current password" : ""} /><small>At least 12 characters. A new browser also needs an access code the first time it signs in.</small></label>
+      {error && <div className="alert">{error}</div>}
+      <Btn className="primary">{account ? "Save account" : "Add account"}</Btn>
     </form>
   </Modal>;
 }

@@ -14,6 +14,11 @@ export const demoState = {
   devices: {
     demo: { name: "Personal laptop", created: "08.09.2026, 14:00" },
   },
+  runs: [],
+  alerts: [],
+  cronRuns: [],
+  monitoredPaths: ["/mnt/storage"],
+  metrics: { latest: null, count: 0, intervalMinutes: 5 },
   root: { available: false, cron: "", system: "" },
   rootScript: { available: false },
   stats: {

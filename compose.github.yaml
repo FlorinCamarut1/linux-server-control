@@ -26,3 +26,26 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+
+  # Optional HTTPS: `docker compose --profile https up -d` serves the dashboard
+  # on https://HTTPS_HOST:8444 with a certificate from Caddy's own local CA.
+  # Set COOKIE_SECURE=true in .env when you use it.
+  https:
+    image: caddy:2
+    profiles: [https]
+    restart: unless-stopped
+    command: caddy reverse-proxy --from https://${HTTPS_HOST:-${LAN_IP}}:8444 --to dashboard:3000 --internal-certs
+    ports:
+      - "${LAN_IP}:8444:8444"
+    volumes:
+      - caddy_data:/data
+    depends_on:
+      - dashboard
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  caddy_data:

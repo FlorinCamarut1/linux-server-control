@@ -109,7 +109,7 @@ export function ScheduleForm({
             </option>
           </select>
           {!rootAccess && (
-            <small>Enable root cron access on the server to use this option.</small>
+            <small>Install both root helpers on the server to use this option.</small>
           )}
         </label>
         <label>

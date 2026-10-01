@@ -21,12 +21,14 @@ export function ContainerRow({
   busy,
   act,
   logs,
+  readOnly = false,
 }: {
   c: C;
   links: ContainerLink[];
   busy: string;
   act: (k: string, p: string, b: unknown) => void;
   logs: (t: string, p: string, b: unknown) => void;
+  readOnly?: boolean;
 }) {
   const up = c.State === "running",
     key = (a: string) => `${c.ID}-${a}`;
@@ -99,7 +101,7 @@ export function ContainerRow({
             <Terminal size={15} />
             Logs
           </Btn>
-          {up ? (
+          {readOnly ? null : up ? (
             <>
               <Btn
                 disabled={!!busy}
