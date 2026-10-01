@@ -29,6 +29,8 @@ docker compose logs dashboard | grep "setup token"
 
 Open `http://<server-ip>:8443`, enter the token, choose a username and a password of at least 12 characters, and confirm the server connection. That browser is authorized automatically.
 
+If the server lacks a tool that a page needs, such as `python3` for Files or `cron` for Schedules, setup lists it before opening the dashboard. Nothing is blocked; install it when convenient.
+
 Every other browser or phone needs a one-time **access code** the first time it signs in. Create one on an authorized browser under **Settings → Authorized browsers → Generate access code**, then, on the new browser, open **New browser? Enter an enrollment code** on the sign-in page.
 
 ![Sign-in page with the enrollment code section open](screenshots/login.jpg)
@@ -65,19 +67,21 @@ Shell scripts you approve can be run from the dashboard and followed live.
 
 - **Add script** registers an existing `.sh` file from the allowed folders; **New custom script** writes a new one.
 - Group scripts in folders, and give a script **run options** (preset arguments) to choose from when you run it.
-- **Run** starts the script and opens its live log. Scripts can run as the SSH user or, with the optional root helper, as root.
+- **Run** starts the script and opens its live log. Scripts can run as the SSH user or, with the [optional root helpers](../INSTALL.md#optional-run-scripts-and-schedules-as-root), as root. A run log keeps the first 10 MB of output.
 
 ![Scripts grouped in folders](screenshots/scripts.jpg)
 
 ## Files
 
-Browse, search, sort, edit, copy, move, rename and delete files inside the allowed folders only. Text files up to 512 KB open in the built-in editor. Folder sizes are calculated after the listing appears.
+Browse, search, sort, edit, copy, move, rename and delete files inside the allowed folders only. Text files up to 512 KB open in the built-in editor. Folder sizes are calculated after the listing appears; sorting by size measures the folders first, so it takes longer in large folders.
 
 ![File explorer](screenshots/files.jpg)
 
 ## Schedules
 
 Run scripts, or single commands, on a schedule with cron. The form builds the cron expression for you. Each schedule can be paused, edited or deleted, and its runs appear under **History → Cron runs**.
+
+A schedule can run as root once both root helpers are installed. Root schedules run only registered scripts from the folders approved for root, never a custom command.
 
 ![Schedules](screenshots/schedules.jpg)
 
@@ -114,9 +118,10 @@ Rules that fire when a value reaches a threshold: CPU temperature, CPU, RAM or d
 
 - **Appearance**: choose a theme (Dark, Light, Nord, Dracula, Solarized, or System to follow the device). Each browser keeps its own choice.
 - **Notifications**: send alerts, failed runs and power device changes to Discord, Slack (also Mattermost and Rocket.Chat), ntfy, or any webhook that accepts JSON. Choose the events per channel and use **Test** to check it.
-- **Server connection**: the SSH target, the allowed folders and how long metrics are kept.
+- **Server connection**: the SSH target and port, the allowed folders and how long metrics are kept. **Check server requirements** tests what the server provides and names anything missing.
 - **Storage monitoring**: the mounted folders shown as storage cards.
 - **Authorized browsers**: see and revoke devices, and create access codes for new ones.
+- **Accounts**: add accounts for other people. An **Administrator** can change everything. A **Read-only** account sees the pages, history and logs, but has no Files page and cannot run, edit or delete anything.
 - **Change password**, and **Dashboard settings backup** to export or restore scripts, schedules, folders, alerts and devices.
 
 ![Settings with themes and notification channels](screenshots/settings.jpg)
@@ -132,6 +137,8 @@ The dashboard adapts to small screens: the menu becomes a row you can scroll, an
 <img src="screenshots/mobile.png" alt="Overview on a phone" width="360">
 
 ## Troubleshooting
+
+**"Containers cannot be read".** The server answered but Docker did not. The message says whether Docker is missing, stopped, or not allowed for the SSH user; the rest of the dashboard keeps working.
 
 **"Server unavailable" after signing in.** The dashboard cannot reach the server over SSH. Check that the server is on, and the SSH target, key and `known_hosts` file under **Settings → Server connection** and in the `ssh/` folder.
 
