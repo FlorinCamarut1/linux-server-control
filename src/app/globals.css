@@ -888,6 +888,8 @@ header p,
   display: block;
   overflow: visible;
   outline: none;
+  /* A finger moving sideways reads the chart; moving up or down scrolls the page. */
+  touch-action: pan-y;
 }
 .chart-plot svg:focus-visible {
   box-shadow: 0 0 0 2px var(--accent-line);

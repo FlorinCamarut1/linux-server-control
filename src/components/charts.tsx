@@ -9,6 +9,11 @@ export type LineSeries = { id: string; label: string; values: (number | null)[] 
 export type BarSeries = { id: string; label: string; values: number[] };
 
 const PLOT_HEIGHT = 200;
+// How far sideways from the pointer a point may be and still be selected.
+const SNAP_PIXELS = 8;
+// Sideways distance counts more than height, so the crosshair stays under the
+// pointer on an even line and only moves aside for a point that is much nearer.
+const SIDEWAYS_WEIGHT = 3;
 const MARGIN = { top: 12, right: 16, bottom: 28, left: 48 };
 const seriesColor = (index: number) => `var(--series-${(index % 8) + 1})`;
 
@@ -31,6 +36,15 @@ function useWidth() {
     observer.current.observe(element);
   }, []);
   return { ref, width };
+}
+
+// The tooltip sits beside the crosshair, on the side with room for it, so it
+// never covers the point it describes.
+const TOOLTIP_ROOM = 190;
+function tooltipPlace(at: number, width: number): React.CSSProperties {
+  return at + 12 + TOOLTIP_ROOM <= width
+    ? { left: at + 12, top: MARGIN.top }
+    : { left: at - 12, top: MARGIN.top, transform: "translateX(-100%)" };
 }
 
 // Clean axis ticks: 0 and three or four round steps up to at least `max`.
@@ -160,12 +174,26 @@ export const LineChart = memo(function LineChart({ times, series, unit, yMax, di
       if (endLabels.every((label) => Math.abs(label.y - labelY) > 14)) endLabels.push({ y: labelY, text: format(item.values[index]) });
     }
   }
-  const pick = (clientX: number, element: SVGSVGElement) => {
+  // The pointer selects the drawn point nearest to it among those within a few
+  // pixels sideways, not simply the nearest time: where points are closer
+  // together than pixels, a narrow peak could otherwise not be reached, and the
+  // marker stayed on the low points beside it.
+  const pick = (clientX: number, clientY: number, element: SVGSVGElement) => {
     const box = element.getBoundingClientRect();
-    const at = start + ((clientX - box.left - MARGIN.left) / plotWidth) * span;
-    let best = 0;
-    times.forEach((time, index) => { if (Math.abs(time - at) < Math.abs(times[best] - at)) best = index; });
-    setHover(best);
+    const pointerX = clientX - box.left, pointerY = clientY - box.top;
+    let nearest = 0, nearestAcross = Infinity, best = -1, bestDistance = Infinity;
+    for (let index = 0; index < times.length; index++) {
+      const across = Math.abs(x(times[index]) - pointerX);
+      if (across < nearestAcross) { nearestAcross = across; nearest = index; }
+      if (across > SNAP_PIXELS) continue;
+      for (const item of series) {
+        const value = item.values[index];
+        if (value === null || value === undefined) continue;
+        const distance = (across * SIDEWAYS_WEIGHT) ** 2 + (y(value) - pointerY) ** 2;
+        if (distance < bestDistance) { bestDistance = distance; best = index; }
+      }
+    }
+    setHover(best >= 0 ? best : nearest);
   };
   const hoverX = hover === null ? 0 : x(times[hover]);
 
@@ -179,7 +207,8 @@ export const LineChart = memo(function LineChart({ times, series, unit, yMax, di
           role="img"
           aria-label={`${series.map((item) => item.label).join(", ")} over time`}
           tabIndex={0}
-          onPointerMove={(event) => pick(event.clientX, event.currentTarget)}
+          onPointerMove={(event) => pick(event.clientX, event.clientY, event.currentTarget)}
+          onPointerDown={(event) => pick(event.clientX, event.clientY, event.currentTarget)}
           onPointerLeave={() => setHover(null)}
           onBlur={() => setHover(null)}
           onKeyDown={(event) => {
@@ -216,7 +245,7 @@ export const LineChart = memo(function LineChart({ times, series, unit, yMax, di
           <span key={label.text + label.y} className="chart-end-label" style={{ top: label.y }}>{label.text}</span>
         ))}
         {hover !== null && (
-          <div className="chart-tooltip" style={{ left: Math.min(hoverX + 12, width - 180), top: MARGIN.top }}>
+          <div className="chart-tooltip" style={tooltipPlace(hoverX, width)}>
             <small>{dateTime.format(times[hover])}</small>
             {series.map((item, index) => (
               <div key={item.id}><i style={{ background: seriesColor(index) }} /><b>{format(item.values[hover])}</b><span>{item.label}</span></div>
@@ -299,7 +328,7 @@ export const ColumnChart = memo(function ColumnChart({ labels, series, unit, dig
           })}
         </svg>
         {hover !== null && (
-          <div className="chart-tooltip" style={{ left: Math.min(hoverLeft + 12, width - 180), top: MARGIN.top }}>
+          <div className="chart-tooltip" style={tooltipPlace(hoverLeft, width)}>
             <small>{labels[hover]}</small>
             {series.length > 1 && <div><i /><b>{format(totals[hover])}</b><span>Total</span></div>}
             {series.map((item, index) => (
