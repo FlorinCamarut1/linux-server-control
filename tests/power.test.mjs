@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { createServer } from "node:http";
+import path from "node:path";
 import test from "node:test";
 import { loadPower, loadServer, plain } from "./harness.mjs";
 
@@ -21,7 +23,8 @@ async function device(handler) {
 const json = (res, body, status = 200) => { res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(body)); };
 
 // The plug's side of the KLAP protocol, for the client to talk to.
-function fakeTapo({ username, password, milliwatts, on }) {
+function fakeTapo(plug) {
+  const { username, password } = plug;
   const auth = sha256(sha1(username), sha1(password));
   let local, remote, session;
   return (req, res, body) => {
@@ -46,8 +49,9 @@ function fakeTapo({ username, password, milliwatts, on }) {
       const encrypted = body.subarray(32);
       assert.ok(body.subarray(0, 32).equals(sha256(session.sig, counter, encrypted)), "request signature");
       const decipher = createDecipheriv("aes-128-cbc", session.key, iv);
-      const { method } = JSON.parse(Buffer.concat([decipher.update(encrypted), decipher.final()]).toString());
-      const result = method === "get_energy_usage" ? { current_power: milliwatts, today_energy: 10 } : { device_on: on };
+      const { method, params } = JSON.parse(Buffer.concat([decipher.update(encrypted), decipher.final()]).toString());
+      if (method === "set_device_info") plug.on = params.device_on;
+      const result = method === "get_energy_usage" ? { current_power: plug.on ? plug.milliwatts : 0, today_energy: 10 } : { device_on: plug.on };
       const cipher = createCipheriv("aes-128-cbc", session.key, iv);
       const reply = Buffer.concat([cipher.update(JSON.stringify({ error_code: 0, result })), cipher.final()]);
       res.writeHead(200); return res.end(Buffer.concat([Buffer.alloc(32), reply]));
@@ -95,6 +99,61 @@ test("Tasmota and Home Assistant readings", async () => {
   const reading = await driver(power, "homeassistant").read({ url: `http://${ha}`, token: "token-1", entity: "sensor.plug_power", switch: "switch.plug" });
   assert.deepEqual({ ...reading }, { powerW: 1250, on: true });
   await assert.rejects(driver(power, "homeassistant").read({ url: `http://${ha}`, token: "bad", entity: "sensor.plug_power" }), /401/);
+});
+
+test("devices with a relay are switched and read again", async () => {
+  const { server, data } = loadServer();
+  const power = loadPower(server);
+  const plug = { username: "me@example.com", password: "secret", milliwatts: 40000, on: true };
+  const tapoHost = await device(fakeTapo(plug));
+  const gen2 = { output: true, calls: [] };
+  const shellyHost = await device((req, res) => {
+    gen2.calls.push(req.url);
+    if (req.url === "/rpc/Switch.Set?id=1&on=false") { gen2.output = false; return json(res, { was_on: true }); }
+    if (req.url.startsWith("/rpc/Switch.GetStatus")) return json(res, { apower: gen2.output ? 9 : 0, output: gen2.output });
+    json(res, {}, 404);
+  });
+  const gen1Calls = [];
+  const gen1Host = await device((req, res) => {
+    gen1Calls.push(`${req.url} ${req.headers.authorization ?? ""}`);
+    if (req.url.startsWith("/rpc/")) return json(res, {}, 404);
+    json(res, req.url.startsWith("/relay/") ? { ison: true } : { meters: [{ power: 3 }], relays: [{ ison: true }] });
+  });
+  const haCalls = [];
+  const haHost = await device((req, res, body) => {
+    if (req.headers.authorization !== "Bearer token-1") return json(res, {}, 401);
+    if (req.method === "POST") { haCalls.push(`${req.url} ${req.headers["content-type"]} ${body}`); return json(res, []); }
+    json(res, req.url.endsWith("sensor.plug_power") ? { state: "12", attributes: {} } : { state: "off" });
+  });
+  const tapo = await power.savePowerDevice({ name: "Rack", driver: "tapo", host: tapoHost, username: plug.username, password: plug.password });
+  assert.equal(tapo.on, true);
+  await power.savePowerDevice({ name: "Shelly", driver: "shelly", host: shellyHost, channel: "1" });
+  await power.savePowerDevice({ name: "Old Shelly", driver: "shelly", host: gen1Host, username: "admin", password: "pw" });
+  await power.savePowerDevice({ name: "Meter", driver: "homeassistant", url: `http://${haHost}`, token: "token-1", entity: "sensor.plug_power" });
+  await power.savePowerDevice({ name: "HA plug", driver: "homeassistant", url: `http://${haHost}`, token: "token-1", entity: "sensor.plug_power", switch: "switch.plug" });
+  await power.savePowerDevice({ name: "Tasmota", driver: "tasmota", host: await device((req, res) => json(res, { StatusSNS: { ENERGY: { Power: 1 } } })) });
+  const shown = Object.fromEntries(power.publicDevices().map((item) => [item.name, item]));
+  assert.deepEqual(Object.fromEntries(Object.entries(shown).map(([name, item]) => [name, item.canSwitch])),
+    { Rack: true, Shelly: true, "Old Shelly": true, Meter: false, "HA plug": true, Tasmota: false });
+
+  await power.switchPowerDevice(shown.Rack.id, false);
+  assert.equal(plug.on, false);
+  const rack = power.publicDevices().find((item) => item.name === "Rack");
+  assert.deepEqual([rack.status.on, rack.status.powerW], [false, 0], "the device is read again after switching");
+  await power.switchPowerDevice(shown.Rack.id, true);
+  assert.equal(plug.on, true);
+
+  await power.switchPowerDevice(shown.Shelly.id, false);
+  assert.equal(gen2.output, false);
+  await power.switchPowerDevice(shown["Old Shelly"].id, true);
+  assert.ok(gen1Calls.includes(`/relay/0?turn=on Basic ${Buffer.from("admin:pw").toString("base64")}`));
+  await power.switchPowerDevice(shown["HA plug"].id, false);
+  assert.deepEqual(haCalls, ['/api/services/homeassistant/turn_off application/json {"entity_id":"switch.plug"}']);
+
+  await assert.rejects(power.switchPowerDevice(shown.Meter.id, false), /cannot be switched/);
+  await assert.rejects(power.switchPowerDevice(shown.Tasmota.id, false), /cannot be switched/);
+  await assert.rejects(power.switchPowerDevice("missing", false), /not found/);
+  assert.match(readFileSync(path.join(data, "audit.log"), "utf8"), /power device Rack switched off\n/);
 });
 
 test("energy is integrated between readings, but not across long gaps", () => {

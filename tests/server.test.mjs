@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
-import { readFileSync, statSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { loadServer, plain } from "./harness.mjs";
+import { loadServer, plain, realHost } from "./harness.mjs";
 
 const SCRIPT = { id: "backup", name: "Backup", path: "/srv/scripts/backup.sh", cron: "", folder: "", runAs: "user", runOptions: [] };
 
@@ -43,12 +45,92 @@ test("cronLine escapes every % and rejects unsafe identifiers", () => {
   const { server } = loadServer();
   const schedule = { id: "nightly", scriptId: "", expression: "0 3 * * *", label: "", enabled: true, command: "" };
   const line = server.cronLine(schedule, "date +%F", "/logs/schedules.log");
-  assert.ok(line.startsWith("0 3 * * * ( printf"));
+  assert.ok(line.startsWith("0 3 * * * ( mkdir -p '/logs' 2>/dev/null; true 2>/dev/null >> '/logs/schedules.log' && exec >> '/logs/schedules.log' 2>&1; printf"));
   assert.ok(line.endsWith("# media-dashboard:nightly"));
   assert.ok(!/(^|[^\\])%/.test(line), "no unescaped percent sign may remain");
   assert.ok(line.includes("date +\\%F"));
   assert.throws(() => server.cronLine({ ...schedule, id: "x' ; id ; '" }, "true", "/l"), /identifier/);
   assert.throws(() => server.cronLine(schedule, "true\n* * * * * id", "/l"), /one line/);
+});
+
+// Runs a crontab line's command the way cron does: with sh, "\%" being "%".
+function runCronLine(line, expression) {
+  const command = line.slice(expression.length + 1).replaceAll("\\%", "%");
+  return spawnSync("sh", ["-c", command], { encoding: "utf8" });
+}
+
+test("a scheduled job runs and is logged even when the log folder is missing", () => {
+  const { server } = loadServer();
+  const folder = path.join(mkdtempSync(path.join(tmpdir(), "lsc-cron-")), "logs");
+  const log = path.join(folder, "schedules.log");
+  const proof = path.join(path.dirname(folder), "ran");
+  const schedule = { id: "nightly", scriptId: "", expression: "0 3 * * *", label: "", enabled: true };
+  const result = runCronLine(server.cronLine(schedule, `echo 100% > '${proof}'; echo output; sh -c "exit 3"`, log), schedule.expression);
+  assert.equal(result.status, 3, "the job's exit code is kept");
+  assert.equal(readFileSync(proof, "utf8"), "100%\n");
+  const lines = readFileSync(log, "utf8").trim().split("\n");
+  assert.match(lines[0], /^MEDIA_DASHBOARD_START nightly \d{4}-/);
+  assert.equal(lines[1], "output");
+  assert.match(lines[2], /^MEDIA_DASHBOARD_END nightly \S+ 3$/);
+  assert.equal(result.stdout, "", "the output goes to the log");
+});
+
+test("a root schedule does not create the log folder, but still runs without it", () => {
+  const { server } = loadServer();
+  const folder = path.join(mkdtempSync(path.join(tmpdir(), "lsc-cron-")), "logs");
+  const schedule = { id: "as-root", scriptId: "", expression: "0 4 * * *", label: "", enabled: true };
+  const line = server.cronLine(schedule, "echo ran", path.join(folder, "schedules-root.log"), false);
+  const result = runCronLine(line, schedule.expression);
+  assert.equal(result.status, 0);
+  assert.ok(!existsSync(folder), "a folder owned by root would lock the SSH user out");
+  assert.match(result.stdout, /MEDIA_DASHBOARD_START as-root .*\nran\nMEDIA_DASHBOARD_END as-root \S+ 0\n/s, "without a log the output goes to cron");
+  assert.equal(result.stderr, "");
+});
+
+test("root and user schedules log to separate files, read together in order", async () => {
+  const logs = path.join(mkdtempSync(path.join(tmpdir(), "lsc-cron-")), "logs");
+  const { server } = loadServer({ host: realHost, env: { REMOTE_LOGS: logs } });
+  assert.equal(server.scheduleLog("user"), path.join(logs, "schedules.log"));
+  assert.equal(server.scheduleLog("root"), path.join(logs, "schedules-root.log"));
+  assert.equal(await server.readScheduleLog(), null, "no log yet");
+  assert.ok(existsSync(logs), "reading the logs creates their folder for root's schedules");
+  writeFileSync(server.scheduleLog("user"), "MEDIA_DASHBOARD_START u 2026-09-27T03:00:00+03:00\nMEDIA_DASHBOARD_END u 2026-09-27T03:00:09+03:00 0\nMEDIA_DASHBOARD_START u 2026-09-28T03:00:00+03:00\n");
+  writeFileSync(server.scheduleLog("root"), "MEDIA_DASHBOARD_START r 2026-09-27T03:00:01+03:00\nMEDIA_DASHBOARD_END r 2026-09-27T03:00:05+03:00 1\n");
+  const runs = await server.collectCronRuns();
+  assert.deepEqual(plain(runs.map((item) => `${item.scheduleId} ${item.status}`)), ["u running", "u success", "r failed"], "newest first across both logs");
+});
+
+test("root schedules are installed with root's log and without creating the folder", async () => {
+  const cron = cronHost({ userCrontab: "" });
+  const { server } = loadServer({ host: cron.host });
+  server.save("scripts", [SCRIPT]);
+  server.save("schedules", [
+    { id: "as-root", scriptId: "backup", expression: "0 4 * * *", label: "", enabled: true, runAs: "root" },
+    { id: "as-user", scriptId: "backup", expression: "0 5 * * *", label: "", enabled: true, runAs: "user" },
+  ]);
+  await server.syncCron();
+  assert.ok(cron.crontabs.root.includes(">> '/tmp/media-dashboard/schedules-root.log'"));
+  assert.ok(!cron.crontabs.root.includes("mkdir"));
+  assert.ok(!cron.crontabs.root.includes("schedules.log"));
+  assert.ok(cron.crontabs.user.includes("mkdir -p '/tmp/media-dashboard'"));
+  assert.ok(cron.crontabs.user.includes(">> '/tmp/media-dashboard/schedules.log'"));
+});
+
+test("a large schedule log keeps its end, also when it cannot be written in place", async () => {
+  const logs = mkdtempSync(path.join(tmpdir(), "lsc-cron-"));
+  const { server } = loadServer({ host: realHost, env: { REMOTE_LOGS: logs } });
+  const content = "old\n".repeat(1024 * 1024 * 1.5) + "MEDIA_DASHBOARD_END last 2026-09-27T03:00:05+03:00 0\n";
+  writeFileSync(server.scheduleLog("user"), content);
+  writeFileSync(server.scheduleLog("root"), content);
+  // Like a log that root created: the SSH user may read it but not write it.
+  chmodSync(server.scheduleLog("root"), 0o444);
+  await server.trimScheduleLog();
+  for (const user of ["user", "root"]) {
+    const file = server.scheduleLog(user);
+    assert.equal(statSync(file).size, 1024 * 1024, user);
+    assert.ok(readFileSync(file, "utf8").endsWith(" 0\n"), user);
+    assert.ok(!existsSync(file + ".trim"), user);
+  }
 });
 
 test("normalizeSchedule keeps root schedules restricted to approved scripts", () => {

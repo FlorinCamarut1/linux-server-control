@@ -100,7 +100,7 @@ To add a device, choose **Add device** and its type:
 | Tasmota | The IP address, and the web password if one is set. |
 | Home Assistant | The Home Assistant URL, a long-lived access token and the power sensor's entity ID. |
 
-The device is read once before it is saved, so a wrong address or password is reported straight away. Give plugs a fixed IP address in your router so they keep working.
+The device is read once before it is saved, so a wrong address or password is reported straight away. Tapo and Shelly plugs, and Home Assistant devices with a switch entity, can also be turned on and off from their row; turning one off asks first, because everything plugged into it loses power. Give plugs a fixed IP address in your router so they keep working.
 
 ## History
 

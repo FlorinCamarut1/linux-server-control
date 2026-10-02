@@ -1,10 +1,10 @@
 "use client";
 import { ChartFrame, LineChart, RangeFilter, type Range } from "@/components/charts";
 import { PowerPage } from "@/components/power";
-import { useEffect, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import { api } from "@/lib/client-api";
 import { Btn, Panel, Metric, formatBytes, formatPercent, Modal } from "@/components/ui";
-import type { St } from "@/lib/types";
+import type { Run, St } from "@/lib/types";
 import {
   Circle,
   Clock3,
@@ -13,7 +13,7 @@ import {
   HardDrive,
 } from "lucide-react";
 export function Overview({ state, active, stopped, openLogs }: { state: St; active: number; stopped: number; openLogs: (title: string, path: string, body: unknown) => void }) {
-  const failed = state.runs.find((run) => run.status === "failed");
+  const failed = state.recentRuns.find((run) => run.status === "failed");
   const latestScheduleFailure = state.cronRuns.find((run) => run.status === "failed");
   return <>
     <section className="metrics">
@@ -33,14 +33,16 @@ export function Overview({ state, active, stopped, openLogs }: { state: St; acti
   </>;
 }
 // Server health and, once devices exist, power, under one range selector.
-function OverviewCharts() {
+// Memoized: the charts load their own data, so the dashboard's refreshes do
+// not draw them again.
+const OverviewCharts = memo(function OverviewCharts() {
   const [range, setRange] = useState<Range>("24h");
   return <>
     <RangeFilter value={range} onChange={setRange} />
     <MetricCharts range={range} />
     <PowerPage range={range} compact />
   </>;
-}
+});
 // How each alert metric reads in the rule list.
 const ALERT_METRICS: Record<string, [string, string]> = {
   temperature: ["CPU temperature", " °C"],
@@ -54,7 +56,10 @@ export function describeAlert(metric: string, threshold: number) {
   const [label, unit] = ALERT_METRICS[metric] ?? [metric, ""];
   return `${label} ≥ ${threshold}${unit}`;
 }
-export function HistoryPanel({ runs, cronRuns, metrics, openLog }: { runs: St["runs"]; cronRuns: St["cronRuns"]; metrics: St["metrics"]; openLog: (run: St["runs"][number]) => void }) {
+// `runs` is undefined until the full run history has been loaded.
+export function HistoryPanel({ runs: loadedRuns, cronRuns, metrics, openLog }: { runs: Run[] | undefined; cronRuns: St["cronRuns"]; metrics: St["metrics"]; openLog: (run: Run) => void }) {
+  const runs = loadedRuns ?? [];
+  const loading = loadedRuns === undefined;
   const latest = metrics?.latest;
   const [kind, setKind] = useState<"scripts" | "cron">("scripts");
   const [search, setSearch] = useState("");
@@ -62,7 +67,7 @@ export function HistoryPanel({ runs, cronRuns, metrics, openLog }: { runs: St["r
   const [page, setPage] = useState(0);
   const rows = kind === "scripts" ? runs : cronRuns;
   const filtered = rows.filter((row) => {
-    const title = kind === "scripts" ? (row as St["runs"][number]).scriptName : (row as St["cronRuns"][number]).label;
+    const title = kind === "scripts" ? (row as Run).scriptName : (row as St["cronRuns"][number]).label;
     return title.toLowerCase().includes(search.toLowerCase()) && (status === "all" || row.status === status);
   });
   const perPage = 20, pages = Math.max(1, Math.ceil(filtered.length / perPage));
@@ -77,7 +82,7 @@ export function HistoryPanel({ runs, cronRuns, metrics, openLog }: { runs: St["r
     <Panel title="Execution history" note="Search, filter, and review manual script runs or scheduled cron jobs.">
       <div className="panel-toolbar history-toolbar">
         <div className="container-filters" aria-label="History type">
-          <button type="button" className={kind === "scripts" ? "active" : ""} onClick={() => switchKind("scripts")}>Script runs <span>{runs.length}</span></button>
+          <button type="button" className={kind === "scripts" ? "active" : ""} onClick={() => switchKind("scripts")}>Script runs <span>{loading ? "…" : runs.length}</span></button>
           <button type="button" className={kind === "cron" ? "active" : ""} onClick={() => switchKind("cron")}>Cron runs <span>{cronRuns.length}</span></button>
         </div>
         <div className="history-fields">
@@ -86,8 +91,10 @@ export function HistoryPanel({ runs, cronRuns, metrics, openLog }: { runs: St["r
         </div>
         <small>{filtered.length} result{filtered.length === 1 ? "" : "s"}</small>
       </div>
-      {visible.map((row, index) => kind === "scripts" ? (() => { const run = row as St["runs"][number]; return <div className="schedule-row" key={run.id}><div className="grow"><b>{run.scriptName}</b><small>{new Date(run.startedAt).toLocaleString()} · {run.arguments || "no arguments"} · {run.durationMs === undefined ? "in progress" : `${(run.durationMs / 1000).toFixed(1)}s`}</small></div><span className={`badge ${run.status === "success" ? "up" : run.status === "failed" ? "down" : "root"}`}>{run.status}{run.status === "failed" && run.exitCode !== undefined ? ` · code ${run.exitCode}` : ""}</span><Btn onClick={() => openLog(run)}>Log</Btn></div>; })() : (() => { const run = row as St["cronRuns"][number]; return <div className="schedule-row" key={`${run.scheduleId}-${run.startedAt}-${index}`}><div className="grow"><b>{run.label}</b><small>Started {new Date(run.startedAt).toLocaleString()}{run.completedAt ? ` · completed ${new Date(run.completedAt).toLocaleString()}` : ""}</small></div><span className={`badge ${run.status === "success" ? "up" : run.status === "failed" ? "down" : "root"}`}>{run.status}{run.status === "failed" && run.exitCode !== undefined ? ` · code ${run.exitCode}` : ""}</span></div>; })())}
-      {!filtered.length && <div className="empty-state"><Clock3 size={22}/><b>{search || status !== "all" ? "No matching runs" : kind === "scripts" ? "No execution history yet" : "No cron runs recorded yet"}</b><p>{kind === "scripts" ? "Runs started from the dashboard will appear here." : "Save or change an existing schedule to enable tracking."}</p></div>}
+      {visible.map((row, index) => kind === "scripts" ? (() => { const run = row as Run; return <div className="schedule-row" key={run.id}><div className="grow"><b>{run.scriptName}</b><small>{new Date(run.startedAt).toLocaleString()} · {run.arguments || "no arguments"} · {run.durationMs === undefined ? "in progress" : `${(run.durationMs / 1000).toFixed(1)}s`}</small></div><span className={`badge ${run.status === "success" ? "up" : run.status === "failed" ? "down" : "root"}`}>{run.status}{run.status === "failed" && run.exitCode !== undefined ? ` · code ${run.exitCode}` : ""}</span><Btn onClick={() => openLog(run)}>Log</Btn></div>; })() : (() => { const run = row as St["cronRuns"][number]; return <div className="schedule-row" key={`${run.scheduleId}-${run.startedAt}-${index}`}><div className="grow"><b>{run.label}</b><small>Started {new Date(run.startedAt).toLocaleString()}{run.completedAt ? ` · completed ${new Date(run.completedAt).toLocaleString()}` : ""}</small></div><span className={`badge ${run.status === "success" ? "up" : run.status === "failed" ? "down" : "root"}`}>{run.status}{run.status === "failed" && run.exitCode !== undefined ? ` · code ${run.exitCode}` : ""}</span></div>; })())}
+      {!filtered.length && (loading && kind === "scripts"
+        ? <div className="empty-state"><Clock3 size={22}/><b>Loading execution history…</b></div>
+        : <div className="empty-state"><Clock3 size={22}/><b>{search || status !== "all" ? "No matching runs" : kind === "scripts" ? "No execution history yet" : "No cron runs recorded yet"}</b><p>{kind === "scripts" ? "Runs started from the dashboard will appear here." : "Save or change an existing schedule to enable tracking."}</p></div>)}
       {filtered.length > perPage && <div className="actions panel-pagination"><Btn disabled={page === 0} onClick={() => setPage((value) => value - 1)}>Previous</Btn><small>Page {page + 1} of {pages}</small><Btn disabled={page + 1 >= pages} onClick={() => setPage((value) => value + 1)}>Next</Btn></div>}
     </Panel>
   </>;
@@ -109,6 +116,10 @@ type History = { from: number; to: number; samples: { at: number; cpu: number | 
 // Server health over time from the samples recorded every 5 minutes.
 // With a range from the caller the charts follow it; otherwise they show
 // their own range selector.
+// How often open charts ask for new samples; the server records one every 5 minutes.
+const CHART_REFRESH_MS = 5 * 60 * 1000;
+const sampleTime = new Intl.DateTimeFormat([], { dateStyle: "short", timeStyle: "short" });
+const round = (value: number | null) => (value === null ? "—" : value.toFixed(1));
 export function MetricCharts({ range: controlled }: { range?: Range } = {}) {
   const [own, setRange] = useState<Range>("24h");
   const range = controlled ?? own;
@@ -116,31 +127,44 @@ export function MetricCharts({ range: controlled }: { range?: Range } = {}) {
   const [error, setError] = useState("");
   useEffect(() => {
     let current = true;
-    api(`history/metrics?range=${range}`, undefined, true)
+    const load = () => api(`history/metrics?range=${range}`, undefined, true)
       .then((data: History) => { if (current) { setHistory(data); setError(""); } })
       .catch((reason) => { if (current) setError(reason instanceof Error ? reason.message : "Could not load metrics"); });
-    return () => { current = false; };
+    void load();
+    const timer = setInterval(() => { if (!document.hidden) void load(); }, CHART_REFRESH_MS);
+    return () => { current = false; clearInterval(timer); };
   }, [range]);
-  const samples = history?.samples || [];
-  const times = samples.map((sample) => sample.at);
-  const when = (at: number) => new Date(at).toLocaleString([], { dateStyle: "short", timeStyle: "short" });
-  const round = (value: number | null) => (value === null ? "—" : value.toFixed(1));
-  // "/" is the system disk, which already has its own series.
-  const paths = [...new Set(samples.flatMap((sample) => Object.keys(sample.storage || {})))].filter((path) => path !== "/");
-  const storageSeries = [{ id: "disk", label: "System disk", values: samples.map((sample) => sample.disk) }, ...paths.map((path) => ({ id: path, label: path, values: samples.map((sample) => sample.storage?.[path] ?? null) }))].slice(0, 8);
+  // Built once per response, so the charts keep their drawn paths while only
+  // the pointer moves, and the tables are only built when they are shown.
+  const charts = useMemo(() => {
+    const samples = history?.samples || [];
+    const when = (at: number) => sampleTime.format(at);
+    // "/" is the system disk, which already has its own series.
+    const paths = [...new Set(samples.flatMap((sample) => Object.keys(sample.storage || {})))].filter((path) => path !== "/");
+    const storage = [{ id: "disk", label: "System disk", values: samples.map((sample) => sample.disk) }, ...paths.map((path) => ({ id: path, label: path, values: samples.map((sample) => sample.storage?.[path] ?? null) }))].slice(0, 8);
+    return {
+      times: samples.map((sample) => sample.at),
+      load: [{ id: "cpu", label: "CPU", values: samples.map((sample) => sample.cpu) }, { id: "ram", label: "RAM", values: samples.map((sample) => sample.ram) }],
+      temperature: [{ id: "temperature", label: "Temperature", values: samples.map((sample) => sample.temperature) }],
+      storage,
+      loadRows: () => samples.map((sample) => [when(sample.at), round(sample.cpu), round(sample.ram)]),
+      temperatureRows: () => samples.map((sample) => [when(sample.at), round(sample.temperature)]),
+      storageRows: () => samples.map((sample, index) => [when(sample.at), ...storage.map((item) => round(item.values[index]))]),
+    };
+  }, [history]);
   return <>
     {!controlled && <RangeFilter value={range} onChange={setRange} />}
     {error && <div className="alert">{error}</div>}
     <div className="chart-grid-2" style={{ opacity: history ? 1 : 0.6 }}>
-      <ChartFrame title="CPU and RAM" note="Average use, percent" table={{ columns: ["Time", "CPU %", "RAM %"], rows: samples.map((sample) => [when(sample.at), round(sample.cpu), round(sample.ram)]) }}>
-        <LineChart times={times} unit="%" yMax={100} series={[{ id: "cpu", label: "CPU", values: samples.map((sample) => sample.cpu) }, { id: "ram", label: "RAM", values: samples.map((sample) => sample.ram) }]} />
+      <ChartFrame title="CPU and RAM" note="Average use, percent" table={{ columns: ["Time", "CPU %", "RAM %"], rows: charts.loadRows }}>
+        <LineChart times={charts.times} unit="%" yMax={100} series={charts.load} />
       </ChartFrame>
-      <ChartFrame title="Temperature" note="Hottest sensor, °C" table={{ columns: ["Time", "°C"], rows: samples.map((sample) => [when(sample.at), round(sample.temperature)]) }}>
-        <LineChart times={times} unit="°C" series={[{ id: "temperature", label: "Temperature", values: samples.map((sample) => sample.temperature) }]} empty="No temperature sensor data in this range." />
+      <ChartFrame title="Temperature" note="Hottest sensor, °C" table={{ columns: ["Time", "°C"], rows: charts.temperatureRows }}>
+        <LineChart times={charts.times} unit="°C" series={charts.temperature} empty="No temperature sensor data in this range." />
       </ChartFrame>
     </div>
-    <ChartFrame title="Storage used" note="Percent of capacity per monitored path" table={{ columns: ["Time", ...storageSeries.map((item) => `${item.label} %`)], rows: samples.map((sample, index) => [when(sample.at), ...storageSeries.map((item) => round(item.values[index]))]) }}>
-      <LineChart times={times} unit="%" yMax={100} series={storageSeries} />
+    <ChartFrame title="Storage used" note="Percent of capacity per monitored path" table={{ columns: ["Time", ...charts.storage.map((item) => `${item.label} %`)], rows: charts.storageRows }}>
+      <LineChart times={charts.times} unit="%" yMax={100} series={charts.storage} />
     </ChartFrame>
   </>;
 }

@@ -23,6 +23,7 @@ export type Schedule = {
   command?: string;
 };
 export type User = { name: string; role: "admin" | "viewer" };
+export type Run = { id: string; scriptId: string; scriptName: string; startedAt: string; completedAt?: string; exitCode?: number; durationMs?: number; arguments: string; status: "running" | "success" | "failed" };
 export type St = {
   user?: User;
   containers: C[];
@@ -55,7 +56,10 @@ export type St = {
     cpuUsagePercent: number;
     cpuCores: number;
   };
-  runs: { id: string; scriptId: string; scriptName: string; startedAt: string; completedAt?: string; exitCode?: number; durationMs?: number; arguments: string; status: "running" | "success" | "failed" }[];
+  // The latest run of each script and the latest failure. Every run is only
+  // loaded for the History page.
+  recentRuns: Run[];
+  runs?: Run[];
   alerts: { id: string; name: string; metric: string; threshold: number; enabled: boolean; cooldownMinutes: number; lastTriggeredAt?: number }[];
   metrics?: { latest: { at: number; cpu: number; ram: number; temperature: number | null; disk: number } | null; count: number; intervalMinutes: number };
   cronRuns: { scheduleId: string; label: string; startedAt: string; completedAt?: string; exitCode?: number; status: "running" | "success" | "failed" }[];

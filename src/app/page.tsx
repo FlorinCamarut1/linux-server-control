@@ -11,7 +11,7 @@ import { ScheduleForm } from "@/components/schedules";
 import { ScriptForm, CustomScriptForm, RunScriptForm, FolderForm } from "@/components/scripts";
 import { AppearancePanel, NotificationsPanel, PasswordForm, DevicePanel, ServerSettings, ConfigurationPanel, StorageManager, UsersPanel } from "@/components/settings";
 import { appConfirm, Btn, copyText, Panel, Metric, formatBytes, formatPercent, formatUptime, Modal, DialogHost, LiveLogViewer, AppLoading, LoadingScreen } from "@/components/ui";
-import type { S, Schedule, St } from "@/lib/types";
+import type { Run, S, Schedule, St } from "@/lib/types";
 import {
   Zap,
   CalendarPlus,
@@ -91,9 +91,11 @@ export default function Home() {
     const scope = hostLoaded.current ? stateScope(tabRef.current) : "full";
     try {
       const data = await api(scope === "full" ? "state" : `state?scope=${scope}`, undefined, silent);
+      // Responses are merged, so what only some scopes carry (the full run
+      // history) stays loaded while other pages refresh.
       if (scope === "full") {
         hostLoaded.current = true;
-        setState(data);
+        setState((previous) => ({ ...previous, ...data }));
       } else setState((previous) => (previous ? { ...previous, ...data } : previous));
       setErr("");
     } catch (e) {
@@ -164,10 +166,10 @@ export default function Home() {
   }, [state]);
   // Looked up once per refresh instead of once per script row on every render.
   const scriptStatus = useMemo(() => {
-    const status = new Map<string, { schedule?: Schedule; lastRun?: St["runs"][number] }>();
+    const status = new Map<string, { schedule?: Schedule; lastRun?: Run }>();
     const entry = (id: string) => status.get(id) ?? status.set(id, {}).get(id)!;
     for (const schedule of state?.schedules || []) entry(schedule.scriptId).schedule ??= schedule;
-    for (const run of state?.runs || []) entry(run.scriptId).lastRun ??= run;
+    for (const run of state?.recentRuns || []) entry(run.scriptId).lastRun ??= run;
     return status;
   }, [state]);
   const links = useMemo(() => {
@@ -568,7 +570,7 @@ export default function Home() {
             </details>
           </Panel>
         )}
-        {tab === "history" && <HistoryPanel runs={state.runs || []} cronRuns={state.cronRuns || []} metrics={state.metrics} openLog={(run) => openLogs(`${run.scriptName} run`, "script/log", { id: run.scriptId, runId: run.id })} />}
+        {tab === "history" && <HistoryPanel runs={state.runs} cronRuns={state.cronRuns || []} metrics={state.metrics} openLog={(run) => openLogs(`${run.scriptName} run`, "script/log", { id: run.scriptId, runId: run.id })} />}
         {tab === "power" && <PowerPage readOnly={readOnly} />}
         {tab === "alerts" && (
           <Panel title="Alert rules" note="Rules are checked every 5 minutes and on each dashboard refresh; cooldowns prevent repeated notifications." extra={readOnly ? undefined : <Btn className="primary" onClick={() => setAlertEditor(null)}>New alert</Btn>}>

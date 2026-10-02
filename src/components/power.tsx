@@ -1,6 +1,6 @@
 "use client";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Gauge, Pencil, Plug, Plus, Trash2, Wallet, Zap } from "lucide-react";
+import { Gauge, Pencil, Plug, Plus, Power, Trash2, Wallet, Zap } from "lucide-react";
 import { api } from "@/lib/client-api";
 import { ChartFrame, ColumnChart, LineChart, RangeFilter, formatTime, type Range } from "@/components/charts";
 import { appConfirm, Btn, Metric, Modal, Panel } from "@/components/ui";
@@ -8,7 +8,7 @@ import { appConfirm, Btn, Metric, Modal, Panel } from "@/components/ui";
 type Field = { key: string; label: string; secret?: boolean; required?: boolean; placeholder?: string; help?: string };
 type Driver = { id: string; name: string; description: string; fields: Field[] };
 type Device = {
-  id: string; name: string; driver: string; enabled: boolean; config: Record<string, string>;
+  id: string; name: string; driver: string; enabled: boolean; config: Record<string, string>; canSwitch?: boolean;
   status: { at: number | null; powerW: number | null; on: boolean | null; error: string | null } | null;
 };
 type Settings = { pricePerKwh: number; currency: string };
@@ -23,6 +23,7 @@ const HOUR = 3600000;
 // A reading older than this no longer counts as the current power.
 const STALE_MS = 5 * 60000;
 
+const clock = new Intl.DateTimeFormat([], { hour: "2-digit", minute: "2-digit" });
 const kwh = (wh: number) => wh / 1000;
 const formatWatts = (w: number) => (w >= 1000 ? `${(w / 1000).toFixed(2)} kW` : `${w.toFixed(w < 10 ? 1 : 0)} W`);
 const startOfDay = (at: number) => { const date = new Date(at); date.setHours(0, 0, 0, 0); return date.getTime(); };
@@ -39,6 +40,7 @@ export function PowerPage({ range: controlled, compact = false, readOnly = false
   const [drivers, setDrivers] = useState<Driver[]>([]);
   const [editing, setEditing] = useState<Device | null | undefined>();
   const [error, setError] = useState("");
+  const [switching, setSwitching] = useState("");
   const [version, setVersion] = useState(0);
   const reload = useCallback(() => setVersion((value) => value + 1), []);
 
@@ -102,7 +104,7 @@ export function PowerPage({ range: controlled, compact = false, readOnly = false
       }
       return { id: device.id, label: device.name, values };
     });
-    const labels = starts.map((at) => hourly ? new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : new Date(at).toLocaleDateString([], { day: "2-digit", month: "2-digit" }));
+    const labels = starts.map((at) => formatTime(at, hourly ? 0 : Infinity));
     return { labels, starts, series };
   }, [history, range, now]);
 
@@ -123,14 +125,14 @@ export function PowerPage({ range: controlled, compact = false, readOnly = false
         <ChartFrame
           title="Power"
           note={range === "24h" ? "Watts, one reading per minute" : "Watts, hourly average"}
-          table={{ columns: ["Time", ...powerChart.series.map((item) => `${item.label} (W)`)], rows: powerChart.times.map((at, index) => [formatTime(at, span) + (span > 36 * HOUR ? " " + new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""), ...powerChart.series.map((item) => item.values[index] === null ? "—" : item.values[index]!.toFixed(1))]) }}
+          table={{ columns: ["Time", ...powerChart.series.map((item) => `${item.label} (W)`)], rows: () => powerChart.times.map((at, index) => [formatTime(at, span) + (span > 36 * HOUR ? " " + clock.format(at) : ""), ...powerChart.series.map((item) => item.values[index] === null ? "—" : item.values[index]!.toFixed(1))]) }}
         >
           <LineChart times={powerChart.times} series={powerChart.series} unit="W" digits={1} empty="No readings in this range yet. Devices are read every minute." />
         </ChartFrame>
         <ChartFrame
           title="Energy"
           note={range === "24h" ? "kWh per hour" : "kWh per day"}
-          table={{ columns: [range === "24h" ? "Hour" : "Day", ...energyChart.series.map((item) => `${item.label} (kWh)`), "Total (kWh)"], rows: energyChart.labels.map((label, index) => [label, ...energyChart.series.map((item) => item.values[index].toFixed(3)), energyChart.series.reduce((sum, item) => sum + item.values[index], 0).toFixed(3)]) }}
+          table={{ columns: [range === "24h" ? "Hour" : "Day", ...energyChart.series.map((item) => `${item.label} (kWh)`), "Total (kWh)"], rows: () => energyChart.labels.map((label, index) => [label, ...energyChart.series.map((item) => item.values[index].toFixed(3)), energyChart.series.reduce((sum, item) => sum + item.values[index], 0).toFixed(3)]) }}
         >
           <ColumnChart labels={energyChart.labels} series={energyChart.series} unit="kWh" digits={range === "24h" ? 3 : 2} />
         </ChartFrame>
@@ -153,6 +155,15 @@ export function PowerPage({ range: controlled, compact = false, readOnly = false
             : fresh && status?.powerW !== null ? <span className="badge up">{formatWatts(status!.powerW!)}{status?.on === false ? " · off" : ""}</span>
             : <span className="badge root">Waiting</span>}
           {!readOnly && <div className="actions">
+            {/* Only offered while the relay's state is known, so the button says what it will do. */}
+            {device.canSwitch && device.enabled && typeof status?.on === "boolean" && !status.error && <Btn disabled={switching === device.id} onClick={async () => {
+              const on = !status.on;
+              if (!on && !await appConfirm(`Turn off ${device.name}? Everything powered through it loses power, including this server if it is plugged into it.`, "Turn off device", "Turn off", true)) return;
+              setSwitching(device.id); setError("");
+              try { await api("power/device/switch", { id: device.id, on }); reload(); }
+              catch (reason) { setError(reason instanceof Error ? reason.message : "Could not switch the device"); }
+              finally { setSwitching(""); }
+            }}><Power size={15} />{switching === device.id ? "Switching…" : status.on ? "Turn off" : "Turn on"}</Btn>}
             <Btn onClick={() => setEditing(device)}><Pencil size={15} />Edit</Btn>
             <Btn className="danger" onClick={async () => {
               if (!await appConfirm(`Delete ${device.name} and its recorded power history?`, "Delete device", "Delete", true)) return;

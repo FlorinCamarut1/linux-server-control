@@ -291,7 +291,7 @@ export const accountRoutes: Routes<Context> = {
       persistSessions();
     }
     save("users", { ...all, [username]: { ...credentials, role, created: all[username]?.created || new Date().toISOString() } });
-    audit(`account ${existing ? "updated" : "created"} ${username} (${role}) by ${user.name}`);
+    audit(`account ${existing ? "updated" : "created"} ${username} (${role})`);
     return ok();
   },
   "POST users/delete": ({ body, user }) => {
@@ -302,7 +302,7 @@ export const accountRoutes: Routes<Context> = {
     save("users", all);
     for (const [key, session] of sessions) if (session.user === body.username) sessions.delete(key);
     persistSessions();
-    audit(`account deleted ${body.username} by ${user.name}`);
+    audit(`account deleted ${body.username}`);
     return ok();
   },
   "POST enrollment/create": ({ body }) => {

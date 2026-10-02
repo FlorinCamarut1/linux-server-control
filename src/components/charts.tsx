@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useMemo, useRef, useState } from "react";
 
 // Charts drawn as inline SVG. Colors come from the theme's validated chart
 // palette (--series-N), text uses text tokens, and every chart can also be
@@ -44,11 +44,13 @@ function niceTicks(max: number) {
   return ticks;
 }
 
+// Formatters are created once: building one for every label was most of the
+// cost of drawing a chart or filling its table.
+const clockTime = new Intl.DateTimeFormat([], { hour: "2-digit", minute: "2-digit" });
+const dayMonth = new Intl.DateTimeFormat([], { day: "2-digit", month: "2-digit" });
+const dateTime = new Intl.DateTimeFormat([], { dateStyle: "short", timeStyle: "short" });
 export function formatTime(at: number, spanMs: number) {
-  const date = new Date(at);
-  return spanMs <= 36 * 3600000
-    ? date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-    : date.toLocaleDateString([], { day: "2-digit", month: "2-digit" });
+  return (spanMs <= 36 * 3600000 ? clockTime : dayMonth).format(at);
 }
 
 // The key mirrors the mark: a short line for lines, a square for bars.
@@ -66,7 +68,8 @@ function Legend({ series, shape = "line" }: { series: { id: string; label: strin
 type ChartFrameProps = {
   title: string;
   note?: string;
-  table: { columns: string[]; rows: (string | number)[][] };
+  // The rows are only built when the table is shown.
+  table: { columns: string[]; rows: () => (string | number)[][] };
   children: React.ReactNode;
 };
 // Card with a title and a switch between the chart and its table view.
@@ -87,7 +90,7 @@ export function ChartFrame({ title, note, table, children }: ChartFrameProps) {
         <div className="chart-table">
           <table>
             <thead><tr>{table.columns.map((column) => <th key={column}>{column}</th>)}</tr></thead>
-            <tbody>{table.rows.map((row, index) => <tr key={index}>{row.map((cell, column) => <td key={column}>{cell}</td>)}</tr>)}</tbody>
+            <tbody>{table.rows().map((row, index) => <tr key={index}>{row.map((cell, column) => <td key={column}>{cell}</td>)}</tr>)}</tbody>
           </table>
         </div>
       ) : children}
@@ -103,41 +106,50 @@ type LineChartProps = {
   digits?: number;
   empty?: string;
 };
-export function LineChart({ times, series, unit, yMax, digits = 1, empty = "No samples in this range yet." }: LineChartProps) {
+// Memoized, with its geometry computed once per data and width: moving the
+// pointer only moves the crosshair, and a refresh of the page around the chart
+// does not draw it again.
+export const LineChart = memo(function LineChart({ times, series, unit, yMax, digits = 1, empty = "No samples in this range yet." }: LineChartProps) {
   const { ref, width } = useWidth();
-  const [hover, setHover] = useState<number | null>(null);
+  const [hovered, setHover] = useState<number | null>(null);
+  // A refresh can leave fewer points than the one the pointer was on.
+  const hover = hovered !== null && hovered < times.length ? hovered : null;
   const plotWidth = width - MARGIN.left - MARGIN.right;
-  const values = series.flatMap((item) => item.values).filter((value): value is number => value !== null);
-  const ticks = niceTicks(Math.max(yMax ?? 0, ...values, 0));
-  const top = ticks.at(-1)!;
   const start = times[0] ?? 0, span = Math.max(1, (times.at(-1) ?? 1) - start);
-  const x = (at: number) => MARGIN.left + ((at - start) / span) * plotWidth;
-  const y = (value: number) => MARGIN.top + PLOT_HEIGHT - (value / top) * PLOT_HEIGHT;
   const format = (value: number | null) => (value === null ? "—" : `${value.toFixed(digits)} ${unit}`);
   const xTicks = useMemo(() => {
     if (times.length < 2) return [];
     const count = Math.max(2, Math.min(6, Math.floor(plotWidth / 110)));
     return Array.from({ length: count }, (_, index) => start + (span * index) / (count - 1));
   }, [times.length, plotWidth, start, span]);
-
-  if (!values.length) return <div ref={ref} className="chart-empty">{empty}</div>;
-
-  const paths = series.map((item) => {
-    let d = "", open = false;
-    item.values.forEach((value, index) => {
-      if (value === null) { open = false; return; }
-      d += `${open ? "L" : "M"}${x(times[index]).toFixed(1)},${y(value).toFixed(1)}`;
-      open = true;
+  const drawn = useMemo(() => {
+    let max = yMax ?? 0, any = false;
+    for (const item of series) for (const value of item.values) if (value !== null) { any = true; if (value > max) max = value; }
+    const ticks = niceTicks(max), top = ticks.at(-1)!;
+    const x = (at: number) => MARGIN.left + ((at - start) / span) * plotWidth;
+    const y = (value: number) => MARGIN.top + PLOT_HEIGHT - (value / top) * PLOT_HEIGHT;
+    const paths = series.map((item) => {
+      let d = "", open = false;
+      item.values.forEach((value, index) => {
+        if (value === null) { open = false; return; }
+        d += `${open ? "L" : "M"}${x(times[index]).toFixed(1)},${y(value).toFixed(1)}`;
+        open = true;
+      });
+      return d;
     });
-    return d;
-  });
-  const single = series.length === 1;
-  const area = single ? (() => {
-    const points = times.map((at, index) => [at, series[0].values[index]] as const).filter(([, value]) => value !== null);
-    if (points.length < 2) return "";
-    return `M${x(points[0][0])},${y(0)}` + points.map(([at, value]) => `L${x(at).toFixed(1)},${y(value!).toFixed(1)}`).join("") + `L${x(points.at(-1)![0])},${y(0)}Z`;
-  })() : "";
-  const lastIndex = (item: LineSeries) => item.values.findLastIndex((value) => value !== null);
+    let area = "";
+    if (series.length === 1) {
+      const points = times.map((at, index) => [at, series[0].values[index]] as const).filter(([, value]) => value !== null);
+      if (points.length >= 2) area = `M${x(points[0][0])},${y(0)}` + points.map(([at, value]) => `L${x(at).toFixed(1)},${y(value!).toFixed(1)}`).join("") + `L${x(points.at(-1)![0])},${y(0)}Z`;
+    }
+    const last = series.map((item) => item.values.findLastIndex((value) => value !== null));
+    return { any, ticks, x, y, paths, area, last };
+  }, [times, series, yMax, plotWidth, start, span]);
+
+  if (!drawn.any) return <div ref={ref} className="chart-empty">{empty}</div>;
+
+  const { ticks, x, y, paths, area } = drawn;
+  const lastIndex = (item: LineSeries) => drawn.last[series.indexOf(item)];
   // End labels for up to four series, skipped where they would overlap.
   const endLabels: { y: number; text: string }[] = [];
   if (series.length <= 4) {
@@ -205,7 +217,7 @@ export function LineChart({ times, series, unit, yMax, digits = 1, empty = "No s
         ))}
         {hover !== null && (
           <div className="chart-tooltip" style={{ left: Math.min(hoverX + 12, width - 180), top: MARGIN.top }}>
-            <small>{new Date(times[hover]).toLocaleString([], { dateStyle: "short", timeStyle: "short" })}</small>
+            <small>{dateTime.format(times[hover])}</small>
             {series.map((item, index) => (
               <div key={item.id}><i style={{ background: seriesColor(index) }} /><b>{format(item.values[hover])}</b><span>{item.label}</span></div>
             ))}
@@ -214,7 +226,7 @@ export function LineChart({ times, series, unit, yMax, digits = 1, empty = "No s
       </div>
     </div>
   );
-}
+});
 
 type ColumnChartProps = {
   labels: string[];
@@ -224,7 +236,7 @@ type ColumnChartProps = {
   empty?: string;
 };
 // Stacked columns with a 2px surface gap between segments and rounded tops.
-export function ColumnChart({ labels, series, unit, digits = 2, empty = "No data in this range yet." }: ColumnChartProps) {
+export const ColumnChart = memo(function ColumnChart({ labels, series, unit, digits = 2, empty = "No data in this range yet." }: ColumnChartProps) {
   const { ref, width } = useWidth();
   const [hover, setHover] = useState<number | null>(null);
   const plotWidth = width - MARGIN.left - MARGIN.right;
@@ -298,7 +310,7 @@ export function ColumnChart({ labels, series, unit, digits = 2, empty = "No data
       </div>
     </div>
   );
-}
+});
 
 export type Range = "24h" | "7d" | "30d";
 const RANGES = [["24h", "Last 24 hours"], ["7d", "Last 7 days"], ["30d", "Last 30 days"]] as const;

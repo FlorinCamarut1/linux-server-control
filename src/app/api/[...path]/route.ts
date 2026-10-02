@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { CommandError } from "@/lib/server";
+import { CommandError, asActor } from "@/lib/server";
 import { authenticate, permitted, publicRoutes } from "@/lib/api/auth";
 import { type Body, fail, sameOrigin } from "@/lib/api/http";
 import { routes } from "@/lib/api/routes";
@@ -32,7 +32,7 @@ async function handle(req: NextRequest, route: string, body: Body) {
     const handler = routes[route];
     if (!handler) return fail("Not found", 404);
     if (!permitted(route, signedIn.user.role, body)) return fail("This account is read-only.", 403);
-    return await handler({ req, body, ...signedIn });
+    return await asActor(signedIn.user.name, () => handler({ req, body, ...signedIn }));
   } catch (error) {
     if (error instanceof CommandError) return fail(error.message, 502);
     return fail(error instanceof Error ? error.message : "Internal error");

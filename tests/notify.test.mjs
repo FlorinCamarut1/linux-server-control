@@ -79,7 +79,7 @@ test("webhook URLs are validated and never sent to the browser", async () => {
 });
 
 test("alerts, failed scheduled runs and power device changes emit events", async () => {
-  const { server } = loadServer({ host: (argv) => (argv[0] === "sh" && argv.at(-1).endsWith("schedules.log") ? { stdout: log } : { stdout: "" }) });
+  const { server } = loadServer({ host: (argv) => (argv[0] === "sh" && argv.some((item) => item.endsWith("schedules.log")) ? { stdout: log } : { stdout: "" }) });
   const received = [];
   server.onDashboardEvent((item) => received.push(item.type));
   server.save("alerts", [{ id: "a", name: "Hot", metric: "temperature", threshold: 80, cooldownMinutes: 30, enabled: true }]);

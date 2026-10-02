@@ -39,6 +39,18 @@ export type AlertRule = {
 export type MetricSample = { at: number; cpu: number; ram: number; temperature: number | null; disk: number; storage?: Record<string, number> };
 export type CronRun = { scheduleId: string; label: string; startedAt: string; completedAt?: string; exitCode?: number; status: "running" | "success" | "failed" };
 export function scriptRuns() { return read<ScriptRun[]>("script-runs", []); }
+// The latest run of every script and the latest failed run, newest first: all
+// that the pages other than History show, without sending the whole history.
+export function recentRuns() {
+  const seen = new Set<string>();
+  let failureFound = false;
+  return scriptRuns().filter((run) => {
+    const keep = !seen.has(run.scriptId) || (!failureFound && run.status === "failed");
+    seen.add(run.scriptId);
+    if (run.status === "failed") failureFound = true;
+    return keep;
+  });
+}
 export function alertRules() { return read<AlertRule[]>("alerts", []); }
 export function cronRuns() { return read<CronRun[]>("cron-runs", []); }
 export const RECORD_ID = /^[\w-]{1,64}$/;

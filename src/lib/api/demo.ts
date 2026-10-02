@@ -15,6 +15,7 @@ export const demoState = {
     demo: { name: "Personal laptop", created: "08.09.2026, 14:00" },
   },
   runs: [],
+  recentRuns: [],
   alerts: [],
   cronRuns: [],
   monitoredPaths: ["/mnt/storage"],

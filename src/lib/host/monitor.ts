@@ -1,20 +1,12 @@
 // Server health: statistics, the host snapshot, metric history, alert rules,
 // the requirement checks and the background monitor.
 import { randomBytes } from "node:crypto";
-import { statSync } from "node:fs";
-import path from "node:path";
-import { DATA, audit, emitDashboardEvent, read, save } from "./store";
+import { audit, emitDashboardEvent, read, save } from "./store";
 import { ROOT_CRON_HELPER, ROOT_SCRIPT_HELPER, run, runAsync, serverSettings, testServerConnection } from "./ssh";
 import { type AlertRule, type MetricSample, RECORD_ID, alertRules, oneLine, scriptRuns } from "./records";
 import { collectCronRuns, readScheduleLog, rootHelperStatus, trimScheduleLog } from "./cron";
-// Samples are cached per file modification time: the file is only re-read after
-// another writer (for example the background monitor) has changed it.
-let metricsCache: { mtimeMs: number; samples: MetricSample[] } | undefined;
 export function metricSamples() {
-  let mtimeMs: number;
-  try { mtimeMs = statSync(path.join(DATA, "metrics.json")).mtimeMs; } catch { return []; }
-  if (metricsCache?.mtimeMs !== mtimeMs) metricsCache = { mtimeMs, samples: read<MetricSample[]>("metrics", []) };
-  return metricsCache.samples;
+  return read<MetricSample[]>("metrics", []);
 }
 export const HISTORY_RANGES = { "24h": 86400000, "7d": 7 * 86400000, "30d": 30 * 86400000 } as const;
 export type HistoryRange = keyof typeof HISTORY_RANGES;
@@ -30,7 +22,9 @@ export function metricHistory(range: HistoryRange, points = 288, now = Date.now(
   for (const sample of metricSamples()) {
     if (sample.at < from) continue;
     const index = Math.min(points - 1, Math.floor((sample.at - from) / bucket));
-    groups.set(index, [...(groups.get(index) || []), sample]);
+    const group = groups.get(index);
+    if (group) group.push(sample);
+    else groups.set(index, [sample]);
   }
   const paths = [...new Set(metricSamples().flatMap((sample) => Object.keys(sample.storage || {})))];
   return {
@@ -213,6 +207,9 @@ export type SystemStats = {
   cpuUsagePercent: number;
   cpuCores: number;
 };
+// Everything the statistics need, in one host command: the server's clock and
+// the monitored storage paths ($2 onwards) are read by the same script, so a
+// refresh does not start a process for each of them.
 const STATS_SCRIPT = [
       'read -r mem_total mem_used mem_available < <(free -b | awk \'/^Mem:/ {print $2, $3, $7}\')',
       'read -r disk_total disk_used disk_pct < <(df -B1 -P / | awk \'NR==2 {gsub(/%/, "", $5); print $2, $3, $5}\')',
@@ -229,23 +226,25 @@ const STATS_SCRIPT = [
       'temp=$(command -v sensors >/dev/null && sensors "coretemp-*" -u 2>/dev/null | awk \'/_input:/ {if ($2 > max) max=$2} END {if (max) printf "%.1f", max}\')',
       'if [ -z "$temp" ]; then temp=$(find -L /sys/class/thermal /sys/class/hwmon -mindepth 2 -maxdepth 2 -type f \\( -name temp -o -name "temp*_input" \\) -readable -exec cat {} + 2>/dev/null | awk \'$1 ~ /^[0-9]+([.][0-9]+)?$/ {v=$1; if (v > 1000) v=v/1000; if (v > 0 && v < 150 && v > max) max=v} END {if (max) printf "%.1f", max}\'); fi',
       'printf "temperatureC=%s\\nmemoryUsedBytes=%s\\nmemoryTotalBytes=%s\\nmemoryAvailableBytes=%s\\ndiskUsedBytes=%s\\ndiskTotalBytes=%s\\ndiskUsedPercent=%s\\nuptimeSeconds=%s\\ncpuUsagePercent=%s\\ncpuCores=%s\\ncpuTotal=%s\\ncpuIdle=%s\\n" "$temp" "$mem_used" "$mem_total" "$mem_available" "$disk_used" "$disk_total" "$disk_pct" "$uptime_s" "$cpu_pct" "$cores" "$cpu_total" "$cpu_idle_total"',
+      'printf "time=%s\\n" "$(date "+%d.%m.%Y %H:%M:%S %Z")"',
+      // One line per path, in the order given; empty where df cannot read it.
+      // A path on a mount that stopped answering must not stall the refresh.
+      'storage_df() { if command -v timeout >/dev/null 2>&1; then timeout 10 df -B1 -P -- "$1"; else df -B1 -P -- "$1"; fi; }',
+      'shift; for storage_path in "$@"; do printf "storage=%s\\n" "$(storage_df "$storage_path" 2>/dev/null | tail -n 1)"; done',
 ].join("; ");
 // The previous CPU counter reading, per SSH target. Readings older than this
 // are not used, so a long pause does not produce a long average.
 const CPU_READING_MAX_AGE_MS = 10 * 60 * 1000;
 let cpuReading: { target: string; at: number; total: number; idle: number } | undefined;
-async function systemStats(): Promise<SystemStats> {
+async function systemStats(): Promise<{ stats: SystemStats; time: string }> {
   const target = serverSettings().sshTarget;
   const previous = cpuReading?.target === target && Date.now() - cpuReading.at < CPU_READING_MAX_AGE_MS ? cpuReading : undefined;
   const paths = monitoredPaths();
-  const [output, ...storage] = await Promise.all([
-    runAsync(["bash", "-lc", STATS_SCRIPT, "stats", previous ? "" : "sample"]),
-    ...paths.map((storagePath) => runAsync(["df", "-B1", "-P", "--", storagePath]).then(
-      (out) => parseStorage(storagePath, out), () => parseStorage(storagePath, "")),
-    ),
-  ]);
-  const stats = parseStats(output, storage);
-  const values = parseValues(output);
+  const output = await runAsync(["bash", "-lc", STATS_SCRIPT, "stats", previous ? "" : "sample", ...paths]);
+  const lines = output.trim().split("\n");
+  const storageLines = lines.filter((line) => line.startsWith("storage=")).map((line) => line.slice("storage=".length));
+  const values = parseValues(lines.filter((line) => !line.startsWith("storage=")));
+  const stats = parseStats(values, paths.map((storagePath, index) => parseStorage(storagePath, storageLines[index] ?? "")));
   const total = Number(values.cpuTotal), idle = Number(values.cpuIdle);
   if (values.cpuTotal && Number.isFinite(total) && Number.isFinite(idle)) {
     if (previous && total > previous.total) {
@@ -254,18 +253,15 @@ async function systemStats(): Promise<SystemStats> {
     }
     cpuReading = { target, at: Date.now(), total, idle };
   }
-  return stats;
+  return { stats, time: values.time || "" };
 }
-function parseValues(output: string): Record<string, string> {
-  return Object.fromEntries(
-    output
-      .trim()
-      .split("\n")
-      .map((line) => line.split("=", 2)),
-  );
+function parseValues(lines: string[]): Record<string, string> {
+  return Object.fromEntries(lines.filter((line) => line.includes("=")).map((line) => {
+    const at = line.indexOf("=");
+    return [line.slice(0, at), line.slice(at + 1)];
+  }));
 }
-function parseStats(output: string, storage: SystemStats["storage"]): SystemStats {
-  const values = parseValues(output);
+function parseStats(values: Record<string, string>, storage: SystemStats["storage"]): SystemStats {
   const number = (key: string) => {
     const value = Number(values[key]);
     return Number.isFinite(value) ? value : 0;
@@ -284,8 +280,8 @@ function parseStats(output: string, storage: SystemStats["storage"]): SystemStat
     cpuCores: number("cpuCores"),
   };
 }
-function parseStorage(storagePath: string, output: string) {
-  const fields = output.trim().split("\n").at(-1)!.trim().split(/\s+/);
+function parseStorage(storagePath: string, line: string) {
+  const fields = line.trim().split(/\s+/);
   const totalBytes = Number(fields[1]);
   const usedBytes = Number(fields[2]);
   const usedPercent = Number(fields[4]?.replace("%", ""));
@@ -300,13 +296,12 @@ async function collectSnapshot() {
   // Docker may be missing or forbidden while the server itself is fine, so its
   // failure empties the container list instead of failing the whole snapshot.
   // An unreachable server still fails through the statistics below.
-  const [docker, userCron, status, time, stats, cronLog] = await Promise.all([
+  const [docker, userCron, status, { stats, time }, cronLog] = await Promise.all([
     runAsync(["docker", "ps", "-a", "--format", "{{json .}}"]).then(
       (output) => ({ containers: output.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line)), error: null as string | null }),
       (error) => ({ containers: [], error: dockerProblem(error instanceof Error ? error.message : "") })),
     runAsync(["crontab", "-l"]).catch(() => ""),
     rootHelperStatus(),
-    runAsync(["date", "+%d.%m.%Y %H:%M:%S %Z"]).then((value) => value.trim()),
     systemStats(),
     readScheduleLog(),
   ]);

@@ -28,6 +28,7 @@ import {
   monitoredPaths,
   preflight,
   readEditableFile,
+  recentRuns,
   recordMetricSample,
   removeMonitoredPath,
   restoreConfiguration,
@@ -45,7 +46,7 @@ import {
   testServerConnection,
   updateServerSettings,
 } from "@/lib/server";
-import { DRIVERS, deletePowerDevice, powerHistory, publicDevices, savePowerDevice, savePowerSettings, powerSettings } from "@/lib/power";
+import { DRIVERS, deletePowerDevice, powerHistory, publicDevices, savePowerDevice, savePowerSettings, powerSettings, switchPowerDevice } from "@/lib/power";
 import { CHANNEL_TYPES, deleteChannel, publicChannels, saveChannel, testChannel } from "@/lib/notify";
 import { EVENT_TYPES } from "@/lib/server";
 import { accountRoutes } from "./auth";
@@ -61,7 +62,7 @@ function records({ devices, user }: Context) {
     schedules: schedules(),
     devices,
     host: serverSettings().sshTarget || "local server",
-    runs: scriptRuns(),
+    recentRuns: recentRuns(),
     alerts: alertRules(),
     metrics: metricsSummary(),
     monitoredPaths: monitoredPaths(),
@@ -70,13 +71,14 @@ function records({ devices, user }: Context) {
 
 // ?scope=records returns only the stored records, for pages that show no live
 // host data; the background monitor keeps metrics and alerts current meanwhile.
-// ?scope=history adds the cron runs. The default reads the host as well.
+// ?scope=history adds the cron runs and every script run; the other scopes carry
+// only the recent runs. The default reads the host as well.
 async function state(context: Context) {
   const { req, session } = context;
   if (session.device === "demo") return NextResponse.json({ ...demoState, user: context.user });
   const scope = req.nextUrl.searchParams.get("scope");
   if (scope === "records") return NextResponse.json({ ...records(context), cronRuns: cronRuns() });
-  if (scope === "history") return NextResponse.json({ ...records(context), cronRuns: await collectCronRuns() });
+  if (scope === "history") return NextResponse.json({ ...records(context), runs: scriptRuns(), cronRuns: await collectCronRuns() });
   let snapshot;
   try {
     snapshot = await hostSnapshot();
@@ -279,6 +281,7 @@ const powerRoutes: Routes<Context> = {
     deletePowerDevice(body.id || "");
     return ok();
   },
+  "POST power/device/switch": async ({ body }) => ok(await switchPowerDevice(body.id || "", String(body.on) === "true")),
   "POST power/settings": ({ body }) => {
     savePowerSettings(body);
     return ok();

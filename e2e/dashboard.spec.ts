@@ -1,7 +1,8 @@
+import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { type Browser, type Page, expect, test } from "@playwright/test";
-import { ADMIN_STATE, FILES, PASSWORD, USERNAME } from "./paths";
+import { ADMIN_STATE, CRONTAB, FILES, PASSWORD, PLUG, USERNAME, WEBHOOK, WEBHOOKS } from "./paths";
 
 const PAGES = ["Overview", "Containers", "Scripts", "Files", "Schedules", "Power", "History", "Alerts", "Settings"];
 const heading = (page: Page, name: string) => page.getByRole("heading", { name, level: 1 });
@@ -97,6 +98,83 @@ test("a script is created, run and recorded in the history", async ({ page }) =>
   await expect(run.locator(".badge")).toHaveText("success", { timeout: 15000 });
 });
 
+test("a schedule is written to the crontab, runs, and can be paused and deleted", async ({ page }) => {
+  await page.goto("/");
+  const created = await page.request.post("/api/script/create-custom", { data: { name: "Nightly job", filename: "nightly.sh", directory: FILES, content: "echo nightly output\n" } });
+  expect(created.status()).toBe(200);
+  await open(page, "Schedules");
+  await page.getByRole("button", { name: "New schedule" }).click();
+  await modal(page).locator('select[name="scriptId"]').selectOption({ label: "Nightly job" });
+  await modal(page).getByRole("button", { name: "Create schedule" }).click();
+  await expect(modal(page)).toBeHidden();
+  const row = page.locator(".schedule-row", { hasText: "Nightly job" });
+  await expect(row.getByText("Every day at 03:00 · 0 3 * * *")).toBeVisible();
+  await expect(row.locator(".badge")).toHaveText("Enabled");
+
+  const managed = () => readFileSync(CRONTAB, "utf8").split("\n").filter((line) => line.includes("# media-dashboard:"));
+  expect(readFileSync(CRONTAB, "utf8")).toContain("# my own job\n0 1 * * * true\n");
+  expect(managed()).toHaveLength(1);
+  expect(managed()[0]).toContain(`/bin/bash '${path.join(FILES, "nightly.sh")}'`);
+
+  // Run the job the way cron would, then find it in the history.
+  execFileSync("sh", ["-c", managed()[0].slice("0 3 * * * ".length).replaceAll("\\%", "%")]);
+  await open(page, "History");
+  await page.getByRole("button", { name: /Cron runs/ }).click();
+  const run = page.locator(".schedule-row", { hasText: "Every day at 03:00" }).first();
+  await expect(run.locator(".badge")).toHaveText("success", { timeout: 15000 });
+
+  await open(page, "Schedules");
+  await row.getByRole("button", { name: "Pause" }).click();
+  await expect(row.locator(".badge")).toHaveText("Paused");
+  expect(managed()).toHaveLength(0);
+  await row.getByRole("button", { name: "Enable" }).click();
+  await expect(row.locator(".badge")).toHaveText("Enabled");
+  expect(managed()).toHaveLength(1);
+  await row.getByRole("button", { name: "Delete" }).click();
+  await expect(row).toHaveCount(0);
+  expect(readFileSync(CRONTAB, "utf8")).toBe("# my own job\n0 1 * * * true\n");
+});
+
+test("a power device is added, read and switched", async ({ page }) => {
+  await page.goto("/");
+  await open(page, "Power");
+  await page.getByRole("button", { name: "Add device" }).click();
+  await modal(page).locator('select[name="driver"]').selectOption("shelly");
+  await modal(page).locator('input[name="name"]').fill("Test plug");
+  await modal(page).locator('input[name="host"]').fill(PLUG);
+  await modal(page).getByRole("button", { name: "Add device" }).click();
+  await expect(modal(page)).toBeHidden();
+  const row = page.locator(".schedule-row", { hasText: "Test plug" });
+  await expect(row.locator(".badge")).toHaveText("9.0 W");
+  await expect(page.locator(".metric", { hasText: "Power now" })).toContainText("9.0 W");
+
+  await row.getByRole("button", { name: "Turn off" }).click();
+  await expect(modal(page).getByText("Everything powered through it loses power")).toBeVisible();
+  await modal(page).getByRole("button", { name: "Turn off" }).click();
+  await expect(row.locator(".badge")).toHaveText("0.0 W · off");
+  await row.getByRole("button", { name: "Turn on" }).click();
+  await expect(row.locator(".badge")).toHaveText("9.0 W");
+});
+
+test("a notification channel is added and receives a test message", async ({ page }) => {
+  await page.goto("/");
+  await open(page, "Settings");
+  await page.getByRole("button", { name: "Add channel" }).click();
+  await modal(page).getByLabel("Service").selectOption("webhook");
+  await modal(page).locator('input[name="name"]').fill("Test hook");
+  await modal(page).locator('input[name="url"]').fill(WEBHOOK);
+  await modal(page).getByRole("button", { name: "Add channel" }).click();
+  await expect(modal(page)).toBeHidden();
+  const row = page.locator(".schedule-row", { hasText: "Test hook" });
+  // The address is shown without its path, which may hold the credentials.
+  await expect(row).toContainText("127.0.0.1:3212");
+  await expect(row).not.toContainText("/hook");
+  await row.getByRole("button", { name: "Test" }).click();
+  await expect(row.getByText("Test sent.")).toBeVisible();
+  const received = readFileSync(WEBHOOKS, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+  expect(received.at(-1)).toMatchObject({ source: "linux-server-control", title: "Test notification", severity: "info" });
+});
+
 test("a read-only account sees the pages but cannot change anything", async ({ page, browser }) => {
   await page.goto("/");
   await open(page, "Settings");
@@ -119,7 +197,7 @@ test("a read-only account sees the pages but cannot change anything", async ({ p
   await expect(guest.getByRole("heading", { name: "Change password" })).toBeVisible();
   await expect(guest.getByRole("heading", { name: "Accounts" })).toHaveCount(0);
   // The interface hides the controls; the API refuses the requests as well.
-  for (const [route, data] of [["script/run", { id: "any" }], ["file/browse", { path: FILES }], ["container", { name: "any", action: "stop" }], ["users/save", { username: "x", role: "admin", password: "another-long-password" }]] as const)
+  for (const [route, data] of [["script/run", { id: "any" }], ["file/browse", { path: FILES }], ["container", { name: "any", action: "stop" }], ["users/save", { username: "x", role: "admin", password: "another-long-password" }], ["power/device/switch", { id: "any", on: false }]] as const)
     expect((await guest.request.post(`/api/${route}`, { data })).status(), route).toBe(403);
   expect((await guest.request.get("/api/config/export")).status()).toBe(403);
   expect((await guest.request.get("/api/state?scope=records")).status()).toBe(200);

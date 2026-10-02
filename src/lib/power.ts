@@ -4,14 +4,21 @@ import { request as httpsRequest } from "node:https";
 import { audit, emitDashboardEvent, read, save, serverSettings } from "./server";
 
 // Smart plugs and energy meters. Each device model is a driver: the fields
-// its settings form needs, and how to read the current power. Readings are
-// taken every minute; energy is the power integrated over time, the same way
-// for every driver.
+// its settings form needs, how to read the current power and, where the device
+// has a relay, how to switch it. Readings are taken every minute; energy is
+// the power integrated over time, the same way for every driver.
 
 export type PowerReading = { powerW: number; on: boolean | null };
 export type DriverField = { key: string; label: string; secret?: boolean; required?: boolean; placeholder?: string; help?: string };
 type Config = Record<string, string>;
-export type Driver = { id: string; name: string; description: string; fields: DriverField[]; read(config: Config): Promise<PowerReading> };
+export type Driver = {
+  id: string; name: string; description: string; fields: DriverField[];
+  read(config: Config): Promise<PowerReading>;
+  // Turns the device's relay on or off; absent when the driver cannot.
+  switch?(config: Config, on: boolean): Promise<void>;
+  // Whether this device can be switched; every device of a driver with `switch` when absent.
+  switchable?(config: Config): boolean;
+};
 
 const TIMEOUT_MS = 8000;
 // fetch only says "fetch failed"; the reason is in its cause (or, for
@@ -101,11 +108,11 @@ export class KlapSession {
     counter.writeInt32BE(seq);
     return { iv: Buffer.concat([this.ivPrefix, counter]), counter };
   }
-  async call(method: string) {
+  async call(method: string, params?: Record<string, unknown>) {
     this.seq = this.seq === 0x7fffffff ? -0x80000000 : this.seq + 1;
     const { iv, counter } = this.iv(this.seq);
     const cipher = createCipheriv("aes-128-cbc", this.key, iv);
-    const encrypted = Buffer.concat([cipher.update(JSON.stringify({ method })), cipher.final()]);
+    const encrypted = Buffer.concat([cipher.update(JSON.stringify(params ? { method, params } : { method })), cipher.final()]);
     const body = Buffer.concat([sha256(this.signature, counter, encrypted), encrypted]);
     const response = await request(`${this.base}/app/request?seq=${this.seq}`, { method: "POST", headers: { Cookie: this.cookie }, body });
     const decipher = createDecipheriv("aes-128-cbc", this.key, iv);
@@ -114,6 +121,18 @@ export class KlapSession {
     if (result.error_code !== 0) throw Error(`The plug returned error ${result.error_code}`);
     return result.result;
   }
+}
+async function tapoSession(config: Config) {
+  const session = new KlapSession(`http://${host(config.host)}`, KlapSession.authHash(config.username.trim(), config.password));
+  try {
+    await session.handshake();
+  } catch (error) {
+    // Newer firmware closes the local API until it is allowed in the app.
+    if (error instanceof Error && error.message.includes("refused the connection"))
+      throw Error(`${config.host.trim()} refused the connection. In the Tapo app, turn on Me > Third-Party Services > Third-Party Compatibility, then try again.`);
+    throw error;
+  }
+  return session;
 }
 const tapo: Driver = {
   id: "tapo",
@@ -125,22 +144,19 @@ const tapo: Driver = {
     { key: "password", label: "Tapo account password", secret: true, required: true },
   ],
   async read(config) {
-    const session = new KlapSession(`http://${host(config.host)}`, KlapSession.authHash(config.username.trim(), config.password));
-    try {
-      await session.handshake();
-    } catch (error) {
-      // Newer firmware closes the local API until it is allowed in the app.
-      if (error instanceof Error && error.message.includes("refused the connection"))
-        throw Error(`${config.host.trim()} refused the connection. In the Tapo app, turn on Me > Third-Party Services > Third-Party Compatibility, then try again.`);
-      throw error;
-    }
+    const session = await tapoSession(config);
     const energy = await session.call("get_energy_usage");
     const info = await session.call("get_device_info").catch(() => null);
     // get_energy_usage reports current_power in milliwatts.
     return { powerW: watts(energy?.current_power) / 1000, on: typeof info?.device_on === "boolean" ? info.device_on : null };
   },
+  async switch(config, on) {
+    await (await tapoSession(config)).call("set_device_info", { device_on: on });
+  },
 };
 
+const shellyGen1Headers = (config: Config): Record<string, string> =>
+  config.username ? { Authorization: `Basic ${Buffer.from(`${config.username}:${config.password || ""}`).toString("base64")}` } : {};
 const shelly: Driver = {
   id: "shelly",
   name: "Shelly (Plug S, Plus/Pro plugs, PM)",
@@ -157,10 +173,17 @@ const shelly: Driver = {
       const status = await (await request(`${base}/rpc/Switch.GetStatus?id=${channel}`)).json();
       return { powerW: watts(status.apower), on: typeof status.output === "boolean" ? status.output : null };
     } catch {
-      const headers: Record<string, string> = config.username ? { Authorization: `Basic ${Buffer.from(`${config.username}:${config.password || ""}`).toString("base64")}` } : {};
-      const status = await (await request(`${base}/status`, { headers })).json();
+      const status = await (await request(`${base}/status`, { headers: shellyGen1Headers(config) })).json();
       const meter = status.meters?.[channel] ?? status.emeters?.[channel];
       return { powerW: watts(meter?.power), on: typeof status.relays?.[channel]?.ison === "boolean" ? status.relays[channel].ison : null };
+    }
+  },
+  async switch(config, on) {
+    const base = `http://${host(config.host)}`, channel = Number(config.channel || 0);
+    try {
+      await request(`${base}/rpc/Switch.Set?id=${channel}&on=${on}`);
+    } catch {
+      await request(`${base}/relay/${channel}?turn=${on ? "on" : "off"}`, { headers: shellyGen1Headers(config) });
     }
   },
 };
@@ -184,6 +207,15 @@ const tasmota: Driver = {
   },
 };
 
+function homeAssistantUrl(config: Config) {
+  const url = config.url.trim().replace(/\/+$/, "");
+  if (!/^https?:\/\/[^\s/]+/.test(url)) throw Error("Enter the Home Assistant URL, starting with http:// or https://");
+  return url;
+}
+function entityId(id: string) {
+  if (!/^\w+\.\w+$/.test(id)) throw Error("Enter an entity ID such as sensor.plug_power");
+  return id;
+}
 const homeAssistant: Driver = {
   id: "homeassistant",
   name: "Home Assistant",
@@ -192,20 +224,22 @@ const homeAssistant: Driver = {
     { key: "url", label: "Home Assistant URL", required: true, placeholder: "http://192.168.1.10:8123" },
     { key: "token", label: "Long-lived access token", secret: true, required: true, help: "Create it in your Home Assistant profile, under Security." },
     { key: "entity", label: "Power sensor entity", required: true, placeholder: "sensor.plug_power" },
-    { key: "switch", label: "Switch entity", placeholder: "switch.plug", help: "Optional, to show whether the plug is on." },
+    { key: "switch", label: "Switch entity", placeholder: "switch.plug", help: "Optional, to show whether the plug is on and to switch it." },
   ],
   async read(config) {
-    const url = config.url.trim().replace(/\/+$/, "");
-    if (!/^https?:\/\/[^\s/]+/.test(url)) throw Error("Enter the Home Assistant URL, starting with http:// or https://");
-    const entity = (id: string) => {
-      if (!/^\w+\.\w+$/.test(id)) throw Error("Enter an entity ID such as sensor.plug_power");
-      return request(`${url}/api/states/${id}`, { headers: { Authorization: `Bearer ${config.token}` } }).then((response) => response.json());
-    };
+    const url = homeAssistantUrl(config);
+    const entity = (id: string) =>
+      request(`${url}/api/states/${entityId(id)}`, { headers: { Authorization: `Bearer ${config.token}` } }).then((response) => response.json());
     const state = await entity(config.entity.trim());
     const unit = String(state.attributes?.unit_of_measurement || "W");
     const power = watts(state.state) * (unit === "kW" ? 1000 : unit === "mW" ? 0.001 : 1);
     const toggle = config.switch?.trim() ? await entity(config.switch.trim()).catch(() => null) : null;
     return { powerW: power, on: toggle ? toggle.state === "on" : null };
+  },
+  switchable: (config) => Boolean(config.switch?.trim()),
+  async switch(config, on) {
+    const body = Buffer.from(JSON.stringify({ entity_id: entityId(config.switch?.trim() || "") }));
+    await request(`${homeAssistantUrl(config)}/api/services/homeassistant/turn_${on ? "on" : "off"}`, { method: "POST", headers: { Authorization: `Bearer ${config.token}`, "Content-Type": "application/json" }, body });
   },
 };
 
@@ -229,7 +263,8 @@ export function publicDevices() {
     const config = Object.fromEntries(Object.entries(device.config).map(([key, value]) =>
       [key, driver?.fields.find((field) => field.key === key)?.secret ? (value ? "••••••••" : "") : value]));
     const live = state[device.id];
-    return { ...device, config, status: live ? { at: live.lastAt ?? null, powerW: live.lastW ?? null, on: live.on ?? null, error: live.error ?? null } : null };
+    const canSwitch = Boolean(driver?.switch) && (driver?.switchable?.(device.config) ?? true);
+    return { ...device, config, canSwitch, status: live ? { at: live.lastAt ?? null, powerW: live.lastW ?? null, on: live.on ?? null, error: live.error ?? null } : null };
   });
 }
 
@@ -255,6 +290,24 @@ export async function savePowerDevice(input: Record<string, unknown>) {
   recordReading(id, reading, Date.now());
   audit(`power device saved ${name} (${driver.id})`);
   return reading;
+}
+
+// Switches a device's relay, then reads it again so the page shows the new
+// state and power at once. Everything behind the device loses power when it
+// is turned off; the page asks before doing that.
+export async function switchPowerDevice(id: string, on: boolean) {
+  const device = powerDevices().find((item) => item.id === id);
+  if (!device) throw Error("Device not found");
+  const driver = DRIVERS.find((item) => item.id === device.driver);
+  if (!driver?.switch || driver.switchable?.(device.config) === false) throw Error("This device cannot be switched from the dashboard");
+  await driver.switch(device.config, on);
+  audit(`power device ${device.name} switched ${on ? "on" : "off"}`);
+  try {
+    recordReading(id, await driver.read(device.config), Date.now());
+  } catch {
+    // The switch itself succeeded; the next minute's reading reports the state.
+  }
+  return { on };
 }
 
 export function deletePowerDevice(id: string) {

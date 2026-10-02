@@ -1,5 +1,6 @@
 // Dashboard data in DATA_DIR: JSON records, sessions, the audit log, the event
 // bus and the credential helpers. Nothing here talks to the managed server.
+import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomBytes, scrypt, timingSafeEqual } from "node:crypto";
 import { appendFileSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -10,9 +11,21 @@ try { mkdirSync(DATA, { recursive: true }); } catch {}
 // user is absent in sessions created before accounts existed; they belong to the owner.
 export type Session = { device: string; expires: number; created: number; user?: string };
 export const sessions = new Map<string, Session>();
+// Parsed records are cached per file identity (modification time, size and
+// inode): a refresh reads a dozen records, several of them more than once, and
+// only re-parses those another writer has replaced since. Callers that change a
+// returned record save it afterwards, which replaces the file.
+const recordCache = new Map<string, { stamp: string; value: unknown }>();
 export function read<T>(name: string, fallback: T): T {
+  const file = path.join(DATA, name + ".json");
   try {
-    return JSON.parse(readFileSync(path.join(DATA, name + ".json"), "utf8"));
+    const { mtimeMs, size, ino } = statSync(file);
+    const stamp = `${mtimeMs}:${size}:${ino}`;
+    const cached = recordCache.get(name);
+    if (cached?.stamp === stamp) return cached.value as T;
+    const value = JSON.parse(readFileSync(file, "utf8"));
+    recordCache.set(name, { stamp, value });
+    return value;
   } catch {
     return fallback;
   }
@@ -83,16 +96,25 @@ export function digest(x: string) {
 export function token() {
   return randomBytes(32).toString("base64url");
 }
+// The account whose request is being handled, so every audited action names
+// who performed it. Kept on globalThis for the same reason as the event bus.
+const actor = ((globalThis as { lscActor?: AsyncLocalStorage<string> }).lscActor ??= new AsyncLocalStorage<string>());
+export function asActor<T>(name: string, work: () => T) {
+  return actor.run(name, work);
+}
 const MAX_AUDIT_LOG_BYTES = 5 * 1024 * 1024;
 // One previous file is kept, so the audit trail never exceeds about 10 MB.
+// Lines written while handling a request start with the account in brackets;
+// the background monitor's lines have none.
 export function audit(x: string) {
   const file = path.join(DATA, "audit.log");
   try {
     if (statSync(file).size > MAX_AUDIT_LOG_BYTES) renameSync(file, file + ".1");
   } catch {}
+  const account = actor.getStore();
   appendFileSync(
     file,
-    new Date().toISOString() + " " + x + "\n",
+    new Date().toISOString() + " " + (account ? `[${account}] ` : "") + x + "\n",
   );
 }
 // Sessions are intentionally persisted without credentials so routine restarts do not sign out every browser.
