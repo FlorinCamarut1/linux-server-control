@@ -45,11 +45,13 @@ export async function saveEditableFile(requested: string, content: string) {
     throw Error("Only text files up to 512 KB can be saved here");
   if (content.includes("\0")) throw Error("Binary content cannot be saved here");
   await runInput(["sh", "-c", 'cat > "$1"', "sh", resolved], content, 15000);
+  forgetListings();
   audit("edited file " + resolved);
 }
 export async function deleteEditableFile(requested: string) {
   const resolved = await resolveSelectedFile(requested);
   await run(["rm", "-f", "--", resolved]);
+  forgetListings();
   audit("deleted file " + resolved);
 }
 export type ScriptBrowserEntry = {
@@ -177,7 +179,7 @@ else:
     else:
         entries.sort(key=lambda item: (item["type"] != "directory", item["name"].lower()))
     offset = max(0, int(request.get("offset") or 0))
-    limit = min(1000, max(1, int(request.get("limit") or 100)))
+    limit = min(5000, max(1, int(request.get("limit") or 100)))
     parent = os.path.dirname(target)
     print(json.dumps({"path": target, "roots": roots,
         "parent": parent if target not in roots and any(inside(parent, root) for root in roots) else None,
@@ -205,14 +207,46 @@ async function remoteFileOperation<T = Record<string, unknown>>(request: Record<
 export function browseScripts(requested = "") {
   return remoteFileOperation({ path: requested, action: "browse", scripts: true });
 }
-export function browseFiles(requested = "", options: { search?: string; sort?: string; offset?: number; limit?: number } = {}) {
-  return remoteFileOperation({ path: requested, action: "browse", scripts: false, ...options });
+// A folder is listed whole when its first page is requested, and its further
+// pages are cut from that listing: the server then lists, measures (when sorted
+// by size) and sorts the folder once instead of once per page, and the pages
+// belong to the same listing. Opening the first page again lists again, and any
+// change made through the dashboard forgets the listings. A folder with more
+// entries than this is paged on the server instead.
+const LISTING_MAX_ENTRIES = 5000;
+const LISTING_TTL_MS = 5 * 60 * 1000;
+const LISTINGS_KEPT = 8;
+type Listing = { path: string; roots: string[]; parent: string | null; entries: unknown[]; total: number };
+const listings = new Map<string, { at: number; listing: Listing }>();
+function forgetListings() {
+  listings.clear();
+}
+export async function browseFiles(requested = "", options: { search?: string; sort?: string; offset?: number; limit?: number } = {}) {
+  const search = options.search || "", sort = options.sort || "name";
+  const offset = Math.max(0, Math.floor(Number(options.offset) || 0));
+  const limit = Math.min(1000, Math.max(1, Math.floor(Number(options.limit) || 100)));
+  const key = JSON.stringify([allowedRoots(), requested, search, sort]);
+  const page = (listing: Listing) => ({ ...listing, entries: listing.entries.slice(offset, offset + limit), offset, limit });
+  const kept = offset > 0 ? listings.get(key) : undefined;
+  if (kept && Date.now() - kept.at < LISTING_TTL_MS) return page(kept.listing);
+  const request = { path: requested, action: "browse", scripts: false, search, sort };
+  const listing = await remoteFileOperation<Listing>({ ...request, offset: 0, limit: LISTING_MAX_ENTRIES });
+  listings.delete(key);
+  if (listing.total > listing.entries.length)
+    return offset === 0 ? page(listing) : remoteFileOperation({ ...request, offset, limit });
+  listings.set(key, { at: Date.now(), listing });
+  for (const oldest of listings.keys()) {
+    if (listings.size <= LISTINGS_KEPT) break;
+    listings.delete(oldest);
+  }
+  return page(listing);
 }
 export function folderSizes(requested: string) {
   return remoteFileOperation({ path: requested, action: "sizes", scripts: false });
 }
 export async function deleteFolder(requested: string) {
   await remoteFileOperation({ path: requested, action: "delete" });
+  forgetListings();
   audit("deleted folder " + requested);
 }
 export async function changeFile(
@@ -228,10 +262,12 @@ export async function changeFile(
     destination,
     name,
   });
+  forgetListings();
   audit(`${action} ${source}${result.path ? " -> " + result.path : ""}`);
   return result;
 }
 export async function createFileOrFolder(directory: string, name: string, kind: "file" | "folder") {
   const result = await remoteFileOperation<FileChange>({ path: directory, action: "create", name, kind });
+  forgetListings();
   audit(`created ${kind} ${result.path}`); return result;
 }

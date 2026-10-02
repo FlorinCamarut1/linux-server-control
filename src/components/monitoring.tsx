@@ -4,7 +4,7 @@ import { PowerPage } from "@/components/power";
 import { memo, useEffect, useMemo, useState } from "react";
 import { api } from "@/lib/client-api";
 import { Btn, Panel, Metric, formatBytes, formatPercent, Modal } from "@/components/ui";
-import type { Run, St } from "@/lib/types";
+import type { CronRun, Run, St } from "@/lib/types";
 import {
   Circle,
   Clock3,
@@ -14,7 +14,7 @@ import {
 } from "lucide-react";
 export function Overview({ state, active, stopped, openLogs }: { state: St; active: number; stopped: number; openLogs: (title: string, path: string, body: unknown) => void }) {
   const failed = state.recentRuns.find((run) => run.status === "failed");
-  const latestScheduleFailure = state.cronRuns.find((run) => run.status === "failed");
+  const latestScheduleFailure = state.cronFailure;
   return <>
     <section className="metrics">
       <Metric label="Containers" value={`${active} running`} note={`${stopped} stopped`} icon={<Container />} />
@@ -56,23 +56,36 @@ export function describeAlert(metric: string, threshold: number) {
   const [label, unit] = ALERT_METRICS[metric] ?? [metric, ""];
   return `${label} ≥ ${threshold}${unit}`;
 }
-// `runs` is undefined until the full run history has been loaded.
-export function HistoryPanel({ runs: loadedRuns, cronRuns, metrics, openLog }: { runs: Run[] | undefined; cronRuns: St["cronRuns"]; metrics: St["metrics"]; openLog: (run: Run) => void }) {
-  const runs = loadedRuns ?? [];
-  const loading = loadedRuns === undefined;
+type HistoryPage = { rows: (Run | CronRun)[]; total: number; counts: { scripts: number; cron: number } };
+const HISTORY_PAGE_ROWS = 20;
+// The run history, a page at a time: searching, filtering and paging happen on
+// the server, so the page never holds more than the rows it shows.
+export function HistoryPanel({ metrics, openLog }: { metrics: St["metrics"]; openLog: (run: Run) => void }) {
   const latest = metrics?.latest;
   const [kind, setKind] = useState<"scripts" | "cron">("scripts");
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("all");
   const [page, setPage] = useState(0);
-  const rows = kind === "scripts" ? runs : cronRuns;
-  const filtered = rows.filter((row) => {
-    const title = kind === "scripts" ? (row as Run).scriptName : (row as St["cronRuns"][number]).label;
-    return title.toLowerCase().includes(search.toLowerCase()) && (status === "all" || row.status === status);
-  });
-  const perPage = 20, pages = Math.max(1, Math.ceil(filtered.length / perPage));
-  const visible = filtered.slice(page * perPage, page * perPage + perPage);
+  const [data, setData] = useState<(HistoryPage & { kind: string }) | null>(null);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    let current = true;
+    const query = new URLSearchParams({ kind, search, status, offset: String(page * HISTORY_PAGE_ROWS), limit: String(HISTORY_PAGE_ROWS) });
+    const load = () => api(`history/runs?${query}`, undefined, true)
+      .then((result: HistoryPage) => { if (current) { setData({ ...result, kind }); setError(""); } })
+      .catch((reason) => { if (current) setError(reason instanceof Error ? reason.message : "Could not load the history"); });
+    // Typing in the search field waits a moment instead of asking per letter.
+    const first = setTimeout(load, search ? 250 : 0);
+    const timer = setInterval(() => { if (!document.hidden) void load(); }, 15000);
+    return () => { current = false; clearTimeout(first); clearInterval(timer); };
+  }, [kind, search, status, page]);
+  // Rows of the other tab are not shown while this tab's first page loads.
+  const rows = data?.kind === kind ? data.rows : [];
+  const loading = data?.kind !== kind;
+  const total = loading ? 0 : data!.total;
+  const pages = Math.max(1, Math.ceil(total / HISTORY_PAGE_ROWS));
   const switchKind = (next: "scripts" | "cron") => { setKind(next); setSearch(""); setStatus("all"); setPage(0); };
+  const badge = (run: Run | CronRun) => <span className={`badge ${run.status === "success" ? "up" : run.status === "failed" ? "down" : "root"}`}>{run.status}{run.status === "failed" && run.exitCode !== undefined ? ` · code ${run.exitCode}` : ""}</span>;
   return <>
     <section className="metrics">
       <Metric label="CPU history" value={latest ? `${latest.cpu.toFixed(1)}%` : "No samples"} icon={<Gauge />} />
@@ -82,20 +95,21 @@ export function HistoryPanel({ runs: loadedRuns, cronRuns, metrics, openLog }: {
     <Panel title="Execution history" note="Search, filter, and review manual script runs or scheduled cron jobs.">
       <div className="panel-toolbar history-toolbar">
         <div className="container-filters" aria-label="History type">
-          <button type="button" className={kind === "scripts" ? "active" : ""} onClick={() => switchKind("scripts")}>Script runs <span>{loading ? "…" : runs.length}</span></button>
-          <button type="button" className={kind === "cron" ? "active" : ""} onClick={() => switchKind("cron")}>Cron runs <span>{cronRuns.length}</span></button>
+          <button type="button" className={kind === "scripts" ? "active" : ""} onClick={() => switchKind("scripts")}>Script runs <span>{data?.counts.scripts ?? "…"}</span></button>
+          <button type="button" className={kind === "cron" ? "active" : ""} onClick={() => switchKind("cron")}>Cron runs <span>{data?.counts.cron ?? "…"}</span></button>
         </div>
         <div className="history-fields">
           <input aria-label="Search execution history" value={search} onChange={(event) => { setSearch(event.target.value); setPage(0); }} placeholder={kind === "scripts" ? "Search script name or run" : "Search cron schedule"} />
           <select aria-label="Filter status" value={status} onChange={(event) => { setStatus(event.target.value); setPage(0); }}><option value="all">All statuses</option><option value="success">Success</option><option value="failed">Failed</option><option value="running">Running</option></select>
         </div>
-        <small>{filtered.length} result{filtered.length === 1 ? "" : "s"}</small>
+        <small>{loading ? "Loading…" : `${total} result${total === 1 ? "" : "s"}`}</small>
       </div>
-      {visible.map((row, index) => kind === "scripts" ? (() => { const run = row as Run; return <div className="schedule-row" key={run.id}><div className="grow"><b>{run.scriptName}</b><small>{new Date(run.startedAt).toLocaleString()} · {run.arguments || "no arguments"} · {run.durationMs === undefined ? "in progress" : `${(run.durationMs / 1000).toFixed(1)}s`}</small></div><span className={`badge ${run.status === "success" ? "up" : run.status === "failed" ? "down" : "root"}`}>{run.status}{run.status === "failed" && run.exitCode !== undefined ? ` · code ${run.exitCode}` : ""}</span><Btn onClick={() => openLog(run)}>Log</Btn></div>; })() : (() => { const run = row as St["cronRuns"][number]; return <div className="schedule-row" key={`${run.scheduleId}-${run.startedAt}-${index}`}><div className="grow"><b>{run.label}</b><small>Started {new Date(run.startedAt).toLocaleString()}{run.completedAt ? ` · completed ${new Date(run.completedAt).toLocaleString()}` : ""}</small></div><span className={`badge ${run.status === "success" ? "up" : run.status === "failed" ? "down" : "root"}`}>{run.status}{run.status === "failed" && run.exitCode !== undefined ? ` · code ${run.exitCode}` : ""}</span></div>; })())}
-      {!filtered.length && (loading && kind === "scripts"
-        ? <div className="empty-state"><Clock3 size={22}/><b>Loading execution history…</b></div>
-        : <div className="empty-state"><Clock3 size={22}/><b>{search || status !== "all" ? "No matching runs" : kind === "scripts" ? "No execution history yet" : "No cron runs recorded yet"}</b><p>{kind === "scripts" ? "Runs started from the dashboard will appear here." : "Save or change an existing schedule to enable tracking."}</p></div>)}
-      {filtered.length > perPage && <div className="actions panel-pagination"><Btn disabled={page === 0} onClick={() => setPage((value) => value - 1)}>Previous</Btn><small>Page {page + 1} of {pages}</small><Btn disabled={page + 1 >= pages} onClick={() => setPage((value) => value + 1)}>Next</Btn></div>}
+      {error && <div className="panel-body"><div className="alert">{error}</div></div>}
+      {rows.map((row, index) => kind === "scripts"
+        ? (() => { const run = row as Run; return <div className="schedule-row" key={run.id}><div className="grow"><b>{run.scriptName}</b><small>{new Date(run.startedAt).toLocaleString()} · {run.arguments || "no arguments"} · {run.durationMs === undefined ? "in progress" : `${(run.durationMs / 1000).toFixed(1)}s`}</small></div>{badge(run)}<Btn onClick={() => openLog(run)}>Log</Btn></div>; })()
+        : (() => { const run = row as CronRun; return <div className="schedule-row" key={`${run.scheduleId}-${run.startedAt}-${index}`}><div className="grow"><b>{run.label}</b><small>Started {new Date(run.startedAt).toLocaleString()}{run.completedAt ? ` · completed ${new Date(run.completedAt).toLocaleString()}` : ""}</small></div>{badge(run)}</div>; })())}
+      {!loading && !total && !error && <div className="empty-state"><Clock3 size={22}/><b>{search || status !== "all" ? "No matching runs" : kind === "scripts" ? "No execution history yet" : "No cron runs recorded yet"}</b><p>{kind === "scripts" ? "Runs started from the dashboard will appear here." : "Save or change an existing schedule to enable tracking."}</p></div>}
+      {total > HISTORY_PAGE_ROWS && <div className="actions panel-pagination"><Btn disabled={page === 0} onClick={() => setPage((value) => value - 1)}>Previous</Btn><small>Page {Math.min(page, pages - 1) + 1} of {pages}</small><Btn disabled={page + 1 >= pages} onClick={() => setPage((value) => value + 1)}>Next</Btn></div>}
     </Panel>
   </>;
 }

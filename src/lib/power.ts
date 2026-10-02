@@ -188,6 +188,11 @@ const shelly: Driver = {
   },
 };
 
+async function tasmotaCommand(config: Config, command: string) {
+  const query = new URLSearchParams({ cmnd: command });
+  if (config.password) { query.set("user", config.username || "admin"); query.set("password", config.password); }
+  return (await request(`http://${host(config.host)}/cm?${query}`)).json();
+}
 const tasmota: Driver = {
   id: "tasmota",
   name: "Tasmota",
@@ -198,12 +203,16 @@ const tasmota: Driver = {
     { key: "password", label: "Web password", secret: true },
   ],
   async read(config) {
-    const query = new URLSearchParams({ cmnd: "Status 8" });
-    if (config.password) { query.set("user", config.username || "admin"); query.set("password", config.password); }
-    const status = await (await request(`http://${host(config.host)}/cm?${query}`)).json();
+    const status = await tasmotaCommand(config, "Status 8");
     const energy = status.StatusSNS?.ENERGY;
     if (!energy) throw Error("This Tasmota device has no energy meter");
-    return { powerW: watts(Array.isArray(energy.Power) ? energy.Power.reduce((sum: number, value: number) => sum + value, 0) : energy.Power), on: null };
+    // The sensor status does not say whether the relay is on; ask for that too.
+    const relay = await tasmotaCommand(config, "Power").catch(() => null);
+    const state = relay?.POWER ?? relay?.POWER1;
+    return { powerW: watts(Array.isArray(energy.Power) ? energy.Power.reduce((sum: number, value: number) => sum + value, 0) : energy.Power), on: state === "ON" ? true : state === "OFF" ? false : null };
+  },
+  async switch(config, on) {
+    await tasmotaCommand(config, `Power ${on ? "On" : "Off"}`);
   },
 };
 

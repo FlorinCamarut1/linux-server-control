@@ -65,6 +65,36 @@ test("the recent runs are the latest run per script and the latest failure", () 
   const run = (id, scriptId, status) => ({ id, scriptId, scriptName: scriptId, startedAt: "2026-09-27T03:00:00Z", arguments: "", status, logPath: "" });
   server.save("script-runs", [run("6", "a", "success"), run("5", "a", "success"), run("4", "b", "running"), run("3", "a", "failed"), run("2", "b", "failed"), run("1", "c", "success")]);
   assert.deepEqual(plain(server.recentRuns().map((item) => item.id)), ["6", "4", "3", "1"]);
+  assert.ok(server.recentRuns().every((item) => !("logPath" in item)), "the log's location stays on the server");
+});
+
+test("the history is searched, filtered and paged on the server", () => {
+  const { server } = loadServer();
+  const rows = Array.from({ length: 45 }, (_, index) => ({ id: String(index), scriptName: index % 2 ? "Backup" : "Sync ports", status: index % 5 ? "success" : "failed" }));
+  const name = (row) => row.scriptName;
+  const first = server.historyPage(rows, name, {});
+  assert.deepEqual([first.rows.length, first.total, first.offset, first.limit], [20, 45, 0, 20]);
+  const last = server.historyPage(rows, name, { offset: 40 });
+  assert.deepEqual(plain(last.rows.map((row) => row.id)), ["40", "41", "42", "43", "44"]);
+  const found = server.historyPage(rows, name, { search: "BACK", status: "failed" });
+  assert.deepEqual(plain(found.rows.map((row) => row.id)), ["5", "15", "25", "35"]);
+  assert.equal(server.historyPage(rows, name, { status: "all", limit: 5000 }).rows.length, 45 > 100 ? 100 : 45);
+  assert.equal(server.historyPage(rows, name, { offset: -3, limit: 0 }).rows.length, 20, "odd values fall back to the first page");
+});
+
+test("only the end of a run log is read, starting at a line", () => {
+  const { server, data } = loadServer();
+  const log = path.join(data, "run.log");
+  assert.equal(server.readRunLogEnd(log), null, "no log yet");
+  writeFileSync(log, "short log\n");
+  assert.equal(server.readRunLogEnd(log), "short log\n");
+  writeFileSync(log, Array.from({ length: 20000 }, (_, index) => `line ${index} ăîș`).join("\n") + "\n");
+  const end = server.readRunLogEnd(log);
+  const bytes = Buffer.byteLength(end);
+  assert.ok(bytes <= 64 * 1024 && bytes > 63 * 1024, `${bytes} bytes`);
+  assert.match(end, /^line \d+ ăîș\n/, "the view starts at a whole line");
+  assert.ok(end.endsWith("line 19999 ăîș\n"));
+  assert.ok(!end.includes("\ufffd"), "no character is cut in half");
 });
 
 test("failed reads do not poison later snapshots and do not leak the command line", async () => {

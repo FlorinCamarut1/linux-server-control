@@ -71,7 +71,9 @@ export function useDirectory<T>(endpoint: string, directory: string, includeSize
     // The rule cannot see that fetchDirectory only sets state after awaiting.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void fetchDirectory();
-    return () => { generation.current++; };
+    // A response that arrives after this request was replaced is dropped.
+    const requests = generation;
+    return () => { requests.current++; };
   }, [fetchDirectory]);
   const load = useCallback(() => {
     setLoading(true);

@@ -39,6 +39,13 @@ export type AlertRule = {
 export type MetricSample = { at: number; cpu: number; ram: number; temperature: number | null; disk: number; storage?: Record<string, number> };
 export type CronRun = { scheduleId: string; label: string; startedAt: string; completedAt?: string; exitCode?: number; status: "running" | "success" | "failed" };
 export function scriptRuns() { return read<ScriptRun[]>("script-runs", []); }
+// A run as the browser sees it: without the log's location on the dashboard.
+export type PublicRun = Omit<ScriptRun, "logPath">;
+export function publicRun(run: ScriptRun): PublicRun {
+  const shown: Partial<ScriptRun> = { ...run };
+  delete shown.logPath;
+  return shown as PublicRun;
+}
 // The latest run of every script and the latest failed run, newest first: all
 // that the pages other than History show, without sending the whole history.
 export function recentRuns() {
@@ -49,7 +56,17 @@ export function recentRuns() {
     seen.add(run.scriptId);
     if (run.status === "failed") failureFound = true;
     return keep;
-  });
+  }).map(publicRun);
+}
+// One page of the History list: the rows whose name contains the search text
+// and whose status matches, and how many there are in all.
+export function historyPage<T extends { status: string }>(rows: T[], name: (row: T) => string, query: { search?: string; status?: string; offset?: number; limit?: number }) {
+  const search = (query.search || "").toLowerCase();
+  const status = query.status && query.status !== "all" ? query.status : "";
+  const matching = rows.filter((row) => name(row).toLowerCase().includes(search) && (!status || row.status === status));
+  const limit = Math.min(100, Math.max(1, Math.floor(Number(query.limit) || 20)));
+  const offset = Math.max(0, Math.floor(Number(query.offset) || 0));
+  return { rows: matching.slice(offset, offset + limit), total: matching.length, offset, limit };
 }
 export function alertRules() { return read<AlertRule[]>("alerts", []); }
 export function cronRuns() { return read<CronRun[]>("cron-runs", []); }

@@ -1,7 +1,7 @@
 // Registered scripts: folders, run options, running them and their run logs.
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { appendFileSync, closeSync, mkdirSync, openSync, rmSync, writeSync } from "node:fs";
+import { appendFileSync, closeSync, fstatSync, mkdirSync, openSync, readSync, rmSync, writeSync } from "node:fs";
 import path from "node:path";
 import { DATA, audit, emitDashboardEvent, read, save } from "./store";
 import { ROOT_SCRIPT_HELPER, run, runInput, ssh } from "./ssh";
@@ -97,6 +97,23 @@ export function parseArguments(value: string) {
   return args;
 }
 const MAX_RUN_LOG_BYTES = 10 * 1024 * 1024;
+// The end of a run log, for the log viewer. Only the end is read from disk: a
+// live view asks every two seconds, and a log may be 10 MB. A view that starts
+// inside the log starts at a line.
+const RUN_LOG_VIEW_BYTES = 64 * 1024;
+export function readRunLogEnd(logPath: string): string | null {
+  let file: number;
+  try { file = openSync(/* turbopackIgnore: true */ logPath, "r"); } catch { return null; }
+  try {
+    const size = fstatSync(file).size, start = Math.max(0, size - RUN_LOG_VIEW_BYTES);
+    const buffer = Buffer.alloc(size - start);
+    const read = readSync(file, buffer, 0, buffer.length, start);
+    const text = buffer.toString("utf8", 0, read);
+    return start > 0 && text.includes("\n") ? text.slice(text.indexOf("\n") + 1) : text;
+  } finally {
+    closeSync(file);
+  }
+}
 export async function runScript(s: Script, rawArguments = "", selectedFile = "") {
   const scriptArguments = parseArguments(rawArguments);
   if (selectedFile) {

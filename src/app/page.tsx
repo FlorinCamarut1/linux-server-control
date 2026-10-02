@@ -44,8 +44,7 @@ const nav = [
   ["settings", KeyRound, "Settings"],
 ] as const;
 function stateScope(tab: string) {
-  if (tab === "overview" || tab === "containers" || tab === "cron") return "full";
-  return tab === "history" ? "history" : "records";
+  return tab === "overview" || tab === "containers" || tab === "cron" ? "full" : "records";
 }
 export default function Home() {
   const [state, setState] = useState<St | null>(null),
@@ -91,11 +90,9 @@ export default function Home() {
     const scope = hostLoaded.current ? stateScope(tabRef.current) : "full";
     try {
       const data = await api(scope === "full" ? "state" : `state?scope=${scope}`, undefined, silent);
-      // Responses are merged, so what only some scopes carry (the full run
-      // history) stays loaded while other pages refresh.
       if (scope === "full") {
         hostLoaded.current = true;
-        setState((previous) => ({ ...previous, ...data }));
+        setState(data);
       } else setState((previous) => (previous ? { ...previous, ...data } : previous));
       setErr("");
     } catch (e) {
@@ -570,7 +567,7 @@ export default function Home() {
             </details>
           </Panel>
         )}
-        {tab === "history" && <HistoryPanel runs={state.runs} cronRuns={state.cronRuns || []} metrics={state.metrics} openLog={(run) => openLogs(`${run.scriptName} run`, "script/log", { id: run.scriptId, runId: run.id })} />}
+        {tab === "history" && <HistoryPanel metrics={state.metrics} openLog={(run) => openLogs(`${run.scriptName} run`, "script/log", { id: run.scriptId, runId: run.id })} />}
         {tab === "power" && <PowerPage readOnly={readOnly} />}
         {tab === "alerts" && (
           <Panel title="Alert rules" note="Rules are checked every 5 minutes and on each dashboard refresh; cooldowns prevent repeated notifications." extra={readOnly ? undefined : <Btn className="primary" onClick={() => setAlertEditor(null)}>New alert</Btn>}>

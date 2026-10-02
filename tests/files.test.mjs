@@ -17,8 +17,8 @@ function tree() {
   writeFileSync(path.join(outside, "secret.txt"), "secret\n");
   writeFileSync(path.join(root, "image.bin"), Buffer.from([0, 1, 2, 3, 255, 0, 7]));
   symlinkSync(outside, path.join(root, "escape"));
-  const { server } = loadServer({ host: realHost, env: { ALLOWED_PATHS: root, SCRIPT_ROOT: root } });
-  return { server, root, outside };
+  const { server, commands } = loadServer({ host: realHost, env: { ALLOWED_PATHS: root, SCRIPT_ROOT: root } });
+  return { server, root, outside, commands };
 }
 
 test("browsing stays inside the allowed locations, also through symlinks", async () => {
@@ -83,6 +83,32 @@ test("new files and folders are created inside the root with valid names only", 
   assert.ok(existsSync(path.join(root, "new-folder", "empty.txt")));
   await assert.rejects(server.createFileOrFolder(root, "../outside.txt", "file"), /valid name/);
   await assert.rejects(server.createFileOrFolder(root, "notes.txt", "file"), /already exists/);
+});
+
+test("a folder is listed once for all its pages, and again after a change", async () => {
+  const { server, root, commands } = tree();
+  for (let index = 0; index < 7; index++) writeFileSync(path.join(root, `page-${index}.txt`), "x");
+  const listed = () => commands.filter((item) => item.argv[0] === "python3").length;
+  const first = plain(await server.browseFiles(root, { limit: 3 }));
+  assert.deepEqual([first.entries.length, first.offset, first.limit], [3, 0, 3]);
+  const second = plain(await server.browseFiles(root, { offset: 3, limit: 3 }));
+  const third = plain(await server.browseFiles(root, { offset: 6, limit: 3 }));
+  assert.equal(listed(), 1, "later pages come from the first page's listing");
+  assert.equal(second.total, first.total);
+  const names = [...first.entries, ...second.entries, ...third.entries].map((entry) => entry.name);
+  assert.equal(new Set(names).size, names.length, "no entry appears on two pages");
+  assert.deepEqual([second.parent, plain(second.roots)], [first.parent, plain(first.roots)]);
+
+  await server.browseFiles(root, { limit: 3 });
+  assert.equal(listed(), 2, "opening the first page lists again");
+  await server.createFileOrFolder(root, "added.txt", "file");
+  const after = plain(await server.browseFiles(root, { offset: 3, limit: 3 }));
+  assert.equal(after.total, first.total + 1, "a change through the dashboard forgets the listing");
+  // Another search is another listing.
+  const before = listed();
+  const found = plain(await server.browseFiles(root, { search: "page-", offset: 3, limit: 3 }));
+  assert.equal(found.total, 7);
+  assert.equal(listed(), before + 1);
 });
 
 test("sorting by size measures folders first and pages through the whole folder", async () => {

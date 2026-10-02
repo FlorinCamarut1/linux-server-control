@@ -85,11 +85,15 @@ test("Shelly: Gen2 RPC, with a fallback to the Gen1 status API", async () => {
 test("Tasmota and Home Assistant readings", async () => {
   const power = loadPower(loadServer().server);
   const tasmota = await device((req, res) => {
-    const query = new URL(req.url, "http://t").searchParams;
-    assert.equal(query.get("cmnd"), "Status 8");
-    json(res, { StatusSNS: { ENERGY: { Power: 42 } } });
+    const command = new URL(req.url, "http://t").searchParams.get("cmnd");
+    if (command === "Status 8") return json(res, { StatusSNS: { ENERGY: { Power: 42 } } });
+    if (command === "Power") return json(res, { POWER: "ON" });
+    json(res, {}, 404);
   });
-  assert.equal((await driver(power, "tasmota").read({ host: tasmota })).powerW, 42);
+  assert.deepEqual({ ...(await driver(power, "tasmota").read({ host: tasmota })) }, { powerW: 42, on: true });
+  // A device that does not answer the relay question still reports its power.
+  const meter = await device((req, res) => req.url.includes("Status") ? json(res, { StatusSNS: { ENERGY: { Power: [1, 2] } } }) : json(res, {}, 500));
+  assert.deepEqual({ ...(await driver(power, "tasmota").read({ host: meter })) }, { powerW: 3, on: null });
   const ha = await device((req, res) => {
     if (req.headers.authorization !== "Bearer token-1") return json(res, {}, 401);
     if (req.url === "/api/states/sensor.plug_power") return json(res, { state: "1.25", attributes: { unit_of_measurement: "kW" } });
@@ -131,10 +135,16 @@ test("devices with a relay are switched and read again", async () => {
   await power.savePowerDevice({ name: "Old Shelly", driver: "shelly", host: gen1Host, username: "admin", password: "pw" });
   await power.savePowerDevice({ name: "Meter", driver: "homeassistant", url: `http://${haHost}`, token: "token-1", entity: "sensor.plug_power" });
   await power.savePowerDevice({ name: "HA plug", driver: "homeassistant", url: `http://${haHost}`, token: "token-1", entity: "sensor.plug_power", switch: "switch.plug" });
-  await power.savePowerDevice({ name: "Tasmota", driver: "tasmota", host: await device((req, res) => json(res, { StatusSNS: { ENERGY: { Power: 1 } } })) });
+  const tasmota = { on: true, calls: [] };
+  await power.savePowerDevice({ name: "Tasmota", driver: "tasmota", password: "pw", host: await device((req, res) => {
+    const query = new URL(req.url, "http://t").searchParams;
+    tasmota.calls.push(`${query.get("cmnd")} ${query.get("user")}:${query.get("password")}`);
+    if (query.get("cmnd") === "Power Off") tasmota.on = false;
+    json(res, query.get("cmnd") === "Status 8" ? { StatusSNS: { ENERGY: { Power: tasmota.on ? 5 : 0 } } } : { POWER: tasmota.on ? "ON" : "OFF" });
+  }) });
   const shown = Object.fromEntries(power.publicDevices().map((item) => [item.name, item]));
   assert.deepEqual(Object.fromEntries(Object.entries(shown).map(([name, item]) => [name, item.canSwitch])),
-    { Rack: true, Shelly: true, "Old Shelly": true, Meter: false, "HA plug": true, Tasmota: false });
+    { Rack: true, Shelly: true, "Old Shelly": true, Meter: false, "HA plug": true, Tasmota: true });
 
   await power.switchPowerDevice(shown.Rack.id, false);
   assert.equal(plug.on, false);
@@ -151,7 +161,9 @@ test("devices with a relay are switched and read again", async () => {
   assert.deepEqual(haCalls, ['/api/services/homeassistant/turn_off application/json {"entity_id":"switch.plug"}']);
 
   await assert.rejects(power.switchPowerDevice(shown.Meter.id, false), /cannot be switched/);
-  await assert.rejects(power.switchPowerDevice(shown.Tasmota.id, false), /cannot be switched/);
+  await power.switchPowerDevice(shown.Tasmota.id, false);
+  assert.ok(tasmota.calls.includes("Power Off admin:pw"));
+  assert.equal(power.publicDevices().find((item) => item.name === "Tasmota").status.on, false);
   await assert.rejects(power.switchPowerDevice("missing", false), /not found/);
   assert.match(readFileSync(path.join(data, "audit.log"), "utf8"), /power device Rack switched off\n/);
 });

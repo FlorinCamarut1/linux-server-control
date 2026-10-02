@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { existsSync, readFileSync } from "node:fs";
 import {
   addFolder,
   addMonitoredPath,
@@ -20,6 +19,7 @@ import {
   exportConfiguration,
   folderSizes,
   folders,
+  historyPage,
   hostSnapshot,
   HISTORY_RANGES,
   type HistoryRange,
@@ -27,7 +27,9 @@ import {
   metricsSummary,
   monitoredPaths,
   preflight,
+  publicRun,
   readEditableFile,
+  readRunLogEnd,
   recentRuns,
   recordMetricSample,
   removeMonitoredPath,
@@ -71,14 +73,13 @@ function records({ devices, user }: Context) {
 
 // ?scope=records returns only the stored records, for pages that show no live
 // host data; the background monitor keeps metrics and alerts current meanwhile.
-// ?scope=history adds the cron runs and every script run; the other scopes carry
-// only the recent runs. The default reads the host as well.
+// The default reads the host as well. Neither carries the run history, only the
+// recent runs and the latest failed scheduled run; History asks for its pages.
 async function state(context: Context) {
   const { req, session } = context;
   if (session.device === "demo") return NextResponse.json({ ...demoState, user: context.user });
   const scope = req.nextUrl.searchParams.get("scope");
-  if (scope === "records") return NextResponse.json({ ...records(context), cronRuns: cronRuns() });
-  if (scope === "history") return NextResponse.json({ ...records(context), runs: scriptRuns(), cronRuns: await collectCronRuns() });
+  if (scope === "records") return NextResponse.json({ ...records(context), cronFailure: cronFailure(cronRuns()) });
   let snapshot;
   try {
     snapshot = await hostSnapshot();
@@ -92,8 +93,25 @@ async function state(context: Context) {
     ...host,
     ...records(context),
     alertState: alerts,
-    cronRuns: await collectCronRuns(cronLog),
+    cronFailure: cronFailure(await collectCronRuns(cronLog)),
   });
+}
+const cronFailure = (runs: ReturnType<typeof cronRuns>) => runs.find((run) => run.status === "failed") ?? null;
+
+// One page of script runs or, with ?kind=cron, of scheduled runs, with the
+// number of each for the page's tabs. The scheduled runs are read from the
+// server first, so the page is current without a full refresh.
+async function history({ req, session }: Context) {
+  const query = req.nextUrl.searchParams;
+  const page = { search: query.get("search") || "", status: query.get("status") || "", offset: Number(query.get("offset")), limit: Number(query.get("limit")) };
+  if (session.device === "demo") return NextResponse.json({ ...historyPage([], () => "", page), counts: { scripts: 0, cron: 0 } });
+  const cron = query.get("kind") === "cron";
+  const scheduled = cron ? await collectCronRuns() : cronRuns();
+  const manual = scriptRuns();
+  const result = cron
+    ? historyPage(scheduled, (run) => run.label, page)
+    : historyPage(manual.map(publicRun), (run) => run.scriptName, page);
+  return NextResponse.json({ ...result, counts: { scripts: manual.length, cron: scheduled.length } });
 }
 
 function findScript(body: Body) {
@@ -220,10 +238,7 @@ const scriptRoutes: Routes<Context> = {
     const runRecord = body.runId
       ? scriptRuns().find((item) => item.id === body.runId && item.scriptId === script.id)
       : scriptRuns().find((item) => item.scriptId === script.id);
-    const logPath = runRecord?.logPath;
-    const output = logPath && existsSync(/* turbopackIgnore: true */ logPath)
-      ? readFileSync(/* turbopackIgnore: true */ logPath, "utf8").slice(-64000)
-      : "No dashboard run log is available yet.";
+    const output = (runRecord?.logPath ? readRunLogEnd(runRecord.logPath) : null) ?? "No dashboard run log is available yet.";
     return NextResponse.json({ output });
   },
   "POST script/delete": async ({ body }) => {
@@ -251,7 +266,7 @@ const scriptRoutes: Routes<Context> = {
 };
 
 const historyRoutes: Routes<Context> = {
-  "GET history/runs": () => NextResponse.json({ runs: scriptRuns() }),
+  "GET history/runs": history,
   "GET history/metrics": ({ req }) => {
     const range = req.nextUrl.searchParams.get("range") || "24h";
     if (!(range in HISTORY_RANGES)) throw Error("Choose 24h, 7d or 30d");
