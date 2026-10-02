@@ -35,6 +35,8 @@ export type St = {
   folders: string[];
   cron: string;
   devices: Record<string, { name: string; created: string }>;
+  // The key in `devices` of the browser this page runs in.
+  device?: string;
   host: string;
   time: string;
   root: { available: boolean; cron: string; system: string };
@@ -57,13 +59,15 @@ export type St = {
     cpuUsagePercent: number;
     cpuCores: number;
   };
-  // The latest run of each script and the latest failure; the History page
-  // loads the run history itself, a page at a time.
+  // The latest run of each script; the History page loads the run history
+  // itself, a page at a time.
   recentRuns: Run[];
   alerts: { id: string; name: string; metric: string; threshold: number; enabled: boolean; cooldownMinutes: number; lastTriggeredAt?: number }[];
+  // The value each alert metric had at the last full refresh.
+  alertState?: { values: Record<string, number> };
   metrics?: { latest: { at: number; cpu: number; ram: number; temperature: number | null; disk: number } | null; count: number; intervalMinutes: number };
-  // The latest failed scheduled run.
-  cronFailure: CronRun | null;
+  // Schedules whose latest finished run failed, newest first.
+  cronFailures?: CronRun[];
   monitoredPaths: string[];
 };
 export type ScriptBrowserData = {

@@ -60,12 +60,22 @@ test("stored records are parsed once until their file changes", () => {
   assert.deepEqual(plain(server.scripts()), [], "a removed file falls back");
 });
 
-test("the recent runs are the latest run per script and the latest failure", () => {
+test("the recent runs are the latest run of each script", () => {
   const { server } = loadServer();
   const run = (id, scriptId, status) => ({ id, scriptId, scriptName: scriptId, startedAt: "2026-09-27T03:00:00Z", arguments: "", status, logPath: "" });
-  server.save("script-runs", [run("6", "a", "success"), run("5", "a", "success"), run("4", "b", "running"), run("3", "a", "failed"), run("2", "b", "failed"), run("1", "c", "success")]);
-  assert.deepEqual(plain(server.recentRuns().map((item) => item.id)), ["6", "4", "3", "1"]);
+  server.save("script-runs", [run("6", "a", "success"), run("5", "a", "success"), run("4", "b", "running"), run("3", "a", "failed"), run("2", "b", "failed"), run("1", "c", "failed")]);
+  assert.deepEqual(plain(server.recentRuns().map((item) => item.id)), ["6", "4", "1"], "an earlier failure of a script that ran again is history");
   assert.ok(server.recentRuns().every((item) => !("logPath" in item)), "the log's location stays on the server");
+});
+
+test("a schedule needs attention only while its latest finished run failed", () => {
+  const { server } = loadServer();
+  const run = (scheduleId, status, minute) => ({ scheduleId, label: scheduleId, startedAt: `2026-09-27T03:${minute}:00+03:00`, status });
+  const schedules = ["fixed", "broken", "busy"].map((id) => ({ id, scriptId: "", expression: "0 3 * * *", label: id, enabled: true }));
+  // Newest first, as collectCronRuns returns them.
+  const runs = [run("busy", "running", "50"), run("fixed", "success", "40"), run("deleted", "failed", "35"), run("broken", "failed", "30"), run("busy", "failed", "20"), run("fixed", "failed", "10"), run("broken", "failed", "05")];
+  assert.deepEqual(plain(server.failingCronRuns(runs, schedules).map((item) => `${item.scheduleId} ${item.startedAt.slice(14, 16)}`)), ["broken 30", "busy 20"]);
+  assert.deepEqual(plain(server.failingCronRuns([], schedules)), []);
 });
 
 test("the history is searched, filtered and paged on the server", () => {
@@ -101,7 +111,7 @@ test("failed reads do not poison later snapshots and do not leak the command lin
   const { server, commands } = loadServer({ host: snapshotHost({ failStats: true }) });
   await assert.rejects(server.hostSnapshot(), (error) => {
     assert.equal(error.message, "ssh: connect to host server port 22: Connection refused");
-    assert.ok(!error.message.includes("bash -lc"));
+    assert.ok(!error.message.includes("bash -c"));
     return true;
   });
   await assert.rejects(server.hostSnapshot(), /Connection refused/);

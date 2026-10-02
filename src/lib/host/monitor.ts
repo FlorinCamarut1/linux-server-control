@@ -82,16 +82,20 @@ export function recordMetricSample(stats: SystemStats) {
 // Failed-run alerts count recent failures only; counting the whole history kept
 // an alert firing forever once the threshold had been reached.
 export const FAILED_RUN_WINDOW_MS = 24 * 60 * 60 * 1000;
-const ALERT_LABELS: Record<AlertRule["metric"], string> = { temperature: "CPU temperature", cpu: "CPU use", ram: "RAM use", disk: "System disk use", failedScripts: "Failed script runs in the last 24 hours", stoppedContainers: "Stopped containers" };
-const ALERT_UNITS: Record<AlertRule["metric"], string> = { temperature: " °C", cpu: "%", ram: "%", disk: "%", failedScripts: "", stoppedContainers: "" };
+const ALERT_LABELS: Record<AlertRule["metric"], string> = { temperature: "CPU temperature", cpu: "CPU use", ram: "RAM use", disk: "System disk use", storage: "Storage use", failedScripts: "Failed script runs in the last 24 hours", stoppedContainers: "Stopped containers" };
+const ALERT_UNITS: Record<AlertRule["metric"], string> = { temperature: " °C", cpu: "%", ram: "%", disk: "%", storage: "%", failedScripts: "", stoppedContainers: "" };
 export function evaluateAlerts(snapshot: { stats: SystemStats; containers: { State: string }[] }) {
   const since = Date.now() - FAILED_RUN_WINDOW_MS;
   const failed = scriptRuns().filter((item) => item.status === "failed" && Date.parse(item.startedAt) >= since).length;
   const stopped = snapshot.containers.filter((item) => item.State !== "running").length;
+  // The storage rule watches every monitored path at once, through the fullest.
+  let fullest: { path: string; usedPercent: number } | undefined;
+  for (const item of snapshot.stats.storage || [])
+    if (item.usedPercent !== null && (!fullest || item.usedPercent > fullest.usedPercent)) fullest = { path: item.path, usedPercent: item.usedPercent };
   const values: Record<AlertRule["metric"], number> = {
     temperature: snapshot.stats.temperatureC ?? 0, cpu: snapshot.stats.cpuUsagePercent,
     ram: snapshot.stats.memoryTotalBytes ? snapshot.stats.memoryUsedBytes / snapshot.stats.memoryTotalBytes * 100 : 0,
-    disk: snapshot.stats.diskUsedPercent, failedScripts: failed, stoppedContainers: stopped,
+    disk: snapshot.stats.diskUsedPercent, storage: fullest?.usedPercent ?? 0, failedScripts: failed, stoppedContainers: stopped,
   };
   const now = Date.now();
   const triggered: AlertRule[] = [];
@@ -100,7 +104,8 @@ export function evaluateAlerts(snapshot: { stats: SystemStats; containers: { Sta
     if (rule.enabled && values[rule.metric] >= rule.threshold && (!rule.lastTriggeredAt || now - rule.lastTriggeredAt >= cool)) {
       const next = { ...rule, lastTriggeredAt: now };
       triggered.push(next); audit(`alert triggered ${rule.name}: ${values[rule.metric]}`);
-      emitDashboardEvent({ type: "alert", severity: "warning", title: `Alert: ${rule.name}`, message: `${ALERT_LABELS[rule.metric]} is ${Math.round(values[rule.metric] * 10) / 10}${ALERT_UNITS[rule.metric]}, at or above the threshold of ${rule.threshold}${ALERT_UNITS[rule.metric]}.` });
+      const label = rule.metric === "storage" && fullest ? `${ALERT_LABELS.storage} of ${fullest.path}` : ALERT_LABELS[rule.metric];
+      emitDashboardEvent({ type: "alert", severity: "warning", title: `Alert: ${rule.name}`, message: `${label} is ${Math.round(values[rule.metric] * 10) / 10}${ALERT_UNITS[rule.metric]}, at or above the threshold of ${rule.threshold}${ALERT_UNITS[rule.metric]}.` });
       return next;
     }
     return rule;
@@ -108,7 +113,7 @@ export function evaluateAlerts(snapshot: { stats: SystemStats; containers: { Sta
   if (triggered.length) save("alerts", updated);
   return { values, triggered };
 }
-const ALERT_METRICS: AlertRule["metric"][] = ["temperature", "cpu", "ram", "disk", "failedScripts", "stoppedContainers"];
+const ALERT_METRICS: AlertRule["metric"][] = ["temperature", "cpu", "ram", "disk", "storage", "failedScripts", "stoppedContainers"];
 export function normalizeAlert(input: Record<string, unknown>): AlertRule {
   const metric = input.metric as AlertRule["metric"];
   if (!ALERT_METRICS.includes(metric)) throw Error("Invalid alert metric");
@@ -209,7 +214,9 @@ export type SystemStats = {
 };
 // Everything the statistics need, in one host command: the server's clock and
 // the monitored storage paths ($2 onwards) are read by the same script, so a
-// refresh does not start a process for each of them.
+// refresh does not start a process for each of them. It runs in a plain bash,
+// like every other host command, not a login one: the login profile cost time
+// on every refresh, and whatever it printed or started became part of this.
 const STATS_SCRIPT = [
       'read -r mem_total mem_used mem_available < <(free -b | awk \'/^Mem:/ {print $2, $3, $7}\')',
       'read -r disk_total disk_used disk_pct < <(df -B1 -P / | awk \'NR==2 {gsub(/%/, "", $5); print $2, $3, $5}\')',
@@ -240,7 +247,7 @@ async function systemStats(): Promise<{ stats: SystemStats; time: string }> {
   const target = serverSettings().sshTarget;
   const previous = cpuReading?.target === target && Date.now() - cpuReading.at < CPU_READING_MAX_AGE_MS ? cpuReading : undefined;
   const paths = monitoredPaths();
-  const output = await runAsync(["bash", "-lc", STATS_SCRIPT, "stats", previous ? "" : "sample", ...paths]);
+  const output = await runAsync(["bash", "-c", STATS_SCRIPT, "stats", previous ? "" : "sample", ...paths]);
   const lines = output.trim().split("\n");
   const storageLines = lines.filter((line) => line.startsWith("storage=")).map((line) => line.slice("storage=".length));
   const values = parseValues(lines.filter((line) => !line.startsWith("storage=")));
@@ -315,6 +322,16 @@ export function hostSnapshot() {
 }
 // A leading dash would be read by Docker as an option, not as a name.
 export const CONTAINER_NAME = /^\w[\w.-]*$/;
+// The end of a container's log. Docker passes a container's error stream on as
+// its own, where applications such as Python and Go programs write their log,
+// so both streams are read together. A failure is reported on the error stream
+// alone, which is what the caller shows.
+const CONTAINER_LOGS_SCRIPT = 'if out=$(docker logs --tail 300 --timestamps "$1" 2>&1); then printf "%s\\n" "$out"; else printf "%s\\n" "$out" >&2; exit 1; fi';
+export async function containerLogs(name: string) {
+  if (!CONTAINER_NAME.test(name)) throw Error("Invalid container name");
+  const output = await run(["sh", "-c", CONTAINER_LOGS_SCRIPT, "sh", name]);
+  return output.trim() ? output : "";
+}
 // Container sizes are expensive for Docker to compute, so they are only read
 // when a container's details are opened.
 export async function containerSize(name: string) {

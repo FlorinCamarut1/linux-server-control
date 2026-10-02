@@ -200,6 +200,23 @@ test("secrets stay on the server and a blank secret keeps the stored one", async
   assert.equal(readJson("power-devices").length, 1, "a device that cannot be read is not saved");
 });
 
+test("a device that is not recorded is saved without being read", async () => {
+  const { server, readJson } = loadServer();
+  const power = loadPower(server);
+  // Nothing listens here, like a plug that was unplugged.
+  const probe = createServer();
+  await new Promise((resolve) => probe.listen(0, "127.0.0.1", resolve));
+  const host = `127.0.0.1:${probe.address().port}`;
+  await new Promise((resolve) => probe.close(resolve));
+  await assert.rejects(power.savePowerDevice({ name: "Gone", driver: "tasmota", host }), /refused the connection/);
+  assert.equal(await power.savePowerDevice({ name: "Gone", driver: "tasmota", host, enabled: "false" }), null);
+  const [stored] = readJson("power-devices");
+  assert.deepEqual([stored.name, stored.enabled], ["Gone", false]);
+  assert.equal(power.publicDevices()[0].status, null, "no reading is recorded for it");
+  await assert.rejects(power.savePowerDevice({ id: stored.id, name: "Gone", driver: "tasmota", host, enabled: "true" }), /refused the connection/, "recording it again reads it first");
+  assert.equal(readJson("power-devices")[0].enabled, false);
+});
+
 test("long-range power history shows completed hours only", () => {
   const { server } = loadServer();
   const power = loadPower(server);

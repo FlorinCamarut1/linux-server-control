@@ -32,7 +32,7 @@ export type ScriptRun = {
   status: "running" | "success" | "failed"; logPath: string;
 };
 export type AlertRule = {
-  id: string; name: string; metric: "temperature" | "cpu" | "ram" | "disk" | "failedScripts" | "stoppedContainers";
+  id: string; name: string; metric: "temperature" | "cpu" | "ram" | "disk" | "storage" | "failedScripts" | "stoppedContainers";
   threshold: number; enabled: boolean; cooldownMinutes: number; lastTriggeredAt?: number;
 };
 // storage maps each monitored path to its used percentage (absent in older samples).
@@ -46,17 +46,28 @@ export function publicRun(run: ScriptRun): PublicRun {
   delete shown.logPath;
   return shown as PublicRun;
 }
-// The latest run of every script and the latest failed run, newest first: all
-// that the pages other than History show, without sending the whole history.
+// The latest run of every script, newest first: all that the pages other than
+// History show, without sending the whole history. A script needs attention
+// while its latest run is a failed one.
 export function recentRuns() {
   const seen = new Set<string>();
-  let failureFound = false;
   return scriptRuns().filter((run) => {
-    const keep = !seen.has(run.scriptId) || (!failureFound && run.status === "failed");
+    const latest = !seen.has(run.scriptId);
     seen.add(run.scriptId);
-    if (run.status === "failed") failureFound = true;
-    return keep;
+    return latest;
   }).map(publicRun);
+}
+// The scheduled runs that still need attention, newest first: the latest
+// finished run of each existing schedule, where that run failed. A failure
+// followed by a successful run, or of a deleted schedule, is history.
+export function failingCronRuns(runs: CronRun[], known: Schedule[]) {
+  const existing = new Set(known.map((item) => item.id));
+  const seen = new Set<string>();
+  return runs.filter((run) => {
+    if (run.status === "running" || seen.has(run.scheduleId)) return false;
+    seen.add(run.scheduleId);
+    return run.status === "failed" && existing.has(run.scheduleId);
+  });
 }
 // One page of the History list: the rows whose name contains the search text
 // and whose status matches, and how many there are in all.

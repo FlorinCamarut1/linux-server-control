@@ -1,8 +1,8 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { type Browser, type Page, expect, test } from "@playwright/test";
-import { ADMIN_STATE, CRONTAB, FILES, PASSWORD, PLUG, USERNAME, WEBHOOK, WEBHOOKS } from "./paths";
+import { type Browser, type Locator, type Page, expect, test } from "@playwright/test";
+import { ADMIN_STATE, CRONTAB, DATA, FILES, PASSWORD, PLUG, USERNAME, WEBHOOK, WEBHOOKS } from "./paths";
 
 const PAGES = ["Overview", "Containers", "Scripts", "Files", "Schedules", "Power", "History", "Alerts", "Settings"];
 const heading = (page: Page, name: string) => page.getByRole("heading", { name, level: 1 });
@@ -10,7 +10,13 @@ async function open(page: Page, name: string) {
   await page.getByRole("navigation").getByRole("button", { name, exact: true }).click();
   await expect(heading(page, name)).toBeVisible();
 }
-const modal = (page: Page) => page.locator(".modal");
+// The topmost dialog: a confirmation opens above the dialog that asked for it.
+const modal = (page: Page) => page.locator(".modal").last();
+// Opens the "⋯" menu of a row and chooses one of its items.
+async function choose(page: Page, row: Locator, item: string) {
+  await row.getByRole("button", { name: /^Actions for/ }).click();
+  await page.getByRole("menu").getByRole("menuitem", { name: item, exact: true }).click();
+}
 // A browser that is enrolled (it has the device cookie) but not signed in.
 async function enrolledBrowser(browser: Browser) {
   const state = JSON.parse(readFileSync(ADMIN_STATE, "utf8"));
@@ -63,8 +69,7 @@ test("files can be created, edited and deleted inside the allowed folder", async
   const file = path.join(FILES, "reports", "today.txt");
   expect(readFileSync(file, "utf8")).toBe("written in the browser\n");
 
-  await page.getByRole("button", { name: "Actions for today.txt" }).click();
-  await page.locator(".file-explorer-menu-items").getByRole("button", { name: "Delete" }).click();
+  await choose(page, page.locator(".file-explorer-card", { hasText: "today.txt" }), "Delete");
   await modal(page).getByRole("button", { name: "Delete", exact: true }).click();
   await expect(page.getByText("This folder is empty")).toBeVisible();
   expect(existsSync(file)).toBe(false);
@@ -124,13 +129,19 @@ test("a schedule is written to the crontab, runs, and can be paused and deleted"
   await expect(run.locator(".badge")).toHaveText("success", { timeout: 15000 });
 
   await open(page, "Schedules");
-  await row.getByRole("button", { name: "Pause" }).click();
+  await choose(page, row, "Pause");
   await expect(row.locator(".badge")).toHaveText("Paused");
   expect(managed()).toHaveLength(0);
-  await row.getByRole("button", { name: "Enable" }).click();
+  await choose(page, row, "Enable");
   await expect(row.locator(".badge")).toHaveText("Enabled");
   expect(managed()).toHaveLength(1);
-  await row.getByRole("button", { name: "Delete" }).click();
+  // Deleting asks first; declining keeps the schedule and its crontab line.
+  await choose(page, row, "Delete");
+  await modal(page).getByRole("button", { name: "Cancel" }).click();
+  await expect(row).toHaveCount(1);
+  expect(managed()).toHaveLength(1);
+  await choose(page, row, "Delete");
+  await modal(page).getByRole("button", { name: "Delete", exact: true }).click();
   await expect(row).toHaveCount(0);
   expect(readFileSync(CRONTAB, "utf8")).toBe("# my own job\n0 1 * * * true\n");
 });
@@ -148,11 +159,11 @@ test("a power device is added, read and switched", async ({ page }) => {
   await expect(row.locator(".badge")).toHaveText("9.0 W");
   await expect(page.locator(".metric", { hasText: "Power now" })).toContainText("9.0 W");
 
-  await row.getByRole("button", { name: "Turn off" }).click();
+  await choose(page, row, "Turn off");
   await expect(modal(page).getByText("Everything powered through it loses power")).toBeVisible();
   await modal(page).getByRole("button", { name: "Turn off" }).click();
   await expect(row.locator(".badge")).toHaveText("0.0 W · off");
-  await row.getByRole("button", { name: "Turn on" }).click();
+  await choose(page, row, "Turn on");
   await expect(row.locator(".badge")).toHaveText("9.0 W");
 });
 
@@ -169,7 +180,7 @@ test("a notification channel is added and receives a test message", async ({ pag
   // The address is shown without its path, which may hold the credentials.
   await expect(row).toContainText("127.0.0.1:3212");
   await expect(row).not.toContainText("/hook");
-  await row.getByRole("button", { name: "Test" }).click();
+  await choose(page, row, "Send test");
   await expect(row.getByText("Test sent.")).toBeVisible();
   const received = readFileSync(WEBHOOKS, "utf8").trim().split("\n").map((line) => JSON.parse(line));
   expect(received.at(-1)).toMatchObject({ source: "linux-server-control", title: "Test notification", severity: "info" });
@@ -193,6 +204,9 @@ test("a read-only account sees the pages but cannot change anything", async ({ p
   await expect(guest.getByRole("navigation").getByRole("button", { name: "Files" })).toHaveCount(0);
   await open(guest, "Scripts");
   await expect(guest.getByRole("button", { name: "New custom script" })).toHaveCount(0);
+  await guest.locator(".script-folder summary", { hasText: "Unfiled" }).click();
+  await expect(guest.locator(".script-row").first().getByRole("button", { name: "Logs" })).toBeVisible();
+  await expect(guest.getByRole("button", { name: /^Actions for/ })).toHaveCount(0);
   await open(guest, "Settings");
   await expect(guest.getByRole("heading", { name: "Change password" })).toBeVisible();
   await expect(guest.getByRole("heading", { name: "Accounts" })).toHaveCount(0);
@@ -229,6 +243,133 @@ test("sign-in rejects a wrong password and a browser that is not enrolled", asyn
   await fresh.close();
 });
 
+test("rows keep their actions in a menu, and deleting always asks first", async ({ page }) => {
+  await page.goto("/");
+  await open(page, "Alerts");
+  await page.getByRole("button", { name: "New alert" }).click();
+  await modal(page).locator('input[name="name"]').fill("Disks filling up");
+  await modal(page).locator('select[name="metric"]').selectOption("storage");
+  await modal(page).locator('input[name="threshold"]').fill("95");
+  await modal(page).getByRole("button", { name: "Save alert" }).click();
+  const rule = page.locator(".schedule-row", { hasText: "Disks filling up" });
+  await expect(rule).toContainText("Use of the fullest monitored storage path ≥ 95%");
+
+  // No row shows a delete button of its own, on any page.
+  for (const name of ["Scripts", "Schedules", "Power", "Alerts", "Settings"]) {
+    await open(page, name);
+    if (name === "Scripts") await page.locator(".script-folder summary", { hasText: "Unfiled" }).click();
+    await expect(page.locator("main .button.danger")).toHaveCount(0);
+  }
+
+  // The menu works from the keyboard: it takes the focus, and Escape gives it back.
+  await open(page, "Alerts");
+  const trigger = rule.getByRole("button", { name: "Actions for the alert Disks filling up" });
+  await trigger.focus();
+  await page.keyboard.press("Enter");
+  const menu = page.getByRole("menu");
+  await expect(menu.getByRole("menuitem", { name: "Edit" })).toBeFocused();
+  await page.keyboard.press("ArrowDown");
+  await expect(menu.getByRole("menuitem", { name: "Delete" })).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(menu).toHaveCount(0);
+  await expect(trigger).toBeFocused();
+  // A press elsewhere closes it too.
+  await trigger.click();
+  await expect(menu).toBeVisible();
+  await page.getByRole("heading", { name: "Alert rules" }).click();
+  await expect(menu).toHaveCount(0);
+
+  await choose(page, rule, "Edit");
+  await expect(modal(page).locator('input[name="name"]')).toHaveValue("Disks filling up");
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".modal")).toHaveCount(0);
+
+  await choose(page, rule, "Delete");
+  await expect(modal(page).getByText("Delete the alert rule “Disks filling up”?")).toBeVisible();
+  await modal(page).getByRole("button", { name: "Cancel" }).click();
+  await expect(rule).toHaveCount(1);
+  await choose(page, rule, "Delete");
+  await modal(page).getByRole("button", { name: "Delete", exact: true }).click();
+  await expect(rule).toHaveCount(0);
+
+  // Inside a dialog the menu opens above it, and Escape closes the menu alone.
+  await open(page, "Settings");
+  await page.getByRole("button", { name: "Manage storage paths" }).click();
+  await modal(page).locator('input[name="path"]').fill(FILES);
+  await modal(page).getByRole("button", { name: "Add storage path" }).click();
+  const stored = modal(page).locator(".schedule-row", { hasText: FILES });
+  await stored.getByRole("button", { name: /^Actions for/ }).click();
+  await expect(page.getByRole("menu").getByRole("menuitem", { name: "Remove" })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("menu")).toHaveCount(0);
+  await expect(page.getByRole("dialog", { name: "Monitored storage" })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".modal")).toHaveCount(0);
+
+  // The browser in use is marked among the authorized ones.
+  const browsers = page.locator(".panel", { hasText: "Authorized browsers" }).locator(".device-row");
+  const own = browsers.filter({ hasText: "This browser" });
+  await expect(own).toHaveCount(1);
+  await expect(own).toContainText("First browser");
+});
+
+test("Overview lists a failing script until it runs successfully again", async ({ page }) => {
+  await page.goto("/");
+  const created = await page.request.post("/api/script/create-custom", { data: { name: "Flaky job", filename: "flaky.sh", directory: FILES, content: "echo about to fail\nexit 3\n" } });
+  expect(created.status()).toBe(200);
+  await open(page, "Scripts");
+  await page.locator(".script-folder summary", { hasText: "Unfiled" }).click();
+  const row = page.locator(".script-row", { hasText: "Flaky job" });
+  await row.getByRole("button", { name: "Run" }).click();
+  await expect(modal(page).locator("pre")).toContainText("about to fail", { timeout: 15000 });
+  await modal(page).getByRole("button", { name: "Close" }).click();
+  await page.getByRole("button", { name: "Refresh", exact: true }).click();
+  await expect(row).toContainText("last run failed", { timeout: 20000 });
+
+  await open(page, "Overview");
+  const attention = page.locator(".panel", { hasText: "Attention needed" });
+  const failure = attention.locator(".schedule-row", { hasText: "Failed script: Flaky job" });
+  await expect(failure).toContainText("exit code 3");
+  await failure.getByRole("button", { name: "View log" }).click();
+  await expect(modal(page).locator("pre")).toContainText("about to fail");
+  await modal(page).getByRole("button", { name: "Close" }).click();
+
+  // Fixed and run again, it no longer needs attention, though History keeps the failure.
+  writeFileSync(path.join(FILES, "flaky.sh"), "#!/usr/bin/env bash\necho fixed\n");
+  await open(page, "Scripts");
+  await row.getByRole("button", { name: "Run" }).click();
+  await expect(modal(page).locator("pre")).toContainText("fixed", { timeout: 15000 });
+  await modal(page).getByRole("button", { name: "Close" }).click();
+  await page.getByRole("button", { name: "Refresh", exact: true }).click();
+  await expect(row).toContainText("last run success", { timeout: 20000 });
+  await open(page, "Overview");
+  await expect(failure).toHaveCount(0);
+  await open(page, "History");
+  await page.getByLabel("Filter status").selectOption("failed");
+  await expect(page.locator(".schedule-row", { hasText: "Flaky job" })).toHaveCount(1);
+});
+
+test("the editor asks before discarding changes that were not saved", async ({ page }) => {
+  await page.goto("/");
+  await open(page, "Files");
+  await page.locator(".file-explorer-open", { hasText: "notes.txt" }).click();
+  const editor = page.getByRole("dialog", { name: "Edit file" });
+  await editor.locator("textarea").fill("changed but not saved\n");
+  await page.keyboard.press("Escape");
+  await expect(modal(page).getByText("discard the changes you have not saved")).toBeVisible();
+  await modal(page).getByRole("button", { name: "Cancel" }).click();
+  await expect(editor.locator("textarea")).toHaveValue("changed but not saved\n");
+  await editor.getByRole("button", { name: "Close" }).click();
+  await modal(page).getByRole("button", { name: "Discard changes" }).click();
+  await expect(page.locator(".modal")).toHaveCount(0);
+  expect(readFileSync(path.join(FILES, "notes.txt"), "utf8")).toBe("A file for the browser tests.\n");
+  // An untouched file closes at once.
+  await page.locator(".file-explorer-open", { hasText: "notes.txt" }).click();
+  await expect(editor).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".modal")).toHaveCount(0);
+});
+
 test.describe("on a phone", () => {
   test.use({ viewport: { width: 390, height: 844 } });
   test("no page scrolls sideways", async ({ page }) => {
@@ -240,4 +381,32 @@ test.describe("on a phone", () => {
       expect(overflow, `${name} is wider than the screen`).toBeLessThanOrEqual(1);
     }
   });
+});
+
+// Last, because the dashboard manages no server while this test runs.
+test("an administrator corrects the connection from the reconnect screen", async ({ page }) => {
+  const settings = path.join(DATA, "server-settings.json");
+  await page.goto("/");
+  await expect(heading(page, "Overview")).toBeVisible();
+  // As if the server's address had changed: nothing answers at the stored target.
+  const saved = (await (await page.request.get("/api/settings/server")).json()) as Record<string, unknown>;
+  writeFileSync(settings, JSON.stringify({ ...saved, sshTarget: "nobody@127.0.0.1", sshPort: 9 }));
+  try {
+    await page.reload();
+    await expect(page.getByRole("heading", { name: "Server unavailable" })).toBeVisible({ timeout: 30000 });
+    await page.getByText("Change the connection settings").click();
+    const target = page.getByLabel("SSH target");
+    await expect(target).toHaveValue("nobody@127.0.0.1");
+    // A target that does not answer is refused, and the stored one stays.
+    await target.fill("nobody@127.0.0.2");
+    await page.getByRole("button", { name: "Save and test connection" }).click();
+    await expect(page.locator(".reconnect-settings .alert")).toBeVisible({ timeout: 30000 });
+    expect(JSON.parse(readFileSync(settings, "utf8")).sshTarget).toBe("nobody@127.0.0.1");
+    await target.fill("");
+    await page.getByLabel("SSH port").fill("22");
+    await page.getByRole("button", { name: "Save and test connection" }).click();
+    await expect(heading(page, "Overview")).toBeVisible({ timeout: 30000 });
+  } finally {
+    writeFileSync(settings, JSON.stringify(saved));
+  }
 });

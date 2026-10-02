@@ -67,8 +67,10 @@ function multiplexOptions() {
   if (process.env.SSH_MULTIPLEX === "false") return [];
   return ["-o", "ControlMaster=auto", "-o", "ControlPath=/tmp/lsc-ssh-%C", "-o", "ControlPersist=60"];
 }
-// The private key mounted into the container; SSH_KEY_FILE names another file.
+// The private key and the server's recorded identity, mounted into the
+// container; SSH_KEY_FILE and SSH_KNOWN_HOSTS_FILE name other files.
 const sshKeyFile = () => process.env.SSH_KEY_FILE || "/run/ssh/id_ed25519";
+const sshKnownHostsFile = () => process.env.SSH_KNOWN_HOSTS_FILE || "/run/ssh/known_hosts";
 export const ssh = (args: string[]): [string, string[]] => {
   const { sshTarget: target, sshPort } = serverSettings();
   return target
@@ -86,7 +88,7 @@ export const ssh = (args: string[]): [string, string[]] => {
           "-p",
           String(sshPort),
           "-o",
-          "UserKnownHostsFile=/run/ssh/known_hosts",
+          `UserKnownHostsFile=${sshKnownHostsFile()}`,
           ...multiplexOptions(),
           target,
           shell(args),
@@ -100,8 +102,13 @@ export async function testServerConnection() {
   const host = (await runAsync(["hostname"], 12000)).trim();
   return { host, mode: "ssh" as const, target };
 }
+// Quotes arguments for the command line that the SSH user's login shell reads,
+// which is not always a POSIX shell: between single quotes fish also reads \\
+// and \' as escapes, so a script containing a backslash arrived changed. A
+// backslash is therefore written outside the quotes, like a quote; there bash,
+// dash, zsh and fish all read \\ and \' the same way.
 export function shell(args: string[]) {
-  return args.map((x) => "'" + x.replaceAll("'", "'\\''") + "'").join(" ");
+  return args.map((x) => "'" + x.replace(/[\\']/g, (special) => `'\\${special}'`) + "'").join(" ");
 }
 // Raised when a host command fails. Its message is safe to show in the browser:
 // it never contains the SSH command line, key path, or script arguments.
@@ -123,7 +130,9 @@ export function runAsync(args: string[], timeout = 30000, input?: string) {
         loggedFailures.set(args[0], logged);
         console.error(`Host command failed (${args[0]}): ${logged}`);
       }
-      reject(new CommandError(error.killed ? "The server command timed out" : detail || "The server command failed"));
+      // Node also ends a command whose output passes maxBuffer, which is not a timeout.
+      const tooLong = (error as NodeJS.ErrnoException).code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER";
+      reject(new CommandError(tooLong ? "The server command returned too much output" : error.killed ? "The server command timed out" : detail || "The server command failed"));
     });
     child?.stdin?.on("error", () => {});
     child?.stdin?.end(input ?? "");

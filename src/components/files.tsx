@@ -1,8 +1,7 @@
 "use client";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "@/lib/client-api";
-import { appConfirm, appPrompt, Btn, Panel, formatBytes, Modal } from "@/components/ui";
+import { appConfirm, appPrompt, Btn, Panel, formatBytes, Modal, RowMenu } from "@/components/ui";
 import type { ScriptBrowserData, FileBrowserData } from "@/lib/types";
 import {
   ClipboardPaste,
@@ -14,7 +13,6 @@ import {
   LayoutGrid,
   LayoutList,
   Loader2,
-  MoreHorizontal,
   RefreshCw,
   Scissors,
   Trash2,
@@ -99,7 +97,6 @@ export function FileExplorer() {
     [view, setView] = useState<"grid" | "list">("list"),
     [editor, setEditor] = useState<{ path: string; content: string } | null>(null),
     [opening, setOpening] = useState(""),
-    [menu, setMenu] = useState<{ path: string; anchor: HTMLElement } | null>(null),
     [search, setSearch] = useState(""), [sort, setSort] = useState("name"), [offset, setOffset] = useState(0),
     [clipboard, setClipboard] = useState<{
       path: string;
@@ -107,9 +104,7 @@ export function FileExplorer() {
       name: string;
     } | null>(null);
   const { data, error, setError, loading, sizesLoading, load } = useDirectory<FileBrowserData & { total?: number; offset?: number; limit?: number }>("file/browse", directory, true, { search, sort, offset, limit: 100 });
-  const closeMenu = useCallback(() => setMenu(null), []);
   function navigate(path: string) {
-    setMenu(null);
     setOffset(0);
     setDirectory(path);
   }
@@ -121,7 +116,6 @@ export function FileExplorer() {
   ) {
     try {
       setOpening(source);
-      setMenu(null);
       await api("file/operation", { action, source, destination, name });
       if (action === "move" || action === "delete") setClipboard(null);
       await load();
@@ -130,14 +124,12 @@ export function FileExplorer() {
     } finally { setOpening(""); }
   }
   async function removeEntry(entry: FileBrowserData["entries"][number]) {
-    setMenu(null);
     const description = entry.type === "directory"
       ? `Delete folder ${entry.path} and ALL its contents? This permanently deletes files from the server.`
       : `Delete file ${entry.path}? This cannot be undone.`;
     if (await appConfirm(description, `Delete ${entry.type}`, "Delete", true)) await operate("delete", entry.path);
   }
   async function renameEntry(entry: FileBrowserData["entries"][number]) {
-    setMenu(null);
     const name = (await appPrompt(`Rename ${entry.name} to:`, entry.name, "Rename item", "Rename"))?.trim();
     if (name && name !== entry.name) await operate("rename", entry.path, "", name);
   }
@@ -146,7 +138,6 @@ export function FileExplorer() {
     await operate(clipboard.action, clipboard.path, data.path);
   }
   async function openFile(path: string) {
-    setMenu(null);
     try {
       setOpening(path);
       const result = await api("file/read", { path });
@@ -256,40 +247,17 @@ export function FileExplorer() {
               </small>
             </button>
             <div className="file-explorer-menu">
-              <button
-                type="button"
-                className="file-explorer-menu-trigger"
-                aria-label={`Actions for ${entry.name}`}
-                aria-expanded={menu?.path === entry.path}
+              <RowMenu
+                label={`Actions for ${entry.name}`}
                 disabled={!!opening}
-                onClick={(event) => {
-                  const anchor = event.currentTarget;
-                  setMenu((open) => open?.path === entry.path ? null : { path: entry.path, anchor });
-                }}
-              >
-                <MoreHorizontal size={18} />
-              </button>
-              {menu?.path === entry.path && (
-                <ActionMenu anchor={menu.anchor} close={closeMenu}>
-                  {entry.type === "file" && (
-                    <button type="button" onClick={() => openFile(entry.path)}>
-                      <FilePenLine size={15} /> Edit
-                    </button>
-                  )}
-                  <button type="button" onClick={() => { setClipboard({ path: entry.path, action: "copy", name: entry.name }); setMenu(null); }}>
-                    <Copy size={15} /> Copy
-                  </button>
-                  <button type="button" onClick={() => { setClipboard({ path: entry.path, action: "move", name: entry.name }); setMenu(null); }}>
-                    <Scissors size={15} /> Cut
-                  </button>
-                  <button type="button" onClick={() => renameEntry(entry)}>
-                    <FilePenLine size={15} /> Rename
-                  </button>
-                  <button type="button" className="danger" onClick={() => removeEntry(entry)}>
-                    <Trash2 size={15} /> Delete
-                  </button>
-                </ActionMenu>
-              )}
+                items={[
+                  entry.type === "file" && { label: "Edit", icon: <FilePenLine size={15} />, onSelect: () => openFile(entry.path) },
+                  { label: "Copy", icon: <Copy size={15} />, onSelect: () => setClipboard({ path: entry.path, action: "copy", name: entry.name }) },
+                  { label: "Cut", icon: <Scissors size={15} />, onSelect: () => setClipboard({ path: entry.path, action: "move", name: entry.name }) },
+                  { label: "Rename", icon: <FilePenLine size={15} />, onSelect: () => renameEntry(entry) },
+                  { label: "Delete", icon: <Trash2 size={15} />, danger: true, onSelect: () => removeEntry(entry) },
+                ]}
+              />
             </div>
           </article>
           ))}
@@ -311,44 +279,6 @@ export function FileExplorer() {
     </>
   );
 }
-// Rendered into <body> with fixed coordinates so the panel's overflow and the
-// neighbouring rows cannot clip or cover it. Opens upward when there is no room below.
-function ActionMenu({ anchor, close, children }: { anchor: HTMLElement; close: () => void; children: React.ReactNode }) {
-  const ref = useRef<HTMLDivElement>(null);
-  useLayoutEffect(() => {
-    const menu = ref.current;
-    if (!menu) return;
-    const gap = 4, edge = 8;
-    function place() {
-      if (!menu) return;
-      const box = anchor.getBoundingClientRect();
-      const fitsBelow = box.bottom + gap + menu.offsetHeight <= window.innerHeight - edge;
-      menu.style.top = `${fitsBelow ? box.bottom + gap : Math.max(edge, box.top - gap - menu.offsetHeight)}px`;
-      menu.style.left = `${Math.max(edge, box.right - menu.offsetWidth)}px`;
-    }
-    function pointer(event: PointerEvent) {
-      const target = event.target as Node;
-      if (!menu?.contains(target) && !anchor.contains(target)) close();
-    }
-    function key(event: KeyboardEvent) {
-      if (event.key !== "Escape") return;
-      close();
-      anchor.focus();
-    }
-    place();
-    window.addEventListener("scroll", place, { capture: true, passive: true });
-    window.addEventListener("resize", place);
-    document.addEventListener("pointerdown", pointer);
-    document.addEventListener("keydown", key);
-    return () => {
-      window.removeEventListener("scroll", place, { capture: true });
-      window.removeEventListener("resize", place);
-      document.removeEventListener("pointerdown", pointer);
-      document.removeEventListener("keydown", key);
-    };
-  }, [anchor, close]);
-  return createPortal(<div ref={ref} className="file-explorer-menu-items">{children}</div>, document.body);
-}
 export function FileEditor({
   file,
   close,
@@ -361,6 +291,10 @@ export function FileEditor({
   const [content, setContent] = useState(file.content),
     [error, setError] = useState(""),
     [saving, setSaving] = useState(false);
+  // Closing by a stray click outside the editor, or by Escape, must not lose edits.
+  async function closeEditor() {
+    if (content === file.content || await appConfirm("Close the editor and discard the changes you have not saved?", "Unsaved changes", "Discard changes", true)) close();
+  }
   async function saveFile() {
     try {
       setSaving(true);
@@ -385,16 +319,16 @@ export function FileEditor({
     }
   }
   return (
-    <Modal title="Edit file" close={close}>
+    <Modal title="Edit file" close={closeEditor}>
       <div className="file-editor">
         <code>{file.path}</code>
-        <textarea value={content} onChange={(event) => setContent(event.target.value)} spellCheck={false} />
+        <textarea aria-label="File content" value={content} onChange={(event) => setContent(event.target.value)} spellCheck={false} />
         {error && <div className="alert">{error}</div>}
         <div className="actions">
           <Btn className="primary" disabled={saving} onClick={saveFile}>
             {saving ? <Loader2 className="spin" size={15} /> : null} Save changes
           </Btn>
-          <Btn className="danger" disabled={saving} onClick={deleteFile}><Trash2 size={15} />Delete file</Btn>
+          <RowMenu label="More actions for this file" disabled={saving} items={[{ label: "Delete file", icon: <Trash2 size={15} />, danger: true, onSelect: deleteFile }]} />
         </div>
       </div>
     </Modal>

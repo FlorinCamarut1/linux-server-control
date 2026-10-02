@@ -3,10 +3,10 @@ import { audit, read, save } from "./store";
 import { type ServerSettings, serverSettings, validateServerSettings } from "./ssh";
 import { type Script, RECORD_ID, alertRules, folders, oneLine, schedules, scripts } from "./records";
 import { normalizeSchedule, rootSchedulesAvailable, syncCron } from "./cron";
-import { normalizeAlert } from "./monitor";
+import { monitoredPaths, normalizeAlert } from "./monitor";
 import { parseRunOptions } from "./scripts";
 export function exportConfiguration() {
-  return { version: 1, exportedAt: new Date().toISOString(), scripts: scripts(), folders: folders(), schedules: schedules(), devices: read("devices", {}), alerts: alertRules(), serverSettings: serverSettings() };
+  return { version: 1, exportedAt: new Date().toISOString(), scripts: scripts(), folders: folders(), schedules: schedules(), devices: read("devices", {}), alerts: alertRules(), serverSettings: serverSettings(), monitoredPaths: monitoredPaths() };
 }
 function folderName(value: unknown) {
   const name = oneLine(value, 60).replace(/\s+/g, " ");
@@ -63,6 +63,16 @@ export async function restoreConfiguration(payload: Record<string, unknown>) {
       return [id, { name: oneLine(device.name, 80) || "Browser", created: oneLine(device.created, 40) }];
     }));
   }
+  // Absent in older backups, which leave the monitored paths as they are.
+  let restoredPaths: string[] | undefined;
+  if (payload.monitoredPaths !== undefined) {
+    if (!Array.isArray(payload.monitoredPaths)) throw Error("Invalid configuration backup: monitored paths");
+    restoredPaths = [...new Set(payload.monitoredPaths.map((item) => {
+      const storagePath = oneLine(item, 4096).replace(/\/$/, "");
+      if (!storagePath.startsWith("/")) throw Error("Invalid configuration backup: monitored paths must be absolute");
+      return storagePath;
+    }))];
+  }
   const previousUsers = schedules().map((item) => item.runAs || "user");
   save("server-settings", settings);
   save("folders", restoredFolders);
@@ -70,6 +80,7 @@ export async function restoreConfiguration(payload: Record<string, unknown>) {
   save("schedules", restoredSchedules);
   save("alerts", restoredAlerts);
   if (restoredDevices) save("devices", restoredDevices);
+  if (restoredPaths) save("monitored-paths", restoredPaths);
   // Include the previous users so schedules removed by the restore also leave their crontab.
   await syncCron(previousUsers);
   audit("configuration restored");

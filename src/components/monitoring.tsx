@@ -13,8 +13,15 @@ import {
   HardDrive,
 } from "lucide-react";
 export function Overview({ state, active, stopped, openLogs }: { state: St; active: number; stopped: number; openLogs: (title: string, path: string, body: unknown) => void }) {
-  const failed = state.recentRuns.find((run) => run.status === "failed");
-  const latestScheduleFailure = state.cronFailure;
+  // What still needs attention, not everything that ever went wrong: a script
+  // or schedule is listed while its latest run is a failed one, and an alert
+  // rule while its value is at or above its threshold.
+  const scripts = new Set(state.scripts.map((script) => script.id));
+  const failedRuns = state.recentRuns.filter((run) => run.status === "failed" && scripts.has(run.scriptId));
+  const failedSchedules = state.cronFailures ?? [];
+  const values = state.alertState?.values ?? {};
+  const activeAlerts = state.alerts.filter((rule) => rule.enabled && values[rule.metric] >= rule.threshold);
+  const healthy = !stopped && !failedRuns.length && !failedSchedules.length && !activeAlerts.length;
   return <>
     <section className="metrics">
       <Metric label="Containers" value={`${active} running`} note={`${stopped} stopped`} icon={<Container />} />
@@ -24,9 +31,10 @@ export function Overview({ state, active, stopped, openLogs }: { state: St; acti
     </section>
     <Panel title="Attention needed" note="The most useful things to check first.">
       {stopped > 0 && <div className="schedule-row"><div className="grow"><b>{stopped} stopped container{stopped === 1 ? "" : "s"}</b><small>Open Containers to start, inspect, or review logs.</small></div><span className="badge down">Needs attention</span></div>}
-      {failed && <div className="schedule-row"><div className="grow"><b>Latest failed script: {failed.scriptName}</b><small>{new Date(failed.startedAt).toLocaleString()} · exit code {failed.exitCode ?? "unknown"}</small></div><Btn onClick={() => openLogs(`${failed.scriptName} run`, "script/log", { id: failed.scriptId, runId: failed.id })}>View log</Btn></div>}
-      {!failed && latestScheduleFailure && <div className="schedule-row"><div className="grow"><b>Latest failed schedule: {latestScheduleFailure.label}</b><small>{new Date(latestScheduleFailure.startedAt).toLocaleString()}</small></div><span className="badge down">Failed</span></div>}
-      {!stopped && !failed && !latestScheduleFailure && <div className="empty-state"><Circle size={22}/><b>Everything looks healthy</b><p>No stopped containers or failed recent runs.</p></div>}
+      {activeAlerts.map((rule) => <div className="schedule-row" key={rule.id}><div className="grow"><b>Alert: {rule.name}</b><small>{describeAlert(rule.metric, rule.threshold)} · now {alertValue(rule.metric, values[rule.metric])}</small></div><span className="badge down">Above threshold</span></div>)}
+      {failedRuns.map((run) => <div className="schedule-row" key={run.id}><div className="grow"><b>Failed script: {run.scriptName}</b><small>{new Date(run.startedAt).toLocaleString()} · exit code {run.exitCode ?? "unknown"}</small></div><Btn onClick={() => openLogs(`${run.scriptName} run`, "script/log", { id: run.scriptId, runId: run.id })}>View log</Btn></div>)}
+      {failedSchedules.map((run) => <div className="schedule-row" key={`${run.scheduleId}-${run.startedAt}`}><div className="grow"><b>Failed schedule: {run.label}</b><small>{new Date(run.startedAt).toLocaleString()} · exit code {run.exitCode ?? "unknown"}</small></div><span className="badge down">Failed</span></div>)}
+      {healthy && <div className="empty-state"><Circle size={22}/><b>Everything looks healthy</b><p>No stopped containers, failing runs or alerts above their threshold.</p></div>}
     </Panel>
     <OverviewCharts />
     <Panel title="Next steps" note="Common admin tasks"><div className="schedule-row"><div className="grow"><b>{state.scripts.length} approved scripts</b><small>{state.schedules.filter((item) => item.enabled).length} active schedules · manage runs in Scripts and Schedules.</small></div></div></Panel>
@@ -49,6 +57,7 @@ const ALERT_METRICS: Record<string, [string, string]> = {
   cpu: ["CPU use", "%"],
   ram: ["RAM use", "%"],
   disk: ["System disk use", "%"],
+  storage: ["Use of the fullest monitored storage path", "%"],
   failedScripts: ["Failed script runs in 24 hours", ""],
   stoppedContainers: ["Stopped containers", ""],
 };
@@ -56,6 +65,7 @@ export function describeAlert(metric: string, threshold: number) {
   const [label, unit] = ALERT_METRICS[metric] ?? [metric, ""];
   return `${label} ≥ ${threshold}${unit}`;
 }
+const alertValue = (metric: string, value: number) => `${Math.round(value * 10) / 10}${ALERT_METRICS[metric]?.[1] ?? ""}`;
 type HistoryPage = { rows: (Run | CronRun)[]; total: number; counts: { scripts: number; cron: number } };
 const HISTORY_PAGE_ROWS = 20;
 // The run history, a page at a time: searching, filtering and paging happen on
@@ -118,7 +128,7 @@ export function AlertForm({ initial, close, done }: { initial: St["alerts"][numb
   return <Modal title={initial ? "Edit alert" : "New alert"} close={close}><form onSubmit={async (event) => { event.preventDefault(); try { await api("alerts/save", Object.fromEntries(new FormData(event.currentTarget))); done(); } catch (reason) { setError(reason instanceof Error ? reason.message : "Error"); } }}>
     <input type="hidden" name="id" defaultValue={initial?.id} />
     <label>Name<input name="name" defaultValue={initial?.name} required maxLength={80} /></label>
-    <label>Metric<select name="metric" defaultValue={initial?.metric || "temperature"}><option value="temperature">CPU temperature (°C)</option><option value="cpu">CPU use (%)</option><option value="ram">RAM use (%)</option><option value="disk">System disk use (%)</option><option value="failedScripts">Failed script runs (last 24 hours)</option><option value="stoppedContainers">Stopped containers</option></select></label>
+    <label>Metric<select name="metric" defaultValue={initial?.metric || "temperature"}><option value="temperature">CPU temperature (°C)</option><option value="cpu">CPU use (%)</option><option value="ram">RAM use (%)</option><option value="disk">System disk use (%)</option><option value="storage">Monitored storage use, fullest path (%)</option><option value="failedScripts">Failed script runs (last 24 hours)</option><option value="stoppedContainers">Stopped containers</option></select></label>
     <label>Trigger at or above<input name="threshold" type="number" min="0" step="0.1" defaultValue={initial?.threshold ?? 80} required /></label>
     <label>Cooldown (minutes)<input name="cooldownMinutes" type="number" min="1" max="10080" defaultValue={initial?.cooldownMinutes ?? 30} required /></label>
     <label><input name="enabled" type="checkbox" value="true" defaultChecked={initial?.enabled !== false} /> Enabled</label>

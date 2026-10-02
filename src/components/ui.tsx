@@ -1,9 +1,11 @@
 "use client";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { api } from "@/lib/client-api";
 import type { PreflightCheck } from "@/lib/types";
 import {
   Loader2,
+  MoreHorizontal,
   Play,
   Square,
 } from "lucide-react";
@@ -122,6 +124,8 @@ export async function copyText(text: string) {
     field.remove();
   }
 }
+// Open dialogs, the innermost last: Escape closes only the one on top.
+const openModals: symbol[] = [];
 export function Modal({
   title,
   close,
@@ -131,16 +135,146 @@ export function Modal({
   close: () => void;
   children: React.ReactNode;
 }) {
+  const panel = useRef<HTMLElement>(null);
+  const titleId = useId();
+  // The caller's latest close handler, read when Escape is pressed.
+  const latestClose = useRef(close);
+  useEffect(() => { latestClose.current = close; });
+  useEffect(() => {
+    const id = Symbol();
+    openModals.push(id);
+    const opener = document.activeElement as HTMLElement | null;
+    // The dialog takes the focus, unless one of its fields already has it.
+    if (!panel.current?.contains(document.activeElement)) panel.current?.focus({ preventScroll: true });
+    const key = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && openModals.at(-1) === id) latestClose.current();
+    };
+    document.addEventListener("keydown", key);
+    return () => {
+      document.removeEventListener("keydown", key);
+      openModals.splice(openModals.indexOf(id), 1);
+      opener?.focus?.({ preventScroll: true });
+    };
+  }, []);
   return (
     <div className="modal-bg" onMouseDown={close}>
-      <section className="modal" onMouseDown={(e) => e.stopPropagation()}>
+      <section ref={panel} className="modal" role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1} onMouseDown={(e) => e.stopPropagation()}>
         <div className="panel-head">
-          <h2>{title}</h2>
+          <h2 id={titleId}>{title}</h2>
           <Btn onClick={close}>Close</Btn>
         </div>
         {children}
       </section>
     </div>
+  );
+}
+// A menu's items, rendered into <body> with fixed coordinates so that no
+// panel's overflow and no neighbouring row can clip or cover them. The menu
+// opens upward when there is no room below, takes the focus, moves it with the
+// arrow keys, and closes on Escape, on Tab and on a press anywhere else.
+export function ActionMenu({ anchor, close, children }: { anchor: HTMLElement; close: () => void; children: React.ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const menu = ref.current;
+    if (!menu) return;
+    const gap = 4, edge = 8;
+    const items = () => [...menu.querySelectorAll<HTMLButtonElement>("button:not(:disabled)")];
+    function place() {
+      if (!menu) return;
+      const box = anchor.getBoundingClientRect();
+      const fitsBelow = box.bottom + gap + menu.offsetHeight <= window.innerHeight - edge;
+      menu.style.top = `${fitsBelow ? box.bottom + gap : Math.max(edge, box.top - gap - menu.offsetHeight)}px`;
+      menu.style.left = `${Math.max(edge, box.right - menu.offsetWidth)}px`;
+    }
+    function pointer(event: PointerEvent) {
+      const target = event.target as Node;
+      if (!menu?.contains(target) && !anchor.contains(target)) close();
+    }
+    function key(event: KeyboardEvent) {
+      if (event.key === "Escape" || event.key === "Tab") {
+        // Handled here alone, so Escape does not also close a dialog behind the menu.
+        event.stopPropagation();
+        if (event.key === "Escape") event.preventDefault();
+        close();
+        anchor.focus();
+        return;
+      }
+      const step = { ArrowDown: 1, ArrowUp: -1 }[event.key];
+      if (!step && event.key !== "Home" && event.key !== "End") return;
+      event.preventDefault();
+      const all = items();
+      const current = all.indexOf(document.activeElement as HTMLButtonElement);
+      const next = event.key === "Home" ? 0 : event.key === "End" ? all.length - 1
+        : current < 0 ? (step === 1 ? 0 : all.length - 1) : (current + step! + all.length) % all.length;
+      all[next]?.focus();
+    }
+    place();
+    items()[0]?.focus({ preventScroll: true });
+    window.addEventListener("scroll", place, { capture: true, passive: true });
+    window.addEventListener("resize", place);
+    document.addEventListener("pointerdown", pointer);
+    document.addEventListener("keydown", key, true);
+    return () => {
+      window.removeEventListener("scroll", place, { capture: true });
+      window.removeEventListener("resize", place);
+      document.removeEventListener("pointerdown", pointer);
+      document.removeEventListener("keydown", key, true);
+    };
+  }, [anchor, close]);
+  return createPortal(<div ref={ref} className="menu-items" role="menu">{children}</div>, document.body);
+}
+export type MenuItem = { label: string; icon?: React.ReactNode; onSelect: () => void; danger?: boolean; disabled?: boolean };
+// The "⋯" button at the end of a row and the menu of what can be done with
+// that row, so that deleting is never one stray click away. Entries that are
+// false or null are left out, which lets callers write their conditions inline;
+// a row with nothing to offer shows no button.
+export function RowMenu({ label, items, disabled = false }: { label: string; items: (MenuItem | false | null | undefined)[]; disabled?: boolean }) {
+  const [anchor, setAnchor] = useState<HTMLButtonElement | null>(null);
+  const close = useCallback(() => setAnchor(null), []);
+  const shown = items.filter((item): item is MenuItem => Boolean(item));
+  if (!shown.length) return null;
+  return (
+    <>
+      <button
+        type="button"
+        className="menu-trigger"
+        aria-label={label}
+        aria-haspopup="menu"
+        aria-expanded={anchor !== null}
+        disabled={disabled}
+        onClick={(event) => {
+          // Inside a <summary> the click must not also open or close its section.
+          event.preventDefault();
+          event.stopPropagation();
+          const button = event.currentTarget;
+          setAnchor((open) => (open ? null : button));
+        }}
+      >
+        <MoreHorizontal size={18} />
+      </button>
+      {anchor && (
+        <ActionMenu anchor={anchor} close={close}>
+          {shown.map((item) => (
+            <button
+              key={item.label}
+              type="button"
+              role="menuitem"
+              className={item.danger ? "danger" : undefined}
+              disabled={item.disabled}
+              onClick={() => {
+                close();
+                // A dialog opened by the item returns the focus here when it closes.
+                anchor.focus({ preventScroll: true });
+                item.onSelect();
+              }}
+            >
+              {item.icon}
+              {item.label}
+            </button>
+          ))}
+        </ActionMenu>
+      )}
+    </>
   );
 }
 export function DialogHost() {
@@ -188,6 +322,12 @@ export function LiveLogViewer({
   const [body, setBody] = useState("Loading logs…"),
     [live, setLive] = useState(true),
     [loading, setLoading] = useState(true);
+  // New output keeps the end of the log in view, until the reader scrolls up.
+  const view = useRef<HTMLPreElement>(null);
+  const following = useRef(true);
+  useLayoutEffect(() => {
+    if (view.current && following.current) view.current.scrollTop = view.current.scrollHeight;
+  }, [body]);
   // Only sets state after awaiting, so it can run directly from the effect.
   const refreshLogs = useCallback(async () => {
     try {
@@ -233,7 +373,13 @@ export function LiveLogViewer({
           {live ? "Stop live" : "Start live"}
         </Btn>
       </div>
-      <pre>{body}</pre>
+      <pre
+        ref={view}
+        onScroll={(event) => {
+          const log = event.currentTarget;
+          following.current = log.scrollHeight - log.scrollTop - log.clientHeight < 24;
+        }}
+      >{body}</pre>
     </Modal>
   );
 }

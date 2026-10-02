@@ -294,9 +294,11 @@ export async function savePowerDevice(input: Record<string, unknown>) {
     config[field.key] = value;
   }
   const device: PowerDevice = { id, name, driver: driver.id, enabled: input.enabled !== false && input.enabled !== "false", config };
-  const reading = await driver.read(config);
+  // A device that is not recorded is saved without being read, so one that
+  // stopped answering can be paused instead of deleted with its history.
+  const reading = device.enabled ? await driver.read(config) : null;
   save("power-devices", [...all.filter((item) => item.id !== id), device]);
-  recordReading(id, reading, Date.now());
+  if (reading) recordReading(id, reading, Date.now());
   audit(`power device saved ${name} (${driver.id})`);
   return reading;
 }

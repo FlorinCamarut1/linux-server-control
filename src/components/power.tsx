@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Gauge, Pencil, Plug, Plus, Power, Trash2, Wallet, Zap } from "lucide-react";
 import { api } from "@/lib/client-api";
 import { ChartFrame, ColumnChart, LineChart, RangeFilter, formatTime, type Range } from "@/components/charts";
-import { appConfirm, Btn, Metric, Modal, Panel } from "@/components/ui";
+import { appConfirm, Btn, Metric, Modal, Panel, RowMenu } from "@/components/ui";
 
 type Field = { key: string; label: string; secret?: boolean; required?: boolean; placeholder?: string; help?: string };
 type Driver = { id: string; name: string; description: string; fields: Field[] };
@@ -150,26 +150,33 @@ export function PowerPage({ range: controlled, compact = false, readOnly = false
             <b>{device.name}</b>
             <small>{driver?.name ?? device.driver}{status?.error ? ` · ${status.error}` : status?.at ? ` · last reading ${new Date(status.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : ""}</small>
           </div>
-          {!device.enabled ? <span className="badge root">Paused</span>
+          {switching === device.id ? <span className="badge root">Switching…</span>
+            : !device.enabled ? <span className="badge root">Paused</span>
             : status?.error ? <span className="badge down">Unreachable</span>
             : fresh && status?.powerW !== null ? <span className="badge up">{formatWatts(status!.powerW!)}{status?.on === false ? " · off" : ""}</span>
             : <span className="badge root">Waiting</span>}
-          {!readOnly && <div className="actions">
-            {/* Only offered while the relay's state is known, so the button says what it will do. */}
-            {device.canSwitch && device.enabled && typeof status?.on === "boolean" && !status.error && <Btn disabled={switching === device.id} onClick={async () => {
-              const on = !status.on;
-              if (!on && !await appConfirm(`Turn off ${device.name}? Everything powered through it loses power, including this server if it is plugged into it.`, "Turn off device", "Turn off", true)) return;
-              setSwitching(device.id); setError("");
-              try { await api("power/device/switch", { id: device.id, on }); reload(); }
-              catch (reason) { setError(reason instanceof Error ? reason.message : "Could not switch the device"); }
-              finally { setSwitching(""); }
-            }}><Power size={15} />{switching === device.id ? "Switching…" : status.on ? "Turn off" : "Turn on"}</Btn>}
-            <Btn onClick={() => setEditing(device)}><Pencil size={15} />Edit</Btn>
-            <Btn className="danger" onClick={async () => {
-              if (!await appConfirm(`Delete ${device.name} and its recorded power history?`, "Delete device", "Delete", true)) return;
-              try { await api("power/device/delete", { id: device.id }); reload(); } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not delete the device"); }
-            }}><Trash2 size={15} />Delete</Btn>
-          </div>}
+          {!readOnly && <RowMenu label={`Actions for ${device.name}`} disabled={switching === device.id} items={[
+            // Only offered while the relay's state is known, so the item says what it will do.
+            device.canSwitch && device.enabled && typeof status?.on === "boolean" && !status.error && {
+              label: status.on ? "Turn off" : "Turn on", icon: <Power size={15} />,
+              onSelect: async () => {
+                const on = !status.on;
+                if (!on && !await appConfirm(`Turn off ${device.name}? Everything powered through it loses power, including this server if it is plugged into it.`, "Turn off device", "Turn off", true)) return;
+                setSwitching(device.id); setError("");
+                try { await api("power/device/switch", { id: device.id, on }); reload(); }
+                catch (reason) { setError(reason instanceof Error ? reason.message : "Could not switch the device"); }
+                finally { setSwitching(""); }
+              },
+            },
+            { label: "Edit", icon: <Pencil size={15} />, onSelect: () => setEditing(device) },
+            {
+              label: "Delete", icon: <Trash2 size={15} />, danger: true,
+              onSelect: async () => {
+                if (!await appConfirm(`Delete ${device.name} and its recorded power history?`, "Delete device", "Delete", true)) return;
+                try { await api("power/device/delete", { id: device.id }); reload(); } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not delete the device"); }
+              },
+            },
+          ]} />}
         </div>;
       })}
       {!readOnly && <PriceForm settings={settings} saved={reload} />}
@@ -220,8 +227,8 @@ function DeviceForm({ device, drivers, close, saved }: { device: Device | null; 
       ))}
       <label><input name="enabled" type="checkbox" value="true" defaultChecked={device?.enabled !== false} /> Record this device</label>
       {error && <div className="alert">{error}</div>}
-      <Btn className="primary" disabled={saving}>{saving ? "Reading the device…" : device ? "Save device" : "Add device"}</Btn>
-      <small className="form-note">The device is read once before saving, to check the connection and credentials.</small>
+      <Btn className="primary" disabled={saving}>{saving ? "Saving…" : device ? "Save device" : "Add device"}</Btn>
+      <small className="form-note">A recorded device is read once before saving, to check the connection and credentials.</small>
     </form>
   </Modal>;
 }

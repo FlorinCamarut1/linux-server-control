@@ -635,6 +635,7 @@ header p,
 }
 .actions {
   display: flex;
+  align-items: center;
   gap: 8px;
   flex-wrap: wrap;
 }
@@ -1259,9 +1260,6 @@ a.button {
   background: var(--sunken);
   color: var(--accent);
 }
-.folder-delete {
-  color: var(--danger);
-}
 .script-folder summary::-webkit-details-marker {
   display: none;
 }
@@ -1292,6 +1290,11 @@ a.button {
 .grow {
   flex: 1;
   min-width: 0;
+}
+/* A long path or command has no spaces to wrap at. */
+.grow b,
+.grow small {
+  overflow-wrap: anywhere;
 }
 .grow small {
   display: block;
@@ -1413,6 +1416,9 @@ a.button {
   max-height: 90dvh;
   overflow: auto;
   box-shadow: 0 25px 80px var(--shadow);
+}
+.modal:focus {
+  outline: none;
 }
 .modal .panel-head {
   padding: 16px var(--modal-space);
@@ -1645,11 +1651,14 @@ select:focus {
   right: 12px;
   z-index: 2;
 }
-.file-explorer-menu-trigger {
+/* The "⋯" button of a row and the menu it opens. The button is as tall as the
+   other controls of a row; the menu is drawn above everything, dialogs included. */
+.menu-trigger {
+  flex: 0 0 auto;
   display: grid;
   place-items: center;
-  width: var(--control-h-sm);
-  height: var(--control-h-sm);
+  width: var(--control-h);
+  height: var(--control-h);
   padding: 0;
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
@@ -1657,28 +1666,32 @@ select:focus {
   color: var(--muted);
   cursor: pointer;
 }
-.file-explorer-menu-trigger:hover,
-.file-explorer-menu-trigger[aria-expanded="true"] {
+.file-explorer-menu .menu-trigger {
+  width: var(--control-h-sm);
+  height: var(--control-h-sm);
+}
+.menu-trigger:hover,
+.menu-trigger[aria-expanded="true"] {
   color: var(--text);
   background: var(--hover-strong);
 }
-.file-explorer-menu-trigger:disabled {
+.menu-trigger:disabled {
   cursor: wait;
   opacity: .5;
 }
-.file-explorer-menu-items {
+.menu-items {
   position: fixed;
   top: 0;
   left: 0;
-  z-index: 40;
-  min-width: 132px;
+  z-index: 60;
+  min-width: 148px;
   padding: 4px;
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-md);
   background: var(--hover);
   box-shadow: 0 12px 30px var(--shadow);
 }
-.file-explorer-menu-items button {
+.menu-items button {
   display: flex;
   align-items: center;
   width: 100%;
@@ -1688,15 +1701,22 @@ select:focus {
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text);
-  font-size: var(--text-sm);
+  font-size: var(--text-md);
   text-align: left;
+  white-space: nowrap;
   cursor: pointer;
 }
-.file-explorer-menu-items button:hover {
+.menu-items button:hover,
+.menu-items button:focus-visible {
   background: var(--hover-strong);
+  outline: none;
 }
-.file-explorer-menu-items button.danger {
+.menu-items button.danger {
   color: var(--danger-text);
+}
+.menu-items button:disabled {
+  opacity: .5;
+  cursor: not-allowed;
 }
 .file-explorer-grid.list {
   display: block;
@@ -1983,6 +2003,17 @@ select:focus {
 .enroll[open] summary {
   margin-bottom: 16px;
 }
+/* The connection form on the reconnect screen, below the Reconnect button. */
+.reconnect-settings {
+  margin: 16px 0 0;
+}
+.reconnect-settings .account-form,
+.reconnect-settings .panel-body {
+  padding: 0;
+}
+.reconnect-sign-out {
+  margin-top: 12px;
+}
 /* Browsers on phones zoom in on fields with text smaller than 16px. */
 @media (pointer: coarse) {
   input:not([type="checkbox"]):not([type="radio"]),
@@ -2166,16 +2197,12 @@ select:focus {
   }
   .script-row .actions,
   .schedule-row .actions {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
     padding-left: 0;
   }
   .script-row .actions .button,
   .schedule-row .actions .button {
+    flex: 1;
     justify-content: center;
-  }
-  .schedule-row .badge {
-    margin-left: calc(var(--icon-box) + 12px);
   }
   .script-folder summary {
     padding: 12px var(--panel-space-x);

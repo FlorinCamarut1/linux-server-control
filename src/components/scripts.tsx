@@ -1,8 +1,8 @@
 "use client";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { api } from "@/lib/client-api";
 import { FileBrowser, DirectoryBrowser, ScriptBrowser } from "@/components/files";
-import { Btn, Modal } from "@/components/ui";
+import { appConfirm, Btn, Modal } from "@/components/ui";
 import type { RunOption, S } from "@/lib/types";
 import {
   FolderOpen,
@@ -172,6 +172,7 @@ export function ScriptForm({
     </Modal>
   );
 }
+const NEW_SCRIPT = "#!/usr/bin/env bash\nset -eu\n\n# Add commands here\n";
 export function CustomScriptForm({
   folders,
   rootAccess,
@@ -186,8 +187,13 @@ export function CustomScriptForm({
   const [directory, setDirectory] = useState(""),
     [showBrowser, setShowBrowser] = useState(false),
     [error, setError] = useState("");
+  // Closing by a stray click outside the form, or by Escape, must not lose a written script.
+  const content = useRef<HTMLTextAreaElement>(null);
+  async function closeForm() {
+    if ((content.current?.value ?? NEW_SCRIPT) === NEW_SCRIPT || await appConfirm("Close without creating the script? What you wrote is discarded.", "Unsaved script", "Discard", true)) close();
+  }
   return (
-    <Modal title="New custom script" close={close}>
+    <Modal title="New custom script" close={closeForm}>
       <form
         onSubmit={async (event) => {
           event.preventDefault();
@@ -245,7 +251,7 @@ export function CustomScriptForm({
         </label>
         <label>
           Script content
-          <textarea name="content" required spellCheck={false} defaultValue={'#!/usr/bin/env bash\nset -eu\n\n# Add commands here\n'} />
+          <textarea ref={content} name="content" required spellCheck={false} defaultValue={NEW_SCRIPT} />
           <small>The script runs as the dashboard SSH user. It is saved as an executable file inside the selected allowed folder.</small>
         </label>
         {error && <div className="alert">{error}</div>}

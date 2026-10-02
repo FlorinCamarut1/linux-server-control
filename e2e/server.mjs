@@ -56,6 +56,12 @@ createServer(async (req, res) => {
   res.statusCode = 204; res.end();
 }).listen(3212, "127.0.0.1");
 
+// E2E_SSH_TARGET (user@host) makes the dashboard manage this machine over SSH
+// instead of directly, so the same tests check a real SSH server and the login
+// shell of its user. SSH_PORT, SSH_KEY_FILE and SSH_KNOWN_HOSTS_FILE describe
+// the connection, and the SSH server must put e2e/.tmp/bin first in PATH for
+// the fake crontab (sshd_config: SetEnv PATH=...).
+const sshTarget = process.env.E2E_SSH_TARGET ?? "";
 const server = spawn(process.execPath, ["server.js"], {
   cwd: app,
   stdio: "inherit",
@@ -63,8 +69,8 @@ const server = spawn(process.execPath, ["server.js"], {
     ...process.env,
     PATH: `${bin}${path.delimiter}${process.env.PATH}`,
     NODE_ENV: "production", PORT: "3210", HOSTNAME: "127.0.0.1",
-    DATA_DIR: data, SSH_TARGET: "", SCRIPT_ROOT: files, ALLOWED_PATHS: files,
-    MONITORED_PATHS: "/", REMOTE_LOGS: logs, SSH_MULTIPLEX: "false",
+    DATA_DIR: data, SSH_TARGET: sshTarget, SCRIPT_ROOT: files, ALLOWED_PATHS: files,
+    MONITORED_PATHS: "/", REMOTE_LOGS: logs, SSH_MULTIPLEX: sshTarget ? "true" : "false",
   },
 });
 for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, () => server.kill(signal));

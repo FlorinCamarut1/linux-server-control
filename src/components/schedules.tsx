@@ -16,13 +16,16 @@ export function ScheduleForm({
   close: () => void;
   done: () => void;
 }) {
-  const [frequency, setFrequency] = useState(initial ? "custom" : "daily"),
+  // The Scripts page opens this form for a script that has no schedule yet,
+  // with the script chosen: that is a new schedule, not an edit.
+  const existing = !!initial?.id;
+  const [frequency, setFrequency] = useState(existing ? "custom" : "daily"),
     [targetKind, setTargetKind] = useState<"script" | "command">(
       initial?.command ? "command" : "script",
     ),
     [error, setError] = useState("");
   return (
-    <Modal title={initial ? "Edit schedule" : "New schedule"} close={close}>
+    <Modal title={existing ? "Edit schedule" : "New schedule"} close={close}>
       <form
         onSubmit={async (event) => {
           event.preventDefault();
@@ -200,7 +203,7 @@ export function ScheduleForm({
           </>
         )}
         {error && <div className="alert">{error}</div>}
-        <Btn className="primary">{initial ? "Save schedule" : "Create schedule"}</Btn>
+        <Btn className="primary">{existing ? "Save schedule" : "Create schedule"}</Btn>
       </form>
     </Modal>
   );

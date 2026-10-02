@@ -211,13 +211,17 @@ test("saving a root schedule needs both root helpers", async () => {
   assert.equal(both.readJson("schedules")[0].runAs, "root");
 });
 
-test("the SSH port and key file are passed to ssh", async () => {
+test("the SSH port, key file and known hosts file are passed to ssh", async () => {
   const { server, commands } = loadServer({ env: { SSH_TARGET: "admin@server", SSH_PORT: "2222", SSH_KEY_FILE: "/run/ssh/id_rsa" } });
   await server.run(["hostname"]);
   const argv = commands[0].argv;
   assert.equal(argv[0], "ssh");
   assert.equal(argv[argv.indexOf("-p") + 1], "2222");
   assert.equal(argv[argv.indexOf("-i") + 1], "/run/ssh/id_rsa");
+  assert.ok(argv.includes("UserKnownHostsFile=/run/ssh/known_hosts"), "the mounted file by default");
+  const elsewhere = loadServer({ env: { SSH_TARGET: "admin@server", SSH_KNOWN_HOSTS_FILE: "/etc/dashboard/known_hosts" } });
+  await elsewhere.server.run(["hostname"]);
+  assert.ok(elsewhere.commands[0].argv.includes("UserKnownHostsFile=/etc/dashboard/known_hosts"));
   assert.equal(server.serverSettings().sshPort, 2222);
   assert.throws(() => server.updateServerSettings({ sshPort: 70000 }), /SSH port/);
   server.updateServerSettings({ sshPort: 22 });
@@ -249,6 +253,29 @@ test("container names may not start with a dash", () => {
   const { server } = loadServer();
   for (const name of ["jellyfin", "app_1", "my.app-2"]) assert.ok(server.CONTAINER_NAME.test(name), name);
   for (const name of ["--follow", "-f", "", "a b", "a;id"]) assert.ok(!server.CONTAINER_NAME.test(name), name);
+});
+
+test("container logs include the error stream, and a failure says why", async () => {
+  // A `docker` that logs to both streams, like most applications do.
+  const bin = mkdtempSync(path.join(tmpdir(), "lsc-docker-"));
+  writeFileSync(path.join(bin, "docker"), `#!/bin/sh
+for name; do :; done
+if [ "$name" = missing ]; then echo "Error response from daemon: No such container: missing" >&2; exit 1; fi
+[ "$name" = quiet ] && exit 0
+echo "2026-09-27T03:00:00Z started"
+echo "2026-09-27T03:00:01Z warning on the error stream" >&2
+echo "2026-09-27T03:00:02Z done"
+`, { mode: 0o755 });
+  const host = (argv, input) => {
+    const result = spawnSync(argv[0], argv.slice(1), { input: input ?? "", encoding: "utf8", env: { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}` } });
+    return { stdout: result.stdout, stderr: result.stderr, code: result.status ?? 1 };
+  };
+  const { server, commands } = loadServer({ host });
+  assert.equal(await server.containerLogs("app"), "2026-09-27T03:00:00Z started\n2026-09-27T03:00:01Z warning on the error stream\n2026-09-27T03:00:02Z done\n");
+  assert.deepEqual(plain(commands.at(-1).argv.slice(-2)), ["sh", "app"], "the name is passed as an argument, never as part of the script");
+  assert.equal(await server.containerLogs("quiet"), "", "a container that logged nothing has no log");
+  await assert.rejects(server.containerLogs("missing"), /No such container: missing/);
+  await assert.rejects(server.containerLogs("--follow"), /Invalid container name/);
 });
 
 test("the audit log is rotated once it grows large", () => {
@@ -308,6 +335,20 @@ test("restoreConfiguration writes a valid backup and clears removed root schedul
   assert.ok(!cron.crontabs.root.includes("media-dashboard"), "the removed root schedule must leave root's crontab");
 });
 
+test("the monitored storage paths are part of a backup", async () => {
+  const cron = cronHost({ userCrontab: "" });
+  const { server, readJson, fileText } = loadServer({ host: cron.host, env: { MONITORED_PATHS: "/srv/example" } });
+  assert.deepEqual(plain(server.exportConfiguration().monitoredPaths), ["/srv/example"]);
+  await server.restoreConfiguration(backup());
+  assert.equal(fileText("monitored-paths"), null, "an older backup leaves the monitored paths alone");
+  await server.restoreConfiguration(backup({ monitoredPaths: ["/mnt/media/", "/mnt/backup", "/mnt/media"] }));
+  assert.deepEqual(readJson("monitored-paths"), ["/mnt/media", "/mnt/backup"]);
+  assert.deepEqual(plain(server.monitoredPaths()), ["/mnt/media", "/mnt/backup"]);
+  for (const invalid of [["relative/path"], ["/mnt/a\n/etc"], "/mnt/media", [42]])
+    await assert.rejects(server.restoreConfiguration(backup({ monitoredPaths: invalid })), /monitored paths|single line/, JSON.stringify(invalid));
+  assert.deepEqual(readJson("monitored-paths"), ["/mnt/media", "/mnt/backup"], "a rejected backup changes nothing");
+});
+
 test("metrics are sampled at most once per interval", () => {
   const { server } = loadServer();
   const stats = { cpuUsagePercent: 10, memoryUsedBytes: 1, memoryTotalBytes: 4, temperatureC: null, diskUsedPercent: 5 };
@@ -330,6 +371,28 @@ test("failed-script alerts only count recent failures", () => {
   assert.equal(result.values.failedScripts, 1);
   assert.equal(result.triggered.length, 0);
   assert.equal(readJson("alerts")[0].lastTriggeredAt, undefined);
+});
+
+test("a storage alert watches the fullest monitored path", () => {
+  const { server, readJson } = loadServer();
+  const events = [];
+  server.onDashboardEvent((event) => events.push(event));
+  server.save("alerts", [
+    { id: "s", name: "Disks", metric: "storage", threshold: 90, cooldownMinutes: 30, enabled: true },
+    { id: "d", name: "System", metric: "disk", threshold: 90, cooldownMinutes: 30, enabled: true },
+  ]);
+  const storage = [{ path: "/srv/a", usedPercent: 50 }, { path: "/srv/b", usedPercent: 93 }, { path: "/srv/unavailable", usedPercent: null }];
+  const stats = { cpuUsagePercent: 0, memoryUsedBytes: 0, memoryTotalBytes: 0, temperatureC: null, diskUsedPercent: 40, storage };
+  const result = server.evaluateAlerts({ stats, containers: [] });
+  assert.equal(result.values.storage, 93);
+  assert.deepEqual(plain(result.triggered.map((rule) => rule.id)), ["s"], "the system disk has its own rule");
+  assert.equal(events.length, 1);
+  assert.match(events[0].message, /^Storage use of \/srv\/b is 93%, at or above the threshold of 90%\.$/);
+  assert.ok(readJson("alerts").find((rule) => rule.id === "s").lastTriggeredAt);
+  // Within the cooldown it stays quiet; without monitored paths there is nothing to exceed.
+  assert.equal(server.evaluateAlerts({ stats, containers: [] }).triggered.length, 0);
+  assert.equal(server.evaluateAlerts({ stats: { ...stats, storage: [] }, containers: [] }).values.storage, 0);
+  assert.equal(server.normalizeAlert({ metric: "storage", threshold: "90", cooldownMinutes: "30", enabled: "true" }).metric, "storage");
 });
 
 test("interrupted runs are marked failed on startup", () => {

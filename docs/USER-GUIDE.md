@@ -4,6 +4,8 @@ A tour of Linux Server Control once it is installed. For installation, see [INST
 
 The screenshots use a demonstration server with made-up containers, scripts, plugs and addresses.
 
+On every page, the **⋯** button at the end of a row opens what can be done with that row: edit, pause, delete and so on. Nothing is deleted by a single click: deleting always asks first.
+
 ## Contents
 
 1. [Signing in](#signing-in)
@@ -37,9 +39,13 @@ Every other browser or phone needs a one-time **access code** the first time it 
 
 After five wrong passwords a browser is blocked for 15 minutes. Browsers that are not enrolled yet share one limit, so guessing from new browsers never locks out your own.
 
+If no authorized browser is left, or the password is forgotten, see [Locked out](../INSTALL.md#locked-out) in the installation guide.
+
 ## Overview
 
-The landing page: containers, CPU, RAM and disk at a glance, anything that needs attention (stopped containers, the latest failed run), and charts for the last 24 hours, 7 days or 30 days. Once you add smart plugs, their power and energy appear here too.
+The landing page: containers, CPU, RAM and disk at a glance, anything that needs attention, and charts for the last 24 hours, 7 days or 30 days. Once you add smart plugs, their power and energy appear here too.
+
+**Attention needed** lists what is wrong now, not everything that ever went wrong: stopped containers, alert rules whose value is above their threshold, and scripts and schedules whose latest run failed. A failed script or schedule leaves the list once it runs successfully again; the failure itself stays under **History**.
 
 ![Overview with health tiles and charts](screenshots/overview.jpg)
 
@@ -50,7 +56,7 @@ Every chart has a **Table** button that shows the same numbers as a table. Hover
 All Docker containers on the server, running and stopped, with filters, current resource use and storage.
 
 - The buttons next to a container open its web interface, for example `8096` for Jellyfin. Apps that share a VPN container's network, like Radarr or Sonarr behind Gluetun, link to their usual port when the VPN container publishes it.
-- Open a row for its details, logs, and **Start**, **Stop** or **Restart**. The disk size is read when you open the details.
+- Open a row for its details, logs, and **Start**, **Stop** or **Restart**. The disk size is read when you open the details. **Logs** shows the last 300 lines of both the output and the error stream, and follows them while live updates are on.
 
 ![Containers with links to their web interfaces](screenshots/containers.jpg)
 
@@ -68,18 +74,19 @@ Shell scripts you approve can be run from the dashboard and followed live.
 - **Add script** registers an existing `.sh` file from the allowed folders; **New custom script** writes a new one.
 - Group scripts in folders, and give a script **run options** (preset arguments) to choose from when you run it.
 - **Run** starts the script and opens its live log. Scripts can run as the SSH user or, with the [optional root helpers](../INSTALL.md#optional-run-scripts-and-schedules-as-root), as root. A run log keeps the first 10 MB of output.
+- **Schedule**, **Edit** and **Delete** are in the script's **⋯** menu. Deleting a script or a folder removes it from the dashboard, with its schedules; the `.sh` files stay on the server.
 
-![Scripts grouped in folders](screenshots/scripts.jpg)
+![Scripts grouped in folders, with the menu of one script open](screenshots/scripts.jpg)
 
 ## Files
 
-Browse, search, sort, edit, copy, move, rename and delete files inside the allowed folders only. Text files up to 512 KB open in the built-in editor. Folder sizes are calculated after the listing appears; sorting by size measures the folders first, so it takes longer in large folders.
+Browse, search, sort, edit, copy, move, rename and delete files inside the allowed folders only. Text files up to 512 KB open in the built-in editor, which asks before closing with changes that were not saved. Folder sizes are calculated after the listing appears; sorting by size measures the folders first, so it takes longer in large folders.
 
 ![File explorer](screenshots/files.jpg)
 
 ## Schedules
 
-Run scripts, or single commands, on a schedule with cron. The form builds the cron expression for you. Each schedule can be paused, edited or deleted, and its runs appear under **History → Cron runs**.
+Run scripts, or single commands, on a schedule with cron. The form builds the cron expression for you. Each schedule can be edited, paused or deleted from its **⋯** menu, and its runs appear under **History → Cron runs**.
 
 A schedule can run as root once both root helpers are installed. Root schedules run only registered scripts from the folders approved for root, never a custom command.
 
@@ -100,7 +107,9 @@ To add a device, choose **Add device** and its type:
 | Tasmota | The IP address, and the web password if one is set. |
 | Home Assistant | The Home Assistant URL, a long-lived access token and the power sensor's entity ID. |
 
-The device is read once before it is saved, so a wrong address or password is reported straight away. Tapo, Shelly and Tasmota plugs, and Home Assistant devices with a switch entity, can also be turned on and off from their row; turning one off asks first, because everything plugged into it loses power. Give plugs a fixed IP address in your router so they keep working.
+The device is read once before it is saved, so a wrong address or password is reported straight away. Tapo, Shelly and Tasmota plugs, and Home Assistant devices with a switch entity, can also be turned on and off from their **⋯** menu; turning one off asks first, because everything plugged into it loses power. Give plugs a fixed IP address in your router so they keep working.
+
+A plug that is away for a while can be paused instead of deleted: edit it and clear **Record this device**. A paused device is saved without being read, keeps its history, and sends no notifications.
 
 ## History
 
@@ -110,7 +119,7 @@ Every script run from the dashboard, with its status, duration, arguments and fu
 
 ## Alerts
 
-Rules that fire when a value reaches a threshold: CPU temperature, CPU, RAM or disk use, failed script runs in the last 24 hours, or stopped containers. The cooldown stops an alert from repeating too often. Rules are checked every 5 minutes, also while no browser is open, and triggered alerts go to your notification channels.
+Rules that fire when a value reaches a threshold: CPU temperature, CPU, RAM or system disk use, the use of the monitored storage paths, failed script runs in the last 24 hours, or stopped containers. The storage rule watches all the monitored paths at once and fires for the fullest. The cooldown stops an alert from repeating too often. Rules are checked every 5 minutes, also while no browser is open; triggered alerts go to your notification channels, and a rule that is above its threshold is listed on Overview.
 
 ![Alert rules](screenshots/alerts.jpg)
 
@@ -118,11 +127,11 @@ Rules that fire when a value reaches a threshold: CPU temperature, CPU, RAM or d
 
 - **Appearance**: choose a theme (Dark, Light, Nord, Dracula, Solarized, Gruvbox, Catppuccin, Tokyo Night, Rosé Pine, Black, Latte, or System to follow the device). Each browser keeps its own choice.
 - **Notifications**: send alerts, failed runs and power device changes to Discord, Slack (also Mattermost and Rocket.Chat), ntfy, or any webhook that accepts JSON. Choose the events per channel and use **Test** to check it.
-- **Server connection**: the SSH target and port, the allowed folders and how long metrics are kept. **Check server requirements** tests what the server provides and names anything missing.
+- **Server connection**: the SSH target and port, the allowed folders and how long metrics are kept. Saving tests the connection first and keeps the previous settings if the server does not answer. **Check server requirements** tests what the server provides and names anything missing.
 - **Storage monitoring**: the mounted folders shown as storage cards.
-- **Authorized browsers**: see and revoke devices, and create access codes for new ones.
+- **Authorized browsers**: see and revoke devices, and create access codes for new ones. The browser you are using is marked. The last authorized browser cannot be revoked, because no other could sign in afterwards.
 - **Accounts**: add accounts for other people. An **Administrator** can change everything. A **Read-only** account sees the pages, history and logs, but has no Files page and cannot run, edit or delete anything.
-- **Change password**, and **Dashboard settings backup** to export or restore scripts, schedules, folders, alerts and devices.
+- **Change password**, and **Dashboard settings backup** to export or restore scripts, schedules, folders, alerts, storage paths, the server connection and authorized browsers. Accounts, notification channels and power devices are not part of it, so no password, webhook or plug credential leaves the server.
 
 ![Settings with themes and notification channels](screenshots/settings.jpg)
 
@@ -140,7 +149,9 @@ The dashboard adapts to small screens: the menu becomes a row you can scroll, an
 
 **"Containers cannot be read".** The server answered but Docker did not. The message says whether Docker is missing, stopped, or not allowed for the SSH user; the rest of the dashboard keeps working.
 
-**"Server unavailable" after signing in.** The dashboard cannot reach the server over SSH. Check that the server is on, and the SSH target, key and `known_hosts` file under **Settings → Server connection** and in the `ssh/` folder.
+**"Server unavailable" after signing in.** The dashboard cannot reach the server over SSH. Check that the server is on, and the key and `known_hosts` file in the `ssh/` folder. If the server's address or SSH port changed, an administrator can correct it right there, under **Change the connection settings**; the new settings are saved only if the server answers.
+
+**No authorized browser is left, or the password is forgotten.** Both are solved with one command on the server: see [Locked out](../INSTALL.md#locked-out).
 
 **A plug "refused the connection".** Check its IP address in the plug's own app, give it a fixed address in the router, and, for Tapo, turn on Third-Party Compatibility in the Tapo app. If it still refuses, unplug it for ten seconds.
 

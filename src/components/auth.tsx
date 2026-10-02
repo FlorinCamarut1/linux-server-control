@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { api } from "@/lib/client-api";
+import { ServerSettingsForm } from "@/components/settings";
 import { Btn, PreflightList } from "@/components/ui";
 import type { PreflightCheck } from "@/lib/types";
 import {
@@ -46,13 +47,13 @@ export function Login({
           </label>
           <label>
             Password
-            <input name="password" type="password" />
+            <input name="password" type="password" autoComplete="current-password" />
           </label>
           <details className="enroll">
             <summary>New browser? Enter an enrollment code</summary>
             <label>
               Code
-              <input name="code" />
+              <input name="code" autoComplete="off" spellCheck={false} />
             </label>
             <label>
               Device name
@@ -68,8 +69,33 @@ export function Login({
     </main>
   );
 }
-export function ConnectionUnavailable({ error, retry, loading }: { error: string; retry: () => void; loading: boolean }) {
-  return <main className="login-wrap"><section className="login-card"><div className="login-logo"><img src="/icon.svg" alt="" /></div><h1>Server unavailable</h1><p>Your dashboard session is still valid, but it cannot reach the managed server over SSH.</p><div className="alert">{error}</div><p>Check that the server is online, then verify the SSH target, key, and known_hosts mount. Once it reconnects, Settings will be available again.</p><Btn className="primary full" disabled={loading} onClick={retry}>{loading ? "Reconnecting…" : "Reconnect"}</Btn></section></main>;
+export function ConnectionUnavailable({ error, retry, signOut, loading }: { error: string; retry: () => void; signOut: () => void; loading: boolean }) {
+  // The dashboard cannot open without the server, so Settings is out of reach
+  // exactly when the server's address changed. Administrators may therefore
+  // correct the connection here; saving it tests it first.
+  const [admin, setAdmin] = useState(false);
+  useEffect(() => {
+    void api("state?scope=records", undefined, true).then((data) => setAdmin(data.user?.role === "admin")).catch(() => {});
+  }, []);
+  return (
+    <main className="login-wrap">
+      <section className="login-card">
+        <div className="login-logo"><img src="/icon.svg" alt="" /></div>
+        <h1>Server unavailable</h1>
+        <p>Your dashboard session is still valid, but it cannot reach the managed server over SSH.</p>
+        <div className="alert">{error}</div>
+        <p>Check that the server is online, then verify the SSH target, key, and known_hosts mount.</p>
+        <Btn className="primary full" disabled={loading} onClick={retry}>{loading ? "Reconnecting…" : "Reconnect"}</Btn>
+        {admin && (
+          <details className="enroll reconnect-settings">
+            <summary>Change the connection settings</summary>
+            <ServerSettingsForm saved={retry} />
+          </details>
+        )}
+        <Btn className="full reconnect-sign-out" onClick={signOut}>Sign out</Btn>
+      </section>
+    </main>
+  );
 }
 export function Setup({ done, loading }: { done: () => void; loading: boolean }) {
   const [message, setMessage] = useState("");

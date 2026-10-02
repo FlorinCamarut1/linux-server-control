@@ -317,6 +317,10 @@ export const accountRoutes: Routes<Context> = {
   },
   "POST device/revoke": ({ body, devices: known }) => {
     if (!known[body.id]) throw Error("Device not found");
+    // The only authorized browser is the one making this request: without it
+    // nobody could create an access code, and no browser could sign in again.
+    if (Object.keys(known).length === 1)
+      return fail("This is the only authorized browser. Authorize another one before revoking it.");
     const name = known[body.id].name;
     delete known[body.id];
     save("devices", known);

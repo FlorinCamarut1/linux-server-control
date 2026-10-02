@@ -12,6 +12,7 @@ It is intended for people comfortable administering their own server. It runs en
 - Browse and edit files only inside paths you explicitly allow.
 - Chart CPU, RAM, temperature, and storage over the last day, week, or month.
 - Record power use and cost from Tapo, Shelly, Tasmota, or Home Assistant smart plugs.
+- Set alert rules for temperature, CPU, RAM, disks and failed runs, and see on one page what needs attention.
 - Get alerts, failed runs, and power device changes on Discord, Slack, ntfy, or any webhook.
 - Choose a theme per device: Dark, Light, Nord, Dracula, Solarized, Gruvbox, Catppuccin, Tokyo Night, Rosé Pine, Black, Latte, or System.
 - Add accounts for other people: administrators, or read-only accounts that can look but not change.
@@ -27,7 +28,7 @@ See the **[user guide](docs/USER-GUIDE.md)** for a tour of every page.
 
 The normal installation uses the ready-made multi-architecture image from GitHub Container Registry. No Git clone and no local Node.js setup are needed.
 
-The server needs an SSH account, `bash`, and the usual GNU tools; `python3`, `file`, `cron` and Docker each enable one page. See [What you need](INSTALL.md#what-you-need); the dashboard also checks them for you during setup.
+The server needs an SSH account, `bash`, and the usual GNU tools; `python3`, `file`, `cron` and Docker each enable one page. The account's login shell may be bash, zsh or fish. See [What you need](INSTALL.md#what-you-need); the dashboard also checks them for you during setup.
 
 ```bash
 mkdir -p ~/linux-server-control/{data,ssh}
@@ -46,7 +47,7 @@ docker compose pull
 docker compose up -d
 ```
 
-`latest` is checked every time Compose starts the dashboard. Set `VERSION` in `.env` to a release number, such as `0.2.0`, to stay on that release.
+`latest` is checked every time Compose starts the dashboard. Set `VERSION` in `.env` to a release number, such as `0.3.0`, to stay on that release.
 
 ## Security
 

@@ -10,7 +10,8 @@ import { Overview, HistoryPanel, AlertForm, describeAlert } from "@/components/m
 import { ScheduleForm } from "@/components/schedules";
 import { ScriptForm, CustomScriptForm, RunScriptForm, FolderForm } from "@/components/scripts";
 import { AppearancePanel, NotificationsPanel, PasswordForm, DevicePanel, ServerSettings, ConfigurationPanel, StorageManager, UsersPanel } from "@/components/settings";
-import { appConfirm, Btn, copyText, Panel, Metric, formatBytes, formatPercent, formatUptime, Modal, DialogHost, LiveLogViewer, AppLoading, LoadingScreen } from "@/components/ui";
+import { appConfirm, Btn, copyText, Panel, Metric, formatBytes, formatPercent, formatUptime, Modal, DialogHost, LiveLogViewer, AppLoading, LoadingScreen, RowMenu } from "@/components/ui";
+import { applyTheme, savedTheme } from "@/lib/theme";
 import type { Run, S, Schedule, St } from "@/lib/types";
 import {
   Zap,
@@ -27,6 +28,8 @@ import {
   KeyRound,
   LayoutGrid,
   LogOut,
+  Pause,
+  Pencil,
   Play,
   RefreshCw,
   Thermometer,
@@ -63,6 +66,8 @@ export default function Home() {
     [alertEditor, setAlertEditor] = useState<St["alerts"][number] | null | undefined>(),
     [storageManager, setStorageManager] = useState(false),
     [storagePage, setStoragePage] = useState(0),
+    // The script folders left open, so they still are after a visit to another page.
+    [openFolders, setOpenFolders] = useState<ReadonlySet<string>>(new Set()),
     [enrollment, setEnrollment] = useState<{
       code: string;
       expires: number;
@@ -96,7 +101,10 @@ export default function Home() {
       } else setState((previous) => (previous ? { ...previous, ...data } : previous));
       setErr("");
     } catch (e) {
-      setErr(e instanceof Error ? e.message : "Error");
+      // Not being signed in is no error on a first visit; it is worth saying
+      // only when it ends a session that was open.
+      const signedOut = e instanceof ApiError && e.status === 401;
+      setErr(signedOut ? (hostLoaded.current ? "Your session has ended. Sign in again." : "") : e instanceof Error ? e.message : "Error");
       if (!(e instanceof ApiError) || e.code !== "HOST_UNAVAILABLE") {
         hostLoaded.current = false;
         setState(null);
@@ -127,6 +135,9 @@ export default function Home() {
       document.removeEventListener("visibilitychange", scheduled);
     };
   }, [refresh]);
+  // The saved theme is applied before the first paint by the script in the
+  // document head; this also gives the phone's browser bar the theme's color.
+  useEffect(() => applyTheme(savedTheme()), []);
   // On phones the navigation scrolls sideways; keep the active tab visible.
   useEffect(() => {
     document.querySelector("nav button.active")?.scrollIntoView({ block: "nearest", inline: "nearest" });
@@ -203,11 +214,17 @@ export default function Home() {
   function openLogs(title: string, path: string, body: unknown) {
     setLogs({ title, path, request: body });
   }
+  async function signOut() {
+    try { await api("logout", {}); } catch {}
+    hostLoaded.current = false;
+    setErr("");
+    setState(null);
+  }
   if (initializing) return <LoadingScreen />;
   if (needsSetup)
     return <Setup done={() => { setNeedsSetup(false); void refresh(); }} loading={pendingRequests > 0} />;
   if (!state && err.includes("Server unavailable"))
-    return <ConnectionUnavailable error={err} retry={() => void refresh()} loading={pendingRequests > 0} />;
+    return <ConnectionUnavailable error={err} retry={() => void refresh()} signOut={signOut} loading={pendingRequests > 0} />;
   if (!state)
     return <Login error={err} done={refresh} loading={pendingRequests > 0} />;
   // Read-only accounts see the pages without the controls; the API refuses the rest.
@@ -259,14 +276,7 @@ export default function Home() {
               <RefreshCw size={16} />
               Refresh
             </Btn>
-            <Btn
-              aria-label="Log out"
-              onClick={async () => {
-                await api("logout", {});
-                hostLoaded.current = false;
-                setState(null);
-              }}
-            >
+            <Btn aria-label="Log out" onClick={signOut}>
               <LogOut size={16} />
             </Btn>
           </div>
@@ -399,30 +409,41 @@ export default function Home() {
           >
             {scriptFolders.length ? (
               scriptFolders.map(([folder, scripts]) => (
-                <details className="script-folder" key={folder}>
+                <details
+                  className="script-folder"
+                  key={folder}
+                  open={openFolders.has(folder)}
+                  onToggle={(event) => {
+                    const open = event.currentTarget.open;
+                    setOpenFolders((current) => {
+                      if (current.has(folder) === open) return current;
+                      const next = new Set(current);
+                      if (open) next.add(folder);
+                      else next.delete(folder);
+                      return next;
+                    });
+                  }}
+                >
                   <summary>
                     <Folder size={18} />
                     <span>
                       <b>{folder}</b>
                       <small>{scripts.length} script{scripts.length === 1 ? "" : "s"}</small>
                     </span>
-                    {!readOnly && <Btn
-                      className="danger folder-delete"
+                    {!readOnly && <RowMenu
+                      label={`Actions for the folder ${folder}`}
                       disabled={!!busy}
-                      title={`Delete ${folder}`}
-                      onClick={async (event) => {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        const description = scripts.length
-                          ? `Delete “${folder}”, all ${scripts.length} scripts registered in it, and their scheduled jobs? The .sh files will remain on the server.`
-                          : `Delete the empty folder “${folder}”?`;
-                        if (await appConfirm(description, "Delete folder", "Delete", true))
-                          await action(`folder:${folder}`, "folder/delete", { name: folder, deleteScripts: String(scripts.length > 0) });
-                      }}
-                    >
-                      <Trash2 size={15} />
-                      Delete folder
-                    </Btn>}
+                      items={[{
+                        label: "Delete folder", icon: <Trash2 size={15} />, danger: true,
+                        onSelect: async () => {
+                          const description = scripts.length
+                            ? `Delete “${folder}”, all ${scripts.length} scripts registered in it, and their scheduled jobs? The .sh files will remain on the server.`
+                            : `Delete the empty folder “${folder}”?`;
+                          if (await appConfirm(description, "Delete folder", "Delete", true))
+                            await action(`folder:${folder}`, "folder/delete", { name: folder, deleteScripts: String(scripts.length > 0) });
+                        },
+                      }]}
+                    />}
                     <ChevronDown className="chevron" size={18} />
                   </summary>
                   {scripts.map((s) => (
@@ -453,19 +474,21 @@ export default function Home() {
                         >
                           Logs
                         </Btn>
-                        {!readOnly && <><Btn onClick={() => { const schedule = scriptStatus.get(s.id)?.schedule; setScheduleEditor(schedule || { id: "", scriptId: s.id, expression: "0 3 * * *", label: `Run ${s.name}`, enabled: true, runAs: s.runAs || "user" }); }}>Schedule</Btn>
-                        <Btn onClick={() => setEdit(s)}>Edit</Btn>
-                        <Btn
-                          className="danger"
+                        {!readOnly && <RowMenu
+                          label={`Actions for ${s.name}`}
                           disabled={!!busy}
-                          onClick={async () => {
-                            if (await appConfirm(`Delete “${s.name}” and its scheduled jobs?`, "Delete script", "Delete", true))
-                              await action(s.id, "script/delete", { id: s.id });
-                          }}
-                        >
-                          <Trash2 size={15} />
-                          Delete
-                        </Btn></>}
+                          items={[
+                            { label: "Schedule", icon: <CalendarPlus size={15} />, onSelect: () => { const schedule = scriptStatus.get(s.id)?.schedule; setScheduleEditor(schedule || { id: "", scriptId: s.id, expression: "0 3 * * *", label: `Run ${s.name}`, enabled: true, runAs: s.runAs || "user" }); } },
+                            { label: "Edit", icon: <Pencil size={15} />, onSelect: () => setEdit(s) },
+                            {
+                              label: "Delete", icon: <Trash2 size={15} />, danger: true,
+                              onSelect: async () => {
+                                if (await appConfirm(`Delete “${s.name}” and its scheduled jobs? The .sh file will remain on the server.`, "Delete script", "Delete", true))
+                                  await action(s.id, "script/delete", { id: s.id });
+                              },
+                            },
+                          ]}
+                        />}
                       </div>
                     </div>
                   ))}
@@ -507,7 +530,8 @@ export default function Home() {
                       <Clock3 size={19} />
                     </div>
                     <div className="grow">
-                      <b>{script?.name || schedule.label}</b>
+                      {/* A schedule without a script runs a command, which says more than its label. */}
+                      <b>{script?.name || schedule.command || schedule.label}</b>
                       <small>
                         {schedule.label} · {schedule.expression}
                       </small>
@@ -520,29 +544,24 @@ export default function Home() {
                     {(schedule.runAs || "user") === "root" && (
                       <span className="badge root">root</span>
                     )}
-                    {!readOnly && <div className="actions">
-                      <Btn onClick={() => setScheduleEditor(schedule)}>Edit</Btn>
-                      <Btn
-                        onClick={() =>
-                          action(schedule.id, "schedule/toggle", {
-                            id: schedule.id,
-                          })
-                        }
-                      >
-                        {schedule.enabled ? "Pause" : "Enable"}
-                      </Btn>
-                      <Btn
-                        className="danger"
-                        onClick={() =>
-                          action(schedule.id, "schedule/delete", {
-                            id: schedule.id,
-                          })
-                        }
-                      >
-                        <Trash2 size={15} />
-                        Delete
-                      </Btn>
-                    </div>}
+                    {!readOnly && <RowMenu
+                      label={`Actions for the schedule ${script?.name || schedule.command || schedule.label}`}
+                      disabled={!!busy}
+                      items={[
+                        { label: "Edit", icon: <Pencil size={15} />, onSelect: () => setScheduleEditor(schedule) },
+                        {
+                          label: schedule.enabled ? "Pause" : "Enable", icon: schedule.enabled ? <Pause size={15} /> : <Play size={15} />,
+                          onSelect: () => action(schedule.id, "schedule/toggle", { id: schedule.id }),
+                        },
+                        {
+                          label: "Delete", icon: <Trash2 size={15} />, danger: true,
+                          onSelect: async () => {
+                            if (await appConfirm(`Delete the schedule for ${script?.name ?? "the custom command"} (${schedule.label})? Its line is removed from the server's crontab.`, "Delete schedule", "Delete", true))
+                              await action(schedule.id, "schedule/delete", { id: schedule.id });
+                          },
+                        },
+                      ]}
+                    />}
                   </div>
                 );
               })
@@ -571,12 +590,15 @@ export default function Home() {
         {tab === "power" && <PowerPage readOnly={readOnly} />}
         {tab === "alerts" && (
           <Panel title="Alert rules" note="Rules are checked every 5 minutes and on each dashboard refresh; cooldowns prevent repeated notifications." extra={readOnly ? undefined : <Btn className="primary" onClick={() => setAlertEditor(null)}>New alert</Btn>}>
-            {(state.alerts || []).map((rule) => <div className="schedule-row" key={rule.id}><div className="grow"><b>{rule.name}</b><small>{describeAlert(rule.metric, rule.threshold)} · cooldown {rule.cooldownMinutes} min{rule.lastTriggeredAt ? ` · last triggered ${new Date(rule.lastTriggeredAt).toLocaleString()}` : ""}</small></div><span className={`badge ${rule.enabled ? "up" : "down"}`}>{rule.enabled ? "Enabled" : "Paused"}</span>{!readOnly && <div className="actions"><Btn onClick={() => setAlertEditor(rule)}>Edit</Btn><Btn className="danger" onClick={() => action(rule.id, "alerts/delete", { id: rule.id })}><Trash2 size={15}/>Delete</Btn></div>}</div>)}
+            {(state.alerts || []).map((rule) => <div className="schedule-row" key={rule.id}><div className="grow"><b>{rule.name}</b><small>{describeAlert(rule.metric, rule.threshold)} · cooldown {rule.cooldownMinutes} min{rule.lastTriggeredAt ? ` · last triggered ${new Date(rule.lastTriggeredAt).toLocaleString()}` : ""}</small></div><span className={`badge ${rule.enabled ? "up" : "down"}`}>{rule.enabled ? "Enabled" : "Paused"}</span>{!readOnly && <RowMenu label={`Actions for the alert ${rule.name}`} disabled={!!busy} items={[
+              { label: "Edit", icon: <Pencil size={15} />, onSelect: () => setAlertEditor(rule) },
+              { label: "Delete", icon: <Trash2 size={15} />, danger: true, onSelect: async () => { if (await appConfirm(`Delete the alert rule “${rule.name}”?`, "Delete alert", "Delete", true)) await action(rule.id, "alerts/delete", { id: rule.id }); } },
+            ]} />}</div>)}
             {!state.alerts?.length && <div className="empty-state"><Thermometer size={22}/><b>No alert rules yet</b><p>Add thresholds for server health and jobs.</p></div>}
           </Panel>
         )}
         {tab === "settings" && readOnly && <><AppearancePanel /><PasswordForm /></>}
-        {tab === "settings" && !readOnly && <><AppearancePanel /><NotificationsPanel /><ServerSettings /><Panel title="Storage monitoring" note="Choose which mounted paths appear in capacity cards."><div className="panel-body"><Btn onClick={() => setStorageManager(true)}><HardDrive size={16}/>Manage storage paths</Btn></div></Panel><DevicePanel devices={state.devices} revoke={(id) => action(id, "device/revoke", { id })} createCode={async () => { try { setEnrollment(await api("enrollment/create", { minutes: "15" })); setCopied("idle"); } catch (e) { setErr(e instanceof Error ? e.message : "Error"); } }} /><UsersPanel current={state.user?.name || ""} /><PasswordForm /><ConfigurationPanel refresh={refresh} /></>}
+        {tab === "settings" && !readOnly && <><AppearancePanel /><NotificationsPanel /><ServerSettings /><Panel title="Storage monitoring" note="Choose which mounted paths appear in capacity cards."><div className="panel-body"><Btn onClick={() => setStorageManager(true)}><HardDrive size={16}/>Manage storage paths</Btn></div></Panel><DevicePanel devices={state.devices} current={state.device} revoke={(id) => action(id, "device/revoke", { id })} createCode={async () => { try { setEnrollment(await api("enrollment/create", { minutes: "15" })); setCopied("idle"); } catch (e) { setErr(e instanceof Error ? e.message : "Error"); } }} /><UsersPanel current={state.user?.name || ""} /><PasswordForm /><ConfigurationPanel refresh={refresh} /></>}
       </main>
       {logs && (
         <LiveLogViewer logs={logs} close={() => setLogs(null)} />

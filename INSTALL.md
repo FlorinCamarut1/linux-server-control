@@ -25,6 +25,8 @@ Run every command on the server, signed in as the normal user account you admini
 
 Only the first two rows are strictly required. If something else is missing, the dashboard still starts, tells you during setup what is missing, and only the matching page is affected. Systems that have BusyBox instead of GNU coreutils, such as Alpine, are not supported.
 
+The login shell of the account does not matter: bash, zsh and fish all work.
+
 To install the optional tools in one go:
 
 ```bash
@@ -109,7 +111,7 @@ nano .env
 | `SCRIPT_ROOT` | Where the script picker opens. Your home folder is fine. |
 | `MONITORED_PATHS` | Disks or mounts to show as storage cards, for example `/mnt/media`. Use `/` if you have none. |
 | `REMOTE_LOGS` | Where schedules write their log. The default is fine. |
-| `VERSION` | `latest`, or a release number such as `0.2.0` to stay on that release. |
+| `VERSION` | `latest`, or a release number such as `0.3.0` to stay on that release. |
 
 Two rules for `ALLOWED_PATHS`: everyone who can sign in can change every file in these folders, so keep them narrow; and never use `/`, all of `/home`, `.ssh`, or this installation's `data` and `ssh` folders.
 
@@ -256,6 +258,35 @@ Your settings and history stay in `data/`. Refresh the page in your browsers aft
 ## Backup
 
 Back up `.env`, `data/` and `ssh/`, and keep the copy private: they contain the dashboard configuration, password hashes, authorized devices, run logs and the SSH private key.
+
+## Locked out
+
+Each of these is solved on the server, in the dashboard's folder. Scripts, schedules, history and the other accounts stay as they are.
+
+**No authorized browser is left**, for example after clearing the browser's cookies. Create an access code on the command line, then enter it on the sign-in page under **New browser? Enter an enrollment code**:
+
+```bash
+cd ~/linux-server-control
+docker compose exec dashboard node scripts/enroll.mjs
+```
+
+**The owner's password is forgotten.** Set a new one of at least 12 characters; the username stays the same:
+
+```bash
+cd ~/linux-server-control
+docker compose exec -e DASHBOARD_PASSWORD='a new long password' dashboard node scripts/setup.mjs
+```
+
+Other accounts get a new password from an administrator, under **Settings → Accounts**.
+
+**The server's address changed.** Four things still point to the old address:
+
+1. `LAN_IP` in `.env`: set the new address, then run `docker compose up -d`.
+2. `ssh/known_hosts`: repeat the `ssh-keyscan` and `chown` commands of [step 4](#step-4-create-the-ssh-key) with the new address.
+3. Your browsers, which were authorized for the old address: create an access code with the first command of this section.
+4. The SSH target stored in the dashboard: after signing in it says "Server unavailable". Open **Change the connection settings** on that screen and enter the new SSH target. It is saved only if the server answers.
+
+Give the server a fixed address in your router to avoid all of this.
 
 ## Uninstall
 

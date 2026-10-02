@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import test from "node:test";
 import { createRequire } from "node:module";
+import { fileURLToPath } from "node:url";
 import { loadApi, loadServer, plain } from "./harness.mjs";
 
 // The same CommonJS instance the modules under test load.
@@ -15,13 +17,13 @@ const cookieOf = (response, name) => response.cookies.get(name)?.value;
 
 // A configured dashboard with one enrolled browser, set up through the real setup route.
 async function configured() {
-  const { server, readJson } = loadServer();
+  const { server, readJson, data } = loadServer();
   const { auth } = loadApi(server);
   await auth.publicRoutes["GET setup/status"]({ req: request("setup/status"), body: {} });
   const setupToken = readJson("setup-bootstrap").code;
   const response = await auth.publicRoutes["POST setup"]({ req: request("setup"), body: { setupToken, username: "admin", password: PASSWORD, confirmPassword: PASSWORD, scriptRoot: "/srv/scripts", allowedPaths: "/srv/scripts", remoteLogs: "/srv/logs" } });
   assert.equal(response.status, 200);
-  return { server, auth, readJson, device: cookieOf(response, "lsc_device"), session: cookieOf(response, "lsc_session") };
+  return { server, auth, readJson, data, device: cookieOf(response, "lsc_device"), session: cookieOf(response, "lsc_session") };
 }
 const login = (auth, body, cookies) => auth.publicRoutes["POST login"]({ req: request("login", { body, cookies }), body });
 
@@ -136,6 +138,40 @@ test("read-only accounts sign in but may only read", async () => {
   assert.equal((await remove("guest")).status, 200);
   assert.equal(auth.authenticate(request("state", { cookies: { lsc_session: guestSession } })), null);
   assert.equal([...server.sessions.values()].filter((item) => item.user === "guest").length, 0);
+});
+
+test("the only authorized browser cannot be revoked", async () => {
+  const { auth, server, session, readJson } = await configured();
+  const context = () => auth.authenticate(request("state", { cookies: { lsc_session: session } }));
+  const revoke = (id) => auth.accountRoutes["POST device/revoke"]({ ...context(), req: request("device/revoke", { body: {} }), body: { id } });
+  const [own] = Object.keys(readJson("devices"));
+  const refused = await revoke(own);
+  assert.equal(refused.status, 400);
+  assert.match((await refused.json()).error, /only authorized browser/);
+  assert.ok(context(), "still signed in");
+  // With a second browser enrolled, either may be revoked.
+  server.save("enroll", { code: "code-123", expires: Date.now() / 1000 + 600 });
+  await login(auth, { username: "admin", password: PASSWORD, code: "code-123", deviceName: "Phone" });
+  assert.equal(Object.keys(readJson("devices")).length, 2);
+  assert.equal((await revoke(own)).status, 200);
+  assert.deepEqual(Object.keys(readJson("devices")).length, 1);
+  assert.equal(context(), null, "the revoked browser is signed out");
+});
+
+// The two commands INSTALL.md gives for a dashboard nobody can sign in to.
+test("the recovery scripts reset the owner's password and enroll a browser", async () => {
+  const { auth, readJson, data } = await configured();
+  const script = (name, env = {}) => execFileSync(process.execPath, [fileURLToPath(new URL(`../scripts/${name}`, import.meta.url))], { env: { ...process.env, DATA_DIR: data, DASHBOARD_USER: "", ...env }, encoding: "utf8", stdio: "pipe" });
+  assert.throws(() => script("setup.mjs", { DASHBOARD_PASSWORD: "short" }), /at least 12 characters/);
+  script("setup.mjs", { DASHBOARD_PASSWORD: "a-new-long-password" });
+  assert.equal(readJson("config").username, "admin", "the username is kept");
+  const code = script("enroll.mjs").trim().split(": ")[1];
+  assert.equal((await login(auth, { username: "admin", password: PASSWORD, code })).status, 401, "the forgotten password is gone");
+  const recovered = await login(auth, { username: "admin", password: "a-new-long-password", code, deviceName: "Recovered" });
+  assert.equal(recovered.status, 200);
+  assert.equal(Object.keys(readJson("devices")).length, 2);
+  script("setup.mjs", { DASHBOARD_PASSWORD: "another-long-password", DASHBOARD_USER: "owner" });
+  assert.equal(readJson("config").username, "owner", "DASHBOARD_USER names another username");
 });
 
 test("sessions from before accounts existed belong to the owner", async () => {

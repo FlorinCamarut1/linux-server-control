@@ -10,6 +10,7 @@ import {
   changeFile,
   collectCronRuns,
   CONTAINER_NAME,
+  containerLogs,
   containerSize,
   cronRuns,
   createCustomScript,
@@ -17,6 +18,7 @@ import {
   deleteDashboardFolder,
   evaluateAlerts,
   exportConfiguration,
+  failingCronRuns,
   folderSizes,
   folders,
   historyPage,
@@ -56,13 +58,15 @@ import { demoState } from "./demo";
 import { type Body, type Context, type Routes, ok } from "./http";
 
 // Dashboard records stored in DATA_DIR; reading them needs no SSH.
-function records({ devices, user }: Context) {
+function records({ devices, user, session }: Context) {
   return {
     user,
     scripts: scripts(),
     folders: folders(),
     schedules: schedules(),
     devices,
+    // The browser making the request, so the page can tell it from the others.
+    device: session.device,
     host: serverSettings().sshTarget || "local server",
     recentRuns: recentRuns(),
     alerts: alertRules(),
@@ -74,12 +78,13 @@ function records({ devices, user }: Context) {
 // ?scope=records returns only the stored records, for pages that show no live
 // host data; the background monitor keeps metrics and alerts current meanwhile.
 // The default reads the host as well. Neither carries the run history, only the
-// recent runs and the latest failed scheduled run; History asks for its pages.
+// recent runs and the scheduled runs that are still failing; History asks for
+// its pages.
 async function state(context: Context) {
   const { req, session } = context;
   if (session.device === "demo") return NextResponse.json({ ...demoState, user: context.user });
   const scope = req.nextUrl.searchParams.get("scope");
-  if (scope === "records") return NextResponse.json({ ...records(context), cronFailure: cronFailure(cronRuns()) });
+  if (scope === "records") return NextResponse.json({ ...records(context), cronFailures: cronFailures(cronRuns()) });
   let snapshot;
   try {
     snapshot = await hostSnapshot();
@@ -93,10 +98,11 @@ async function state(context: Context) {
     ...host,
     ...records(context),
     alertState: alerts,
-    cronFailure: cronFailure(await collectCronRuns(cronLog)),
+    cronFailures: cronFailures(await collectCronRuns(cronLog)),
   });
 }
-const cronFailure = (runs: ReturnType<typeof cronRuns>) => runs.find((run) => run.status === "failed") ?? null;
+// A handful is plenty for Overview; History lists every run.
+const cronFailures = (runs: ReturnType<typeof cronRuns>) => failingCronRuns(runs, schedules()).slice(0, 5);
 
 // One page of script runs or, with ?kind=cron, of scheduled runs, with the
 // number of each for the page's tabs. The scheduled runs are read from the
@@ -167,7 +173,7 @@ const hostRoutes: Routes<Context> = {
       throw Error("Invalid action");
     const output =
       body.action === "logs"
-        ? await run(["docker", "logs", "--tail", "300", "--timestamps", body.name])
+        ? await containerLogs(body.name)
         : await run(["docker", body.action, body.name], 45000);
     return NextResponse.json({ output });
   },
