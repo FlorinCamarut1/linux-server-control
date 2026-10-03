@@ -23,7 +23,7 @@ Each question has a default, and these variables answer them in advance:
                        (~/scripts)
   LSC_MONITORED_PATHS  storage shown as cards (the mounts under /mnt, /media and /srv,
                        else /)
-  LSC_VERSION          the image to run: latest, or a release such as 0.4.0
+  LSC_VERSION          the image to run: latest, or a release such as 0.5.0
   LSC_YES=1            take every default and agree to every change, without asking"
 
 SOURCE=${LSC_SOURCE:-https://raw.githubusercontent.com/FlorinCamarut1/linux-server-control/main}
