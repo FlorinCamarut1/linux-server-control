@@ -35,6 +35,7 @@ import {
   recentRuns,
   recordMetricSample,
   removeMonitoredPath,
+  renameDashboardFolder,
   restoreConfiguration,
   run,
   runScript,
@@ -50,6 +51,7 @@ import {
   syncCron,
   testServerConnection,
   updateServerSettings,
+  verifySudoPassword,
 } from "@/lib/server";
 import { DRIVERS, deletePowerDevice, powerHistory, publicDevices, savePowerDevice, savePowerSettings, powerSettings, switchPowerDevice } from "@/lib/power";
 import { CHANNEL_TYPES, deleteChannel, publicChannels, saveChannel, testChannel } from "@/lib/notify";
@@ -191,14 +193,55 @@ const hostRoutes: Routes<Context> = {
   },
 };
 
+// Sessions that showed hidden files with the sudo password, until when. The
+// sudo password is checked on the server and never kept.
+const HIDDEN_SHOWN_MS = 15 * 60 * 1000;
+const hiddenShown = new Map<string, number>();
+const sudoFailures = new Map<string, { count: number; since: number }>();
+const SUDO_ATTEMPTS = 5, SUDO_WINDOW_MS = 15 * 60 * 1000;
+// Whether this request may see hidden files: it asks to, and its session showed them.
+function showsHidden({ body, sid }: Context) {
+  const until = hiddenShown.get(sid) ?? 0;
+  if (until && until < Date.now()) hiddenShown.delete(sid);
+  return String(body.hidden) === "true" && until > Date.now();
+}
 const fileRoutes: Routes<Context> = {
-  "POST file/browse": async ({ body }) =>
-    NextResponse.json(await browseFiles(body.path || "", {
-      search: body.search || "", sort: body.sort || "name",
-      offset: Number(body.offset || 0), limit: Number(body.limit || 100),
-    })),
-  "POST file/sizes": async ({ body }) => NextResponse.json(await folderSizes(body.path || "")),
-  "POST file/operation": async ({ body }) => {
+  "POST file/hidden": async ({ body, sid, user }) => {
+    if (String(body.show) !== "true") {
+      hiddenShown.delete(sid);
+      return ok({ shown: false });
+    }
+    const now = Date.now(), failures = sudoFailures.get(user.name);
+    if (failures && now - failures.since > SUDO_WINDOW_MS) sudoFailures.delete(user.name);
+    else if (failures && failures.count >= SUDO_ATTEMPTS)
+      throw Error(`Too many wrong sudo passwords. Try again in ${Math.ceil((failures.since + SUDO_WINDOW_MS - now) / 60000)} minute(s).`);
+    try {
+      await verifySudoPassword(String(body.password || ""));
+    } catch (error) {
+      const previous = sudoFailures.get(user.name);
+      sudoFailures.set(user.name, previous ? { ...previous, count: previous.count + 1 } : { count: 1, since: now });
+      audit("hidden files: wrong sudo password");
+      throw error;
+    }
+    sudoFailures.delete(user.name);
+    hiddenShown.set(sid, now + HIDDEN_SHOWN_MS);
+    audit("hidden files shown for 15 minutes");
+    return ok({ shown: true, until: now + HIDDEN_SHOWN_MS });
+  },
+  "POST file/browse": async (context) => {
+    const { body } = context, hidden = showsHidden(context);
+    return NextResponse.json({
+      ...await browseFiles(body.path || "", {
+        search: body.search || "", sort: body.sort || "name",
+        offset: Number(body.offset || 0), limit: Number(body.limit || 100), hidden,
+      }),
+      // A session whose time ran out asked for hidden files without getting them.
+      hidden, hiddenRequested: String(body.hidden) === "true",
+    });
+  },
+  "POST file/sizes": async (context) => NextResponse.json(await folderSizes(context.body.path || "", showsHidden(context))),
+  "POST file/operation": async (context) => {
+    const { body } = context;
     const action = body.action;
     if (!["delete", "copy", "move", "rename"].includes(action))
       throw Error("Invalid file operation");
@@ -208,16 +251,18 @@ const fileRoutes: Routes<Context> = {
         body.source || "",
         body.destination || "",
         body.name || "",
+        showsHidden(context),
       ),
     );
   },
-  "POST file/create": async ({ body }) => {
-    const kind = body.kind === "folder" ? "folder" : "file";
-    return NextResponse.json(await createFileOrFolder(body.path || "", body.name || "", kind));
+  "POST file/create": async (context) => {
+    const { body } = context, kind = body.kind === "folder" ? "folder" : "file";
+    return NextResponse.json(await createFileOrFolder(body.path || "", body.name || "", kind, showsHidden(context)));
   },
-  "POST file/read": async ({ body }) => NextResponse.json(await readEditableFile(body.path || "")),
-  "POST file/save": async ({ body }) => {
-    await saveEditableFile(body.path || "", body.content || "");
+  "POST file/read": async (context) => NextResponse.json(await readEditableFile(context.body.path || "", showsHidden(context))),
+  "POST file/save": async (context) => {
+    const { body } = context;
+    await saveEditableFile(body.path || "", body.content || "", showsHidden(context));
     return ok();
   },
 };
@@ -271,6 +316,10 @@ const scriptRoutes: Routes<Context> = {
   "POST folder/create": ({ body }) => {
     addFolder(body.name || "");
     audit("folder created " + (body.name || "").trim());
+    return ok();
+  },
+  "POST folder/rename": ({ body }) => {
+    renameDashboardFolder(body.name || "", body.newName || "");
     return ok();
   },
   "POST folder/delete": async ({ body }) =>

@@ -97,5 +97,8 @@ export type FileBrowserData = {
   roots: string[];
   total?: number;
   entries: { name: string; path: string; type: "directory" | "file"; size: number | null }[];
+  // Whether hidden files are listed, and whether they were asked for.
+  hidden?: boolean;
+  hiddenRequested?: boolean;
 };
 export type PreflightCheck = { id: string; label: string; status: "ok" | "warning" | "error" | "info"; detail: string };

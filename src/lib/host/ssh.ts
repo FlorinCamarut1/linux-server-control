@@ -139,6 +139,18 @@ export function runAsync(args: string[], timeout = 30000, input?: string) {
   });
 }
 export const run = runAsync;
+// Checks the SSH user's sudo password on the server: sudo asks for it even when
+// it was given recently (-k), and forgets it again afterwards.
+export async function verifySudoPassword(password: string) {
+  if (!password || password.length > 1024 || /[\r\n\0]/.test(password)) throw Error("Enter the sudo password");
+  try {
+    await runAsync(["sudo", "-S", "-k", "-p", "", "-v"], 20000, password + "\n");
+  } catch {
+    throw Error("Wrong sudo password, or this account cannot use sudo on the server");
+  } finally {
+    await runAsync(["sudo", "-k"], 10000).catch(() => "");
+  }
+}
 export function runInput(args: string[], input: string, timeout = 30000) {
   return runAsync(args, timeout, input);
 }

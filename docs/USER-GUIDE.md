@@ -92,6 +92,8 @@ Shell scripts you approve can be run from the dashboard and followed live.
 
 Browse, search, sort, edit, copy, move, rename and delete files inside the allowed folders only. Text files up to 512 KB open in the built-in editor, which asks before closing with changes that were not saved. Folder sizes are calculated after the listing appears; sorting by size measures the folders first, so it takes longer in large folders.
 
+Hidden files and folders, whose names start with a dot (such as `.ssh` or `.env`), hold keys and settings, so they are left out: not listed, and not opened even by typing their path. Tick **Show hidden files** and enter the server account's sudo password to show them in this browser for 15 minutes; the server checks the password and the dashboard does not keep it. After five wrong passwords it waits 15 minutes.
+
 ![File explorer](screenshots/files.jpg)
 
 ## Schedules

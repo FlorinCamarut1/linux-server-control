@@ -7,6 +7,7 @@ import {
   ClipboardPaste,
   ChevronLeft,
   Copy,
+  Eye,
   FileTerminal,
   FilePenLine,
   Folder,
@@ -46,7 +47,7 @@ export function useDirectory<T>(endpoint: string, directory: string, includeSize
       if (includeSizes && result.entries.some((entry: FileBrowserData["entries"][number]) => entry.type === "directory" && entry.size === null)) {
         setSizesLoading(true);
         try {
-          const measured = await api("file/sizes", { path: result.path }, true);
+          const measured = await api("file/sizes", { path: result.path, hidden: requestOptions.hidden }, true);
           if (current === generation.current) {
             const entries = result.entries.map((entry: FileBrowserData["entries"][number]) =>
               entry.type === "directory" ? { ...entry, size: measured.sizes[entry.path] ?? null } : entry);
@@ -98,12 +99,26 @@ export function FileExplorer() {
     [editor, setEditor] = useState<{ path: string; content: string } | null>(null),
     [opening, setOpening] = useState(""),
     [search, setSearch] = useState(""), [sort, setSort] = useState("name"), [offset, setOffset] = useState(0),
+    // Hidden files (.ssh, .config) are listed only after the sudo password.
+    [showHidden, setShowHidden] = useState(false), [askingSudo, setAskingSudo] = useState(false), [hiddenNote, setHiddenNote] = useState(""),
     [clipboard, setClipboard] = useState<{
       path: string;
       action: "copy" | "move";
       name: string;
     } | null>(null);
-  const { data, error, setError, loading, sizesLoading, load } = useDirectory<FileBrowserData & { total?: number; offset?: number; limit?: number }>("file/browse", directory, true, { search, sort, offset, limit: 100 });
+  const { data, error, setError, loading, sizesLoading, load } = useDirectory<FileBrowserData & { total?: number; offset?: number; limit?: number }>("file/browse", directory, true, { search, sort, offset, limit: 100, hidden: showHidden });
+  // After 15 minutes the server stops showing them; the switch follows.
+  if (showHidden && data?.hiddenRequested && !data.hidden) {
+    setShowHidden(false);
+    setHiddenNote("Hidden files are hidden again after 15 minutes. Show them again with the sudo password.");
+  }
+  async function toggleHidden(show: boolean) {
+    setHiddenNote("");
+    if (show) return setAskingSudo(true);
+    setShowHidden(false);
+    setOffset(0);
+    await api("file/hidden", { show: false }).catch(() => {});
+  }
   function navigate(path: string) {
     setOffset(0);
     setDirectory(path);
@@ -116,7 +131,7 @@ export function FileExplorer() {
   ) {
     try {
       setOpening(source);
-      await api("file/operation", { action, source, destination, name });
+      await api("file/operation", { action, source, destination, name, hidden: showHidden });
       if (action === "move" || action === "delete") setClipboard(null);
       await load();
     } catch (reason) {
@@ -140,7 +155,7 @@ export function FileExplorer() {
   async function openFile(path: string) {
     try {
       setOpening(path);
-      const result = await api("file/read", { path });
+      const result = await api("file/read", { path, hidden: showHidden });
       setEditor(result);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not open file");
@@ -152,7 +167,7 @@ export function FileExplorer() {
     if (!data) return;
     const name = (await appPrompt(`Enter the new ${kind} name:`, "", `New ${kind}`, `Create ${kind}`))?.trim();
     if (!name) return;
-    try { setOpening(name); await api("file/create", { path: data.path, name, kind }); await load(); }
+    try { setOpening(name); await api("file/create", { path: data.path, name, kind, hidden: showHidden }); await load(); }
     catch (reason) { setError(reason instanceof Error ? reason.message : "Could not create item"); }
     finally { setOpening(""); }
   }
@@ -220,8 +235,13 @@ export function FileExplorer() {
         <div className="file-explorer-tools">
           <input aria-label="Search files" value={search} onChange={(event) => { setSearch(event.target.value); setOffset(0); }} placeholder="Search this folder" />
           <select aria-label="Sort files" value={sort} onChange={(event) => { setSort(event.target.value); setOffset(0); }}><option value="name">Sort by name</option><option value="size">Sort by size</option></select>
+          <label className="file-hidden-toggle">
+            <input type="checkbox" checked={showHidden} onChange={(event) => void toggleHidden(event.target.checked)} />
+            Show hidden files
+          </label>
           <small>Folder sizes are calculated on demand.</small>
         </div>
+        {hiddenNote && <div className="alert">{hiddenNote}</div>}
         {data?.parent && (
           <button type="button" className="file-explorer-up" onClick={() => navigate(data.parent!)}>
             <ChevronLeft size={16} /> Up one folder
@@ -266,9 +286,20 @@ export function FileExplorer() {
         {!loading && !error && data && !data.entries.length && <div className="empty-state"><Folder size={22} /><b>This folder is empty</b></div>}
         {!loading && !error && (data?.total || 0) > (data?.limit || 100) && <div className="actions"><Btn disabled={!offset} onClick={() => setOffset(Math.max(0, offset - 100))}>Previous</Btn><small>{offset + 1}–{Math.min(offset + 100, data!.total!)} of {data!.total}</small><Btn disabled={offset + 100 >= data!.total!} onClick={() => setOffset(offset + 100)}>Next</Btn></div>}
       </Panel>
+      {askingSudo && (
+        <SudoPassword
+          close={() => setAskingSudo(false)}
+          shown={() => {
+            setAskingSudo(false);
+            setOffset(0);
+            setShowHidden(true);
+          }}
+        />
+      )}
       {editor && (
         <FileEditor
           file={editor}
+          hidden={showHidden}
           close={() => setEditor(null)}
           changed={async () => {
             setEditor(null);
@@ -279,14 +310,51 @@ export function FileExplorer() {
     </>
   );
 }
+// Asks for the SSH user's sudo password, which the server checks, before
+// hidden files are shown for 15 minutes.
+function SudoPassword({ close, shown }: { close: () => void; shown: () => void }) {
+  const [password, setPassword] = useState(""), [error, setError] = useState(""), [checking, setChecking] = useState(false);
+  async function submit(event: React.FormEvent) {
+    event.preventDefault();
+    try {
+      setChecking(true);
+      setError("");
+      await api("file/hidden", { show: true, password });
+      shown();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not check the password");
+    } finally {
+      setChecking(false);
+    }
+  }
+  return (
+    <Modal title="Show hidden files" close={close}>
+      <form onSubmit={submit}>
+        <p>Hidden files, such as <code>.ssh</code>, hold keys and settings. Enter the server account&apos;s sudo password to show them for 15 minutes.</p>
+        <label>
+          Sudo password
+          <input type="password" autoComplete="off" autoFocus value={password} onChange={(event) => setPassword(event.target.value)} />
+        </label>
+        {error && <div className="alert">{error}</div>}
+        <div className="actions">
+          <Btn className="primary" disabled={checking || !password}>
+            {checking ? <Loader2 className="spin" size={15} /> : <Eye size={15} />} Show hidden files
+          </Btn>
+        </div>
+      </form>
+    </Modal>
+  );
+}
 export function FileEditor({
   file,
   close,
   changed,
+  hidden = false,
 }: {
   file: { path: string; content: string };
   close: () => void;
   changed: () => void;
+  hidden?: boolean;
 }) {
   const [content, setContent] = useState(file.content),
     [error, setError] = useState(""),
@@ -298,7 +366,7 @@ export function FileEditor({
   async function saveFile() {
     try {
       setSaving(true);
-      await api("file/save", { path: file.path, content });
+      await api("file/save", { path: file.path, content, hidden });
       changed();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not save file");
@@ -310,7 +378,7 @@ export function FileEditor({
     if (!await appConfirm(`Delete ${file.path}? This cannot be undone.`, "Delete file", "Delete", true)) return;
     try {
       setSaving(true);
-      await api("file/operation", { action: "delete", source: file.path });
+      await api("file/operation", { action: "delete", source: file.path, hidden });
       changed();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not delete file");

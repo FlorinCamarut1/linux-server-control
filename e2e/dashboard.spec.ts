@@ -99,6 +99,40 @@ test("files can be created, edited and deleted inside the allowed folder", async
   await expect(page.getByText("outside the allowed locations")).toBeVisible();
 });
 
+test("hidden files stay out of Files until the sudo password shows them", async ({ page }) => {
+  await page.goto("/");
+  await open(page, "Files");
+  const card = (name: string) => page.locator(".file-explorer-open", { hasText: name });
+  await expect(card("notes.txt")).toBeVisible();
+  await expect(card(".ssh")).toHaveCount(0);
+  await expect(card(".env")).toHaveCount(0);
+  // Typing their path or asking the API directly does not reach them either.
+  await page.getByLabel("Folder path").fill(path.join(FILES, ".ssh"));
+  await page.getByRole("button", { name: "Go", exact: true }).click();
+  await expect(page.getByText("Hidden files are shown only after Show hidden files")).toBeVisible();
+  const read = await page.request.post("/api/file/read", { data: { path: path.join(FILES, ".env"), hidden: true } });
+  expect(read.status()).toBe(400);
+
+  await page.getByLabel("Folder path").fill(FILES);
+  await page.getByRole("button", { name: "Go", exact: true }).click();
+  // The switch turns on only once the password is accepted.
+  await page.getByLabel("Show hidden files").click();
+  await modal(page).getByLabel("Sudo password").fill("wrong-password");
+  await modal(page).getByRole("button", { name: "Show hidden files" }).click();
+  await expect(modal(page).getByText("Wrong sudo password")).toBeVisible();
+  await modal(page).getByLabel("Sudo password").fill("sudo-test-password");
+  await modal(page).getByRole("button", { name: "Show hidden files" }).click();
+  await expect(card(".ssh")).toBeVisible();
+  await expect(page.getByLabel("Show hidden files")).toBeChecked();
+  await card(".env").click();
+  await expect(modal(page).locator("textarea")).toHaveValue("SECRET=1\n");
+  await modal(page).getByRole("button", { name: "Close" }).click();
+
+  await page.getByLabel("Show hidden files").uncheck();
+  await expect(card(".ssh")).toHaveCount(0);
+  expect((await page.request.post("/api/file/read", { data: { path: path.join(FILES, ".env"), hidden: true } })).status()).toBe(400);
+});
+
 test("a script is created, run and recorded in the history", async ({ page }) => {
   await page.goto("/");
   await open(page, "Scripts");
@@ -310,6 +344,50 @@ test("sign-in rejects a wrong password and a browser that is not enrolled", asyn
   await unknown.getByRole("button", { name: "Sign in" }).click();
   await expect(heading(unknown, "Overview")).toBeVisible();
   await fresh.close();
+});
+
+test("script folders, browsers and storage paths are edited from their menus", async ({ page }) => {
+  await page.goto("/");
+  // The Scripts page lists the folders that hold a script.
+  writeFileSync(path.join(FILES, "in-folder.sh"), "#!/usr/bin/env bash\necho in a folder\n", { mode: 0o755 });
+  const origin = { origin: new URL(page.url()).origin };
+  expect((await page.request.post("/api/folder/create", { data: { name: "Old folder" }, headers: origin })).ok()).toBe(true);
+  const created = await page.request.post("/api/script/save", {
+    data: { name: "Script in a folder", path: path.join(FILES, "in-folder.sh"), folder: "Old folder", runAs: "user", runOptions: "[]" },
+    headers: origin,
+  });
+  expect(created.ok(), await created.text()).toBe(true);
+  await page.reload();
+  await open(page, "Scripts");
+  await choose(page, page.locator(".script-folder summary", { hasText: "Old folder" }), "Edit");
+  await modal(page).getByRole("textbox").fill("New folder name");
+  await modal(page).getByRole("button", { name: "Save" }).click();
+  await expect(page.locator(".script-folder summary", { hasText: "New folder name" })).toBeVisible();
+  await expect(page.locator(".script-folder summary", { hasText: "Old folder" })).toHaveCount(0);
+
+  await open(page, "Settings");
+  const browser = page.locator(".device-row", { hasText: "This browser" });
+  await choose(page, browser, "Edit");
+  await modal(page).getByRole("textbox").fill("Office laptop");
+  await modal(page).getByRole("button", { name: "Save" }).click();
+  await expect(browser).toContainText("Office laptop");
+
+  await page.getByRole("button", { name: "Manage storage paths" }).click();
+  await choose(page, page.locator(".storage-path-list .schedule-row", { hasText: "/" }).first(), "Edit");
+  await modal(page).getByRole("textbox").fill(FILES);
+  await modal(page).getByRole("button", { name: "Save" }).click();
+  await expect(page.locator(".storage-path-list")).toContainText(FILES);
+  await expect(page.locator(".storage-path-list .schedule-row")).toHaveCount(1);
+  // The later tests expect the names and the path from before.
+  await choose(page, page.locator(".storage-path-list .schedule-row").first(), "Edit");
+  await modal(page).getByRole("textbox").fill("/");
+  await modal(page).getByRole("button", { name: "Save" }).click();
+  await expect(page.locator(".storage-path-list .schedule-row b")).toHaveText("/");
+  await page.keyboard.press("Escape");
+  await choose(page, browser, "Edit");
+  await modal(page).getByRole("textbox").fill("First browser");
+  await modal(page).getByRole("button", { name: "Save" }).click();
+  await expect(browser).toContainText("First browser");
 });
 
 test("rows keep their actions in a menu, and deleting always asks first", async ({ page }) => {

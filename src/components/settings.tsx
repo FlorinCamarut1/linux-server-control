@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { api } from "@/lib/client-api";
-import { appConfirm, Btn, Panel, Modal, PreflightList, RowMenu } from "@/components/ui";
+import { appConfirm, appPrompt, Btn, Panel, Modal, PreflightList, RowMenu } from "@/components/ui";
 import { THEMES, applyTheme, savedTheme, type ThemeId } from "@/lib/theme";
 import type { PreflightCheck, St } from "@/lib/types";
 import {
@@ -88,12 +88,18 @@ export function PasswordForm() {
 export function formatCreated(value: string) {
   return /^\d{4}-\d{2}-\d{2}T/.test(value) ? new Date(value).toLocaleString() : value;
 }
-export function DevicePanel({ devices, current, revoke, createCode }: { devices: St["devices"]; current?: string; revoke: (id: string) => void; createCode: () => void }) {
+export function DevicePanel({ devices, current, revoke, rename, createCode }: { devices: St["devices"]; current?: string; revoke: (id: string) => void; rename: (id: string, name: string) => void; createCode: () => void }) {
   return <Panel title="Authorized browsers" note="Revoke access for an unknown device" extra={<Btn className="primary" onClick={createCode}><KeyRound size={16}/>Generate access code</Btn>}>
     {Object.entries(devices).map(([id, device]) => <div className="device-row" key={id}>
       <div className="grow"><b>{device.name}</b><small>Authorized {formatCreated(device.created)}</small></div>
       {id === current && <span className="badge up">This browser</span>}
       <RowMenu label={`Actions for the browser ${device.name}`} items={[{
+        label: "Edit", icon: <Pencil size={15} />,
+        onSelect: async () => {
+          const name = (await appPrompt("Name of this browser:", device.name, "Edit browser", "Save"))?.trim();
+          if (name && name !== device.name) rename(id, name);
+        },
+      }, {
         label: "Revoke access", icon: <Trash2 size={15} />, danger: true,
         onSelect: async () => {
           const consequence = id === current
@@ -176,6 +182,16 @@ export function StorageManager({ paths, close, done }: { paths: string[]; close:
       <label>Absolute folder path<input name="path" placeholder="/mnt/media" required spellCheck={false} /></label><Btn className="primary" disabled={adding}>Add storage path</Btn>
     </form>
     <div className="storage-path-list">{paths.map((path) => <div className="schedule-row" key={path}><div className="grow"><b>{path}</b><small>Monitored storage path</small></div><RowMenu label={`Actions for ${path}`} items={[{
+      label: "Edit", icon: <Pencil size={15} />,
+      onSelect: async () => {
+        const changed = (await appPrompt("Absolute folder path:", path, "Edit storage path", "Save"))?.trim();
+        if (!changed || changed === path) return;
+        setError("");
+        // The new path is added first, so a wrong one leaves the old in place.
+        try { await api("storage/add", { path: changed }); await api("storage/remove", { path }); await done(); }
+        catch (reason) { setError(reason instanceof Error ? reason.message : "Could not change path"); }
+      },
+    }, {
       label: "Remove", icon: <Trash2 size={15} />, danger: true, disabled: paths.length < 2,
       onSelect: async () => { if (!await appConfirm(`Stop monitoring ${path}?`, "Remove storage path", "Remove", true)) return; try { await api("storage/remove", { path }); await done(); } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not remove path"); } },
     }]} /></div>)}</div>

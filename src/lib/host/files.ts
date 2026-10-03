@@ -1,11 +1,23 @@
 // File browsing and editing on the server, confined to the allowed locations.
 import { spawn } from "node:child_process";
+import path from "node:path";
 import { audit } from "./store";
 import { allowedRoots, run, runInput, ssh } from "./ssh";
 export function isAllowedPath(value: string) {
   return allowedRoots().some((root) => value === root || value.startsWith(root + "/"));
 }
-export async function resolveAllowedDirectory(requested: string) {
+// Hidden files and folders, whose names start with a dot (.ssh, .config), stay
+// out of the dashboard until a session shows them with the sudo password. Only
+// the part of the path below its allowed location counts.
+export function isHiddenPath(value: string) {
+  const root = allowedRoots().filter((item) => value === item || value.startsWith(item + "/")).sort((a, b) => b.length - a.length)[0];
+  return root !== undefined && value.slice(root.length).split("/").some((name) => name.startsWith("."));
+}
+function refuseHidden(requested: string, resolved: string, hidden: boolean) {
+  if (!hidden && (isHiddenPath(resolved) || isHiddenPath(path.posix.normalize(requested))))
+    throw Error("Hidden files are shown only after Show hidden files");
+}
+export async function resolveAllowedDirectory(requested: string, hidden = false) {
   let directory = allowedRoots()[0];
   if (requested) {
     try { directory = (await run(["realpath", "-e", "--", requested])).trim(); }
@@ -13,23 +25,25 @@ export async function resolveAllowedDirectory(requested: string) {
   }
   if (!directory || !isAllowedPath(directory))
     throw Error("This folder is outside the allowed locations");
+  refuseHidden(requested || directory, directory, hidden);
   try { await run(["test", "-d", directory]); }
   catch { throw Error("Choose a folder"); }
   return directory;
 }
-export async function resolveSelectedFile(requested: string) {
+export async function resolveSelectedFile(requested: string, hidden = false) {
   let resolved: string;
   try { resolved = (await run(["realpath", "-e", "--", requested])).trim(); }
   catch { throw Error("File not found"); }
   if (!isAllowedPath(resolved))
     throw Error("The selected file must be inside an allowed location");
+  refuseHidden(requested, resolved, hidden);
   try { await run(["test", "-f", resolved]); }
   catch { throw Error("Choose a regular file"); }
   return resolved;
 }
 const MAX_EDITABLE_FILE_BYTES = 512 * 1024;
-export async function readEditableFile(requested: string) {
-  const resolved = await resolveSelectedFile(requested);
+export async function readEditableFile(requested: string, hidden = false) {
+  const resolved = await resolveSelectedFile(requested, hidden);
   const size = Number((await run(["stat", "-c", "%s", resolved])).trim());
   if (!Number.isFinite(size) || size > MAX_EDITABLE_FILE_BYTES)
     throw Error("Only text files up to 512 KB can be edited here");
@@ -39,8 +53,8 @@ export async function readEditableFile(requested: string) {
     throw Error("This file is not a supported text file");
   return { path: resolved, content: await run(["cat", resolved]) };
 }
-export async function saveEditableFile(requested: string, content: string) {
-  const resolved = await resolveSelectedFile(requested);
+export async function saveEditableFile(requested: string, content: string, hidden = false) {
+  const resolved = await resolveSelectedFile(requested, hidden);
   if (Buffer.byteLength(content, "utf8") > MAX_EDITABLE_FILE_BYTES)
     throw Error("Only text files up to 512 KB can be saved here");
   if (content.includes("\0")) throw Error("Binary content cannot be saved here");
@@ -70,8 +84,19 @@ def allowed(value):
     return any(inside(value, root) for root in roots)
 def protected(value):
     return any(inside(root, value) for root in roots)
+show_hidden = bool(request.get("hidden"))
+def concealed(value):
+    containing = [root for root in roots if inside(value, root)]
+    if show_hidden or not containing:
+        return False
+    return any(name.startswith(".") for name in value[len(max(containing, key=len)):].split("/"))
+def reveal(*values):
+    for value in values:
+        if value and (concealed(value) or concealed(os.path.normpath(value))):
+            raise ValueError("Hidden files are shown only after Show hidden files")
 if not any(inside(target, root) for root in roots):
     raise ValueError("This path is outside the allowed locations")
+reveal(target, request["path"])
 if request["action"] == "delete":
     if not request["path"] or protected(target):
         raise ValueError("Allowed locations and their parents cannot be deleted")
@@ -92,6 +117,7 @@ elif request["action"] == "create":
     if not allowed(parent) or not os.path.isdir(parent):
         raise ValueError("Choose an allowed destination folder")
     output = os.path.realpath(os.path.join(parent, name))
+    reveal(output, os.path.join(parent, name))
     if not allowed(output) or os.path.exists(output):
         raise ValueError("A file or folder with this name already exists")
     if request.get("kind") == "folder":
@@ -103,6 +129,7 @@ elif request["action"] in ("copy", "move", "rename"):
     source = os.path.realpath(request.get("source") or "")
     if not source or not allowed(source) or protected(source):
         raise ValueError("The selected file or folder cannot be changed")
+    reveal(source, request.get("source"))
     if os.path.islink(request.get("source") or ""):
         raise ValueError("Symbolic links are not supported")
     if not (os.path.isfile(source) or os.path.isdir(source)):
@@ -118,6 +145,7 @@ elif request["action"] in ("copy", "move", "rename"):
         if not allowed(destination) or not os.path.isdir(destination):
             raise ValueError("Choose an allowed destination folder")
         output = os.path.realpath(os.path.join(destination, os.path.basename(source)))
+    reveal(destination, output)
     if not allowed(output) or output == source:
         raise ValueError("Choose a different allowed destination")
     if os.path.exists(output):
@@ -161,6 +189,8 @@ else:
             pass
     with os.scandir(target) as items:
         for item in items:
+            if item.name.startswith(".") and not show_hidden:
+                continue
             if item.is_dir(follow_symlinks=False):
                 kind = "directory"
             elif item.is_file(follow_symlinks=False):
@@ -205,7 +235,7 @@ async function remoteFileOperation<T = Record<string, unknown>>(request: Record<
   });
 }
 export function browseScripts(requested = "") {
-  return remoteFileOperation({ path: requested, action: "browse", scripts: true });
+  return remoteFileOperation({ path: requested, action: "browse", scripts: true, hidden: false });
 }
 // A folder is listed whole when its first page is requested, and its further
 // pages are cut from that listing: the server then lists, measures (when sorted
@@ -221,15 +251,15 @@ const listings = new Map<string, { at: number; listing: Listing }>();
 function forgetListings() {
   listings.clear();
 }
-export async function browseFiles(requested = "", options: { search?: string; sort?: string; offset?: number; limit?: number } = {}) {
-  const search = options.search || "", sort = options.sort || "name";
+export async function browseFiles(requested = "", options: { search?: string; sort?: string; offset?: number; limit?: number; hidden?: boolean } = {}) {
+  const search = options.search || "", sort = options.sort || "name", hidden = !!options.hidden;
   const offset = Math.max(0, Math.floor(Number(options.offset) || 0));
   const limit = Math.min(1000, Math.max(1, Math.floor(Number(options.limit) || 100)));
-  const key = JSON.stringify([allowedRoots(), requested, search, sort]);
+  const key = JSON.stringify([allowedRoots(), requested, search, sort, hidden]);
   const page = (listing: Listing) => ({ ...listing, entries: listing.entries.slice(offset, offset + limit), offset, limit });
   const kept = offset > 0 ? listings.get(key) : undefined;
   if (kept && Date.now() - kept.at < LISTING_TTL_MS) return page(kept.listing);
-  const request = { path: requested, action: "browse", scripts: false, search, sort };
+  const request = { path: requested, action: "browse", scripts: false, search, sort, hidden };
   const listing = await remoteFileOperation<Listing>({ ...request, offset: 0, limit: LISTING_MAX_ENTRIES });
   listings.delete(key);
   if (listing.total > listing.entries.length)
@@ -241,8 +271,8 @@ export async function browseFiles(requested = "", options: { search?: string; so
   }
   return page(listing);
 }
-export function folderSizes(requested: string) {
-  return remoteFileOperation({ path: requested, action: "sizes", scripts: false });
+export function folderSizes(requested: string, hidden = false) {
+  return remoteFileOperation({ path: requested, action: "sizes", scripts: false, hidden });
 }
 export async function deleteFolder(requested: string) {
   await remoteFileOperation({ path: requested, action: "delete" });
@@ -254,6 +284,7 @@ export async function changeFile(
   source: string,
   destination = "",
   name = "",
+  hidden = false,
 ) {
   const result = await remoteFileOperation<FileChange>({
     path: source,
@@ -261,13 +292,14 @@ export async function changeFile(
     source,
     destination,
     name,
+    hidden,
   });
   forgetListings();
   audit(`${action} ${source}${result.path ? " -> " + result.path : ""}`);
   return result;
 }
-export async function createFileOrFolder(directory: string, name: string, kind: "file" | "folder") {
-  const result = await remoteFileOperation<FileChange>({ path: directory, action: "create", name, kind });
+export async function createFileOrFolder(directory: string, name: string, kind: "file" | "folder", hidden = false) {
+  const result = await remoteFileOperation<FileChange>({ path: directory, action: "create", name, kind, hidden });
   forgetListings();
   audit(`created ${kind} ${result.path}`); return result;
 }

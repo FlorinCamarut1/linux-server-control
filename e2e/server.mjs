@@ -23,6 +23,12 @@ cpSync(path.join(root, "public"), path.join(app, "public"), { recursive: true })
 const bin = path.join(tmp, "bin");
 for (const folder of [data, files, logs, bin]) mkdirSync(folder, { recursive: true });
 writeFileSync(path.join(files, "notes.txt"), "A file for the browser tests.\n");
+// Hidden files, which the dashboard shows only after the sudo password, and a
+// \`sudo\` that checks that password ("sudo-test-password") and leaves every
+// other use to the real one.
+mkdirSync(path.join(files, ".ssh"));
+writeFileSync(path.join(files, ".ssh", "authorized_keys"), "ssh-ed25519 AAAA test\n");
+writeFileSync(path.join(files, ".env"), "SECRET=1\n");
 
 // A `crontab` that keeps its table in a file, so schedules can be tested
 // without touching this machine's crontab. It starts with an entry of the
@@ -34,6 +40,14 @@ case "$1" in
   -l) cat '${crontab}' ;;
   -) cat > '${crontab}' ;;
   *) exit 64 ;;
+esac
+`, { mode: 0o755 });
+
+writeFileSync(path.join(bin, "sudo"), `#!/bin/sh
+case "$*" in
+  "-S -k -p  -v") read -r password; [ "$password" = sudo-test-password ]; exit ;;
+  -k) exit 0 ;;
+  *) exec /usr/bin/sudo "$@" ;;
 esac
 `, { mode: 0o755 });
 

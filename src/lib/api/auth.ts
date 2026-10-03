@@ -315,6 +315,15 @@ export const accountRoutes: Routes<Context> = {
     audit(`enrollment code created (${duration} minutes)`);
     return NextResponse.json({ code, expires });
   },
+  "POST device/rename": ({ body, devices: known }) => {
+    if (!known[body.id]) throw Error("Device not found");
+    const name = String(body.name || "").trim().replace(/\s+/g, " ").slice(0, 80);
+    if (!name) throw Error("Enter a name");
+    audit(`device renamed ${known[body.id].name} -> ${name}`);
+    known[body.id] = { ...known[body.id], name };
+    save("devices", known);
+    return ok();
+  },
   "POST device/revoke": ({ body, devices: known }) => {
     if (!known[body.id]) throw Error("Device not found");
     // The only authorized browser is the one making this request: without it

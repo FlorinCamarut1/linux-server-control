@@ -102,13 +102,28 @@ export function parseTimeLimit(value: unknown) {
     throw Error("The time limit must be a whole number of minutes, at most 10,080 (one week)");
   return minutes;
 }
-export function addFolder(input: string) {
+function folderName(input: string) {
   const name = input.trim().replace(/\s+/g, " ").slice(0, 60);
   if (!name) throw Error("Enter a folder name");
   if (name === "Unfiled") throw Error("This folder name is reserved");
   if (/[\r\n]/.test(name)) throw Error("The folder name must be one line");
+  return name;
+}
+export function addFolder(input: string) {
+  const name = folderName(input);
   const all = folders();
   if (!all.includes(name)) save("folders", [...all, name]);
+}
+// Renames a dashboard folder; its scripts move with it.
+export function renameDashboardFolder(input: string, newName: string) {
+  const name = input.trim(), renamed = folderName(newName);
+  const all = folders();
+  if (!all.includes(name)) throw Error("Folder not found");
+  if (renamed === name) return;
+  if (all.includes(renamed)) throw Error("A folder with this name already exists");
+  save("folders", read<string[]>("folders", []).filter((folder) => folder !== name).concat(renamed));
+  save("scripts", scripts().map((script) => script.folder === name ? { ...script, folder: renamed } : script));
+  audit(`folder renamed ${name} -> ${renamed}`);
 }
 export async function deleteDashboardFolder(input: string, deleteScripts = false) {
   const name = input.trim();

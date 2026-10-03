@@ -1677,7 +1677,7 @@ select:focus {
 }
 .file-explorer-tools {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 180px auto;
+  grid-template-columns: minmax(0, 1fr) 180px auto auto;
   align-items: center;
   gap: 12px;
   padding: 12px 20px;
@@ -1689,6 +1689,19 @@ select:focus {
 }
 .file-explorer-tools small {
   white-space: nowrap;
+}
+.file-hidden-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  white-space: nowrap;
+  color: var(--text-soft);
+  cursor: pointer;
+}
+.file-explorer-tools .file-hidden-toggle input {
+  width: auto;
+  accent-color: var(--accent);
 }
 .file-explorer-up {
   display: inline-flex;

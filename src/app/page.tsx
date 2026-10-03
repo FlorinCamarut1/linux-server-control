@@ -10,7 +10,7 @@ import { Overview, HistoryPanel, AlertForm, describeAlert } from "@/components/m
 import { ScheduleForm } from "@/components/schedules";
 import { ScriptForm, CustomScriptForm, RunScriptForm, FolderForm } from "@/components/scripts";
 import { AppearancePanel, NotificationsPanel, PasswordForm, DevicePanel, ServerSettings, ConfigurationPanel, StorageManager, UsersPanel } from "@/components/settings";
-import { appConfirm, Btn, copyText, Panel, Metric, formatBytes, formatPercent, formatUptime, Modal, DialogHost, LiveLogViewer, AppLoading, LoadingScreen, RowMenu } from "@/components/ui";
+import { appConfirm, appPrompt, Btn, copyText, Panel, Metric, formatBytes, formatPercent, formatUptime, Modal, DialogHost, LiveLogViewer, AppLoading, LoadingScreen, RowMenu } from "@/components/ui";
 import { applyTheme, savedTheme } from "@/lib/theme";
 import type { Run, S, Schedule, St } from "@/lib/types";
 import {
@@ -476,7 +476,13 @@ export default function Home() {
                     {!readOnly && <RowMenu
                       label={`Actions for the folder ${folder}`}
                       disabled={!!busy}
-                      items={[{
+                      items={[folder !== "Unfiled" && {
+                        label: "Edit", icon: <Pencil size={15} />,
+                        onSelect: async () => {
+                          const newName = (await appPrompt("Folder name:", folder, "Edit folder", "Save"))?.trim();
+                          if (newName && newName !== folder) await action(`folder:${folder}`, "folder/rename", { name: folder, newName });
+                        },
+                      }, {
                         label: "Delete folder", icon: <Trash2 size={15} />, danger: true,
                         onSelect: async () => {
                           const description = scripts.length
@@ -657,7 +663,7 @@ export default function Home() {
           </Panel>
         )}
         {tab === "settings" && readOnly && <><AppearancePanel /><PasswordForm /></>}
-        {tab === "settings" && !readOnly && <><AppearancePanel /><NotificationsPanel /><ServerSettings /><Panel title="Storage monitoring" note="Choose which mounted paths appear in capacity cards."><div className="panel-body"><Btn onClick={() => setStorageManager(true)}><HardDrive size={16}/>Manage storage paths</Btn></div></Panel><DevicePanel devices={state.devices} current={state.device} revoke={(id) => action(id, "device/revoke", { id })} createCode={async () => { try { setEnrollment(await api("enrollment/create", { minutes: "15" })); setCopied("idle"); } catch (e) { setErr(e instanceof Error ? e.message : "Error"); } }} /><UsersPanel current={state.user?.name || ""} /><PasswordForm /><ConfigurationPanel refresh={refresh} /></>}
+        {tab === "settings" && !readOnly && <><AppearancePanel /><NotificationsPanel /><ServerSettings /><Panel title="Storage monitoring" note="Choose which mounted paths appear in capacity cards."><div className="panel-body"><Btn onClick={() => setStorageManager(true)}><HardDrive size={16}/>Manage storage paths</Btn></div></Panel><DevicePanel devices={state.devices} current={state.device} revoke={(id) => action(id, "device/revoke", { id })} rename={(id, name) => action(id, "device/rename", { id, name })} createCode={async () => { try { setEnrollment(await api("enrollment/create", { minutes: "15" })); setCopied("idle"); } catch (e) { setErr(e instanceof Error ? e.message : "Error"); } }} /><UsersPanel current={state.user?.name || ""} /><PasswordForm /><ConfigurationPanel refresh={refresh} /></>}
       </main>
       {logs && (
         <LiveLogViewer logs={logs} close={() => setLogs(null)} canStop={!readOnly} />
