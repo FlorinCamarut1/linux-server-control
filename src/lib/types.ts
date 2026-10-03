@@ -11,8 +11,16 @@ export type C = {
   Size?: string;
   Labels?: string;
 };
-export type RunOption = { label: string; value: string; description: string; needsFile?: boolean };
-export type S = { id: string; name: string; path: string; cron: string; folder?: string; runAs?: "user" | "root"; argumentHint?: string; runOptions?: RunOption[]; timeLimitMinutes?: number };
+// input: the prompt for a value typed when running, which takes the place of
+// "{value}" in the arguments or follows them.
+export type RunOption = { label: string; value: string; description: string; needsFile?: boolean; input?: string };
+// The run conditions are set here rather than in the script: time limit,
+// variables (runs as the SSH user), one run at a time, a question before each
+// run, and an announcement of successful runs.
+export type S = {
+  id: string; name: string; path: string; cron: string; folder?: string; runAs?: "user" | "root"; argumentHint?: string; runOptions?: RunOption[];
+  timeLimitMinutes?: number; variables?: Record<string, string>; singleRun?: boolean; confirmRun?: boolean; notifySuccess?: boolean;
+};
 export type Schedule = {
   id: string;
   scriptId: string;
@@ -21,6 +29,8 @@ export type Schedule = {
   enabled: boolean;
   runAs?: "user" | "root";
   command?: string;
+  // The script's arguments for this schedule, such as one of its run options.
+  arguments?: string;
 };
 export type User = { name: string; role: "admin" | "viewer" };
 export type CronRun = { scheduleId: string; label: string; startedAt: string; completedAt?: string; exitCode?: number; status: "running" | "success" | "failed" };

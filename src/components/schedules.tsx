@@ -23,7 +23,12 @@ export function ScheduleForm({
     [targetKind, setTargetKind] = useState<"script" | "command">(
       initial?.command ? "command" : "script",
     ),
+    [scriptId, setScriptId] = useState(initial?.scriptId || scripts[0]?.id || ""),
+    [args, setArgs] = useState(initial?.arguments ?? ""),
     [error, setError] = useState("");
+  // A schedule can run one of its script's options; one that needs a file or a
+  // typed value needs someone to run it.
+  const schedulable = (scripts.find((script) => script.id === scriptId)?.runOptions ?? []).filter((option) => !option.needsFile && !option.input);
   return (
     <Modal title={existing ? "Edit schedule" : "New schedule"} close={close}>
       <form
@@ -65,6 +70,7 @@ export function ScheduleForm({
             await api("schedule/save", {
               id: values.id,
               scriptId: values.scriptId,
+              arguments: targetKind === "script" ? args : "",
               expression,
               label,
               enabled: initial?.enabled === false ? "false" : "true",
@@ -94,13 +100,24 @@ export function ScheduleForm({
         ) : (
           <label>
             Script
-            <select name="scriptId" required={targetKind === "script"} defaultValue={initial?.scriptId}>
+            <select name="scriptId" required={targetKind === "script"} value={scriptId} onChange={(event) => { setScriptId(event.target.value); setArgs(""); }}>
               {scripts.map((script) => (
                 <option key={script.id} value={script.id}>
                   {script.name}
                 </option>
               ))}
             </select>
+          </label>
+        )}
+        {targetKind === "script" && (schedulable.length > 0 || args) && (
+          <label>
+            Run option
+            <select value={args} onChange={(event) => setArgs(event.target.value)}>
+              <option value="">No arguments</option>
+              {schedulable.map((option) => <option key={`${option.label}-${option.value}`} value={option.value}>{option.label}{option.value ? ` (${option.value})` : ""}</option>)}
+              {args && !schedulable.some((option) => option.value === args) && <option value={args}>{args}</option>}
+            </select>
+            <small>The script&apos;s time limit and variables hold for its scheduled runs too. Options that need a file or a typed value can only be run by hand.</small>
           </label>
         )}
         <label>

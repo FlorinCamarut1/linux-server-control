@@ -101,18 +101,32 @@ export function evaluateAlerts(snapshot: { stats: SystemStats; containers: { Sta
   };
   const now = Date.now();
   const triggered: AlertRule[] = [];
+  let changed = false;
+  // A rule that announced its threshold also announces, once, that the value
+  // is back below it; the cooldown only spaces out the first kind.
   const updated = alertRules().map((rule) => {
     const cool = rule.cooldownMinutes * 60000;
-    if (rule.enabled && values[rule.metric] >= rule.threshold && (!rule.lastTriggeredAt || now - rule.lastTriggeredAt >= cool)) {
-      const next = { ...rule, lastTriggeredAt: now };
-      triggered.push(next); audit(`alert triggered ${rule.name}: ${values[rule.metric]}`);
-      const label = rule.metric === "storage" && fullest ? `${ALERT_LABELS.storage} of ${fullest.path}` : ALERT_LABELS[rule.metric];
-      emitDashboardEvent({ type: "alert", severity: "warning", title: `Alert: ${rule.name}`, message: `${label} is ${Math.round(values[rule.metric] * 10) / 10}${ALERT_UNITS[rule.metric]}, at or above the threshold of ${rule.threshold}${ALERT_UNITS[rule.metric]}.` });
+    const value = values[rule.metric], above = value >= rule.threshold, unit = ALERT_UNITS[rule.metric];
+    const label = rule.metric === "storage" && fullest ? `${ALERT_LABELS.storage} of ${fullest.path}` : ALERT_LABELS[rule.metric];
+    const shown = Math.round(value * 10) / 10;
+    if (rule.enabled && above && (!rule.lastTriggeredAt || now - rule.lastTriggeredAt >= cool)) {
+      const next = { ...rule, lastTriggeredAt: now, active: true };
+      triggered.push(next); audit(`alert triggered ${rule.name}: ${value}`);
+      emitDashboardEvent({ type: "alert", severity: "warning", title: `Alert: ${rule.name}`, message: `${label} is ${shown}${unit}, at or above the threshold of ${rule.threshold}${unit}.` });
+      changed = true;
       return next;
+    }
+    if (rule.active && (!rule.enabled || !above)) {
+      if (rule.enabled) {
+        audit(`alert resolved ${rule.name}: ${value}`);
+        emitDashboardEvent({ type: "alert", severity: "success", title: `Back to normal: ${rule.name}`, message: `${label} is ${shown}${unit}, below the threshold of ${rule.threshold}${unit} again.` });
+      }
+      changed = true;
+      return { ...rule, active: false };
     }
     return rule;
   });
-  if (triggered.length) save("alerts", updated);
+  if (changed) save("alerts", updated);
   return { values, triggered };
 }
 const ALERT_METRICS: AlertRule["metric"][] = ["temperature", "cpu", "ram", "disk", "storage", "failedScripts", "stoppedContainers"];

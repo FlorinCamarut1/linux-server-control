@@ -4,7 +4,7 @@ import { type ServerSettings, serverSettings, validateServerSettings } from "./s
 import { type Script, RECORD_ID, alertRules, folders, oneLine, schedules, scripts } from "./records";
 import { normalizeSchedule, rootSchedulesAvailable, syncCron } from "./cron";
 import { cleanStoragePath, monitoredPaths, normalizeAlert } from "./monitor";
-import { parseRunOptions, parseTimeLimit } from "./scripts";
+import { parseRunOptions, parseTimeLimit, parseVariables } from "./scripts";
 export function exportConfiguration() {
   return { version: 1, exportedAt: new Date().toISOString(), scripts: scripts(), folders: folders(), schedules: schedules(), devices: read("devices", {}), alerts: alertRules(), serverSettings: serverSettings(), monitoredPaths: monitoredPaths() };
 }
@@ -26,12 +26,18 @@ function restoredScript(input: Record<string, unknown>, roots: string[], knownFo
     throw Error(`Script "${name}" is not a .sh file inside an allowed location`);
   const folder = folderName(input.folder);
   if (folder && !knownFolders.includes(folder)) throw Error(`Script "${name}" uses an unknown folder`);
+  const runAs = input.runAs === "root" ? "root" : "user";
+  const variables = parseVariables(input.variables);
+  if (runAs === "root" && variables) throw Error(`Script "${name}" runs as root, which takes arguments only, not variables`);
   return {
-    id: input.id, name, path: scriptPath, cron: "", folder,
-    runAs: input.runAs === "root" ? "root" : "user",
+    id: input.id, name, path: scriptPath, cron: "", folder, runAs,
     argumentHint: oneLine(input.argumentHint, 200) || undefined,
     runOptions: parseRunOptions(input.runOptions),
     timeLimitMinutes: parseTimeLimit(input.timeLimitMinutes),
+    variables,
+    singleRun: input.singleRun === true || undefined,
+    confirmRun: input.confirmRun === true || undefined,
+    notifySuccess: input.notifySuccess === true || undefined,
   };
 }
 const objects = (value: unknown, label: string) => {

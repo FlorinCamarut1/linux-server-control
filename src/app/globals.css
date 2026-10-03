@@ -1922,16 +1922,59 @@ select:focus {
 }
 .option-toggle {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
   color: var(--text);
   cursor: pointer;
 }
 .option-toggle input {
+  flex: 0 0 auto;
   width: 16px;
   height: 16px;
-  margin: 0;
+  margin: 2px 0 0;
   accent-color: var(--accent);
+}
+.option-toggle small {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+}
+/* A form's text areas look like its inputs; their text is code or settings. */
+label > textarea {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--sunken);
+  color: var(--text);
+  font: var(--text-md)/1.5 ui-monospace, Consolas, monospace;
+  resize: vertical;
+  outline: none;
+}
+label > textarea:focus {
+  border-color: var(--accent-line);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 10%, transparent);
+}
+label > textarea:disabled {
+  opacity: .6;
+  cursor: not-allowed;
+}
+/* The run conditions of a script, grouped in its form. */
+.run-conditions {
+  margin: 0 0 16px;
+  padding: 12px 12px 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+}
+.run-conditions legend {
+  padding: 0 4px;
+  color: var(--text-soft);
+  font-size: var(--text-md);
+}
+.run-conditions > label {
+  margin-bottom: 12px;
 }
 .run-options-editor {
   margin: 0 0 16px;
@@ -1956,16 +1999,40 @@ select:focus {
   color: var(--muted);
   font-size: var(--text-sm);
 }
+/* One option on two lines: its name, arguments and remove button, then its
+   explanation, the value it asks for and whether it needs a file. */
 .run-option-fields {
   display: grid;
-  grid-template-columns: minmax(110px, .8fr) minmax(160px, 1.2fr) minmax(130px, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr) auto;
+  grid-template-areas:
+    "name arguments remove"
+    "description input file";
   gap: 8px;
-  align-items: end;
-  padding: 8px 0;
+  align-items: center;
+  padding: 12px 0;
   border-top: 1px solid var(--line-soft);
 }
+/* Outside a label, the inputs take the form's text size from here. */
 .run-option-fields input {
   margin-top: 0;
+  font-size: var(--text-md);
+}
+.run-option-fields .option-remove {
+  justify-self: end;
+  width: var(--control-h);
+  padding: 0;
+}
+.run-option-fields .option-name { grid-area: name; }
+.run-option-fields .option-arguments { grid-area: arguments; }
+.run-option-fields .option-remove { grid-area: remove; }
+.run-option-fields .option-description { grid-area: description; }
+.run-option-fields .option-input { grid-area: input; }
+.run-option-fields .option-file-toggle { grid-area: file; }
+.run-options-note {
+  display: block;
+  padding-top: 8px;
+  border-top: 1px solid var(--line-soft);
+  color: var(--muted);
 }
 .option-file-toggle {
   display: flex;
@@ -2006,10 +2073,13 @@ select:focus {
 }
 @media (max-width: 640px) {
   .run-option-fields {
-    grid-template-columns: 1fr;
-  }
-  .run-option-fields .button {
-    justify-self: start;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "name remove"
+      "arguments arguments"
+      "description description"
+      "input input"
+      "file file";
   }
 }
 .login-wrap {

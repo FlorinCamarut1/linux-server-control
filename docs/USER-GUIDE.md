@@ -73,10 +73,17 @@ labels:
 Shell scripts you approve can be run from the dashboard and followed live.
 
 - **Add script** registers an existing `.sh` file from the allowed folders; **New custom script** writes a new one.
-- Group scripts in folders, and give a script **run options** (preset arguments) to choose from when you run it.
+- Group scripts in folders, and give a script **run options** to choose from when you run it: preset arguments, or none, a file to pick, or a value to type at run time (a month, a name), which takes the place of `{value}` in the option's arguments.
 - **Run** starts the script and opens its live log. Scripts can run as the SSH user or, with the [optional root helpers](../INSTALL.md#optional-run-scripts-and-schedules-as-root), as root. A run log keeps the first 10 MB of output.
 - While a script runs, its row shows **Running**, and its log says since when. **Stop run**, in the log or in the script's **⋯** menu, ends the script and every process it started, after asking. A stopped run is recorded as *stopped*, not as a failure; a script that ignores the request is ended after 10 seconds.
-- A script can have a **time limit** (in **Edit**). A run that takes longer is stopped and counts as failed, so alerts and notifications report it.
+- How a script runs is set in its **Edit** form, under **Run conditions**, rather than in the script itself:
+  - **Time limit**: a run that takes longer is stopped and counts as failed, so alerts and notifications report it.
+  - **Variables**: `NAME=value` lines the script reads as environment variables, for example `KEEP_SNAPSHOTS=3`. Root scripts take arguments only.
+  - **Only one run at a time**: **Run** is refused while a run started from the dashboard is still going.
+  - **Ask before each run**: for scripts that change or delete things, such as a restore.
+  - **Announce successful runs**: notification channels with *Run succeeded* hear of each successful run, with its last line of output, not only of failures.
+
+  The time limit and the variables also hold for the script's scheduled runs.
 - **Schedule**, **Edit** and **Delete** are in the script's **⋯** menu. Deleting a script or a folder removes it from the dashboard, with its schedules; the `.sh` files stay on the server.
 
 ![Scripts grouped in folders, with the menu of one script open](screenshots/scripts.jpg)
@@ -89,7 +96,7 @@ Browse, search, sort, edit, copy, move, rename and delete files inside the allow
 
 ## Schedules
 
-Run scripts, or single commands, on a schedule with cron. The form builds the cron expression for you. Each schedule can be edited, paused or deleted from its **⋯** menu, and its runs appear under **History → Cron runs**.
+Run scripts, or single commands, on a schedule with cron. The form builds the cron expression for you, and a schedule can run one of its script's run options (one that needs no file and no typed value). Each schedule can be edited, paused or deleted from its **⋯** menu, and its runs appear under **History → Cron runs**.
 
 A schedule can run as root once both root helpers are installed. Root schedules run only registered scripts from the folders approved for root, never a custom command.
 
@@ -122,14 +129,14 @@ Every script run from the dashboard, with its status (running, success, failed o
 
 ## Alerts
 
-Rules that fire when a value reaches a threshold: CPU temperature, CPU, RAM or system disk use, the use of the monitored storage paths, failed script runs in the last 24 hours, or stopped containers. The storage rule watches all the monitored paths at once and fires for the fullest. The cooldown stops an alert from repeating too often. Rules are checked every 5 minutes, also while no browser is open; triggered alerts go to your notification channels, and a rule that is above its threshold is listed on Overview.
+Rules that fire when a value reaches a threshold: CPU temperature, CPU, RAM or system disk use, the use of the monitored storage paths, failed script runs in the last 24 hours, or stopped containers. The storage rule watches all the monitored paths at once and fires for the fullest. The cooldown stops an alert from repeating too often, and a rule that announced its threshold also announces, once, when the value is back below it. Rules are checked every 5 minutes, also while no browser is open; triggered alerts go to your notification channels, and a rule that is above its threshold is listed on Overview.
 
 ![Alert rules](screenshots/alerts.jpg)
 
 ## Settings
 
 - **Appearance**: choose a theme (Dark, Light, Nord, Dracula, Solarized, Gruvbox, Catppuccin, Tokyo Night, Rosé Pine, Black, Latte, or System to follow the device). Each browser keeps its own choice.
-- **Notifications**: send alerts, failed runs and power device changes to Discord, Slack (also Mattermost and Rocket.Chat), ntfy, or any webhook that accepts JSON. Choose the events per channel and use **Test** to check it.
+- **Notifications**: send alerts (and their return to normal), failed runs, successful runs of the scripts set to announce them, and power device changes to Discord, Slack (also Mattermost and Rocket.Chat), ntfy, or any webhook that accepts JSON. Choose the events per channel and use **Test** to check it.
 - **Server connection**: the SSH target and port, the allowed folders and how long metrics are kept. Saving tests the connection first and keeps the previous settings if the server does not answer. **Check server requirements** tests what the server provides and names anything missing.
 - **Storage monitoring**: the mounted folders shown as storage cards.
 - **Authorized browsers**: see and revoke devices, and create access codes for new ones. The browser you are using is marked. The last authorized browser cannot be revoked, because no other could sign in afterwards.

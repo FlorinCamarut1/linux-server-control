@@ -27,6 +27,7 @@ export function ScriptForm({
   const [err, setErr] = useState(""),
     [scriptPath, setScriptPath] = useState(initial?.path || ""),
     [showBrowser, setShowBrowser] = useState(false),
+    [runAs, setRunAs] = useState<"user" | "root">(initial?.runAs || "user"),
     [hasRunOptions, setHasRunOptions] = useState(!!initial?.runOptions?.length),
     [runOptions, setRunOptions] = useState<RunOption[]>(
       initial?.runOptions ||
@@ -34,6 +35,9 @@ export function ScriptForm({
           ? [{ label: "Default option", value: initial.argumentHint, description: "Imported from the previous argument prompt" }]
           : []),
     );
+  const change = (index: number, patch: Partial<RunOption>) =>
+    setRunOptions(runOptions.map((item, i) => (i === index ? { ...item, ...patch } : item)));
+  const variables = Object.entries(initial?.variables ?? {}).map(([name, value]) => `${name}=${value}`).join("\n");
   return (
     <Modal title={initial ? "Edit script" : "Add script"} close={close}>
       <form
@@ -95,17 +99,41 @@ export function ScriptForm({
         </label>
         <label>
           Run as
-          <select name="runAs" defaultValue={initial?.runAs || "user"}>
+          <select name="runAs" value={runAs} onChange={(event) => setRunAs(event.target.value === "root" ? "root" : "user")}>
             <option value="user">SSH user</option>
             <option value="root" disabled={!rootAccess}>root{rootAccess ? "" : " (not enabled)"}</option>
           </select>
           <small>Root is available only for script folders approved by the server helper.</small>
         </label>
-        <label>
-          Time limit (minutes)
-          <input name="timeLimitMinutes" type="number" min={1} max={10080} step={1} inputMode="numeric" defaultValue={initial?.timeLimitMinutes ?? ""} placeholder="No limit" />
-          <small>A run that takes longer is stopped and counts as failed. Leave empty for no limit.{rootAccess && !rootStop ? " On root scripts this needs the current root script helper." : ""}</small>
-        </label>
+        {/* How the script runs belongs here, not in the script: the conditions
+            hold for runs from the dashboard and, but for the question, for its schedules. */}
+        <fieldset className="run-conditions">
+          <legend>Run conditions</legend>
+          <label>
+            Time limit (minutes)
+            <input name="timeLimitMinutes" type="number" min={1} max={10080} step={1} inputMode="numeric" defaultValue={initial?.timeLimitMinutes ?? ""} placeholder="No limit" />
+            <small>A run that takes longer is stopped and counts as failed. Leave empty for no limit.{rootAccess && !rootStop ? " On root scripts this needs the current root script helper." : ""}</small>
+          </label>
+          <label>
+            Variables
+            <textarea name="variables" rows={3} spellCheck={false} disabled={runAs === "root"} defaultValue={variables} placeholder={"KEEP_SNAPSHOTS=3\nBACKUP_DIR=/mnt/storage/backups"} />
+            <small>{runAs === "root"
+              ? "Root scripts take arguments only: the dashboard may not change how a root script behaves beyond them."
+              : "One NAME=value per line, given to the script as environment variables on every run, scheduled ones included; the script reads them as ${KEEP_SNAPSHOTS:-1}."}</small>
+          </label>
+          <label className="option-toggle">
+            <input type="checkbox" name="singleRun" value="true" defaultChecked={!!initial?.singleRun} />
+            <span>Only one run at a time<small>Run is refused while a run started from the dashboard is still going.</small></span>
+          </label>
+          <label className="option-toggle">
+            <input type="checkbox" name="confirmRun" value="true" defaultChecked={!!initial?.confirmRun} />
+            <span>Ask before each run<small>For scripts that change or delete things; the dashboard asks before starting one.</small></span>
+          </label>
+          <label className="option-toggle">
+            <input type="checkbox" name="notifySuccess" value="true" defaultChecked={!!initial?.notifySuccess} />
+            <span>Announce successful runs<small>Notification channels with “Run succeeded” are told of each successful run, not only of failures.</small></span>
+          </label>
+        </fieldset>
         <input type="hidden" name="runOptions" value={hasRunOptions ? JSON.stringify(runOptions) : "[]"} />
         <label className="option-toggle">
           <input
@@ -136,42 +164,54 @@ export function ScriptForm({
             {runOptions.map((option, index) => (
               <div className="run-option-fields" key={index}>
                 <input
+                  className="option-name"
                   aria-label="Option name"
                   placeholder="Option name"
                   value={option.label}
-                  onChange={(event) => setRunOptions(runOptions.map((item, i) => i === index ? { ...item, label: event.target.value } : item))}
+                  onChange={(event) => change(index, { label: event.target.value })}
                 />
                 <input
+                  className="option-arguments"
                   aria-label="Arguments"
-                  placeholder="Arguments, e.g. --latest --yes"
+                  placeholder="Arguments, e.g. --latest --yes; empty for none"
                   value={option.value}
-                  onChange={(event) => setRunOptions(runOptions.map((item, i) => i === index ? { ...item, value: event.target.value } : item))}
+                  onChange={(event) => change(index, { value: event.target.value })}
                 />
-                <input
-                  aria-label="Explanation"
-                  placeholder="Short explanation"
-                  value={option.description}
-                  onChange={(event) => setRunOptions(runOptions.map((item, i) => i === index ? { ...item, description: event.target.value } : item))}
-                />
-                <label className="option-file-toggle">
-                  <input
-                    type="checkbox"
-                    checked={!!option.needsFile}
-                    onChange={(event) => setRunOptions(runOptions.map((item, i) => i === index ? { ...item, needsFile: event.target.checked } : item))}
-                  />
-                  Requires file
-                </label>
                 <Btn
                   type="button"
-                  className="danger"
+                  className="option-remove danger"
                   aria-label={`Remove ${option.label || "option"}`}
                   disabled={runOptions.length === 1}
                   onClick={() => setRunOptions(runOptions.filter((_, i) => i !== index))}
                 >
                   <Trash2 size={15} />
                 </Btn>
+                <input
+                  className="option-description"
+                  aria-label="Explanation"
+                  placeholder="Short explanation"
+                  value={option.description}
+                  onChange={(event) => change(index, { description: event.target.value })}
+                />
+                <input
+                  className="option-input"
+                  aria-label="Ask for a value"
+                  title="Asked when running; the value takes the place of {value} in the arguments, or follows them"
+                  placeholder="Ask for a value, e.g. Month (YYYY-MM)"
+                  value={option.input ?? ""}
+                  onChange={(event) => change(index, { input: event.target.value })}
+                />
+                <label className="option-file-toggle">
+                  <input
+                    type="checkbox"
+                    checked={!!option.needsFile}
+                    onChange={(event) => change(index, { needsFile: event.target.checked })}
+                  />
+                  Requires file
+                </label>
               </div>
             ))}
+            <small className="run-options-note">An option may have no arguments. A value asked for takes the place of <code>{"{value}"}</code> in the arguments, or follows them.</small>
           </section>
         )}
         {err && <div className="alert">{err}</div>}
@@ -259,7 +299,7 @@ export function CustomScriptForm({
         </label>
         <label>
           Script content
-          <textarea ref={content} name="content" required spellCheck={false} defaultValue={NEW_SCRIPT} />
+          <textarea ref={content} name="content" rows={12} required spellCheck={false} defaultValue={NEW_SCRIPT} />
           <small>The script runs as the dashboard SSH user. It is saved as an executable file inside the selected allowed folder.</small>
         </label>
         {error && <div className="alert">{error}</div>}
@@ -280,6 +320,7 @@ export function RunScriptForm({
   const [error, setError] = useState(""),
     [selected, setSelected] = useState("0"),
     [selectedFile, setSelectedFile] = useState(""),
+    [value, setValue] = useState(""),
     [showFileBrowser, setShowFileBrowser] = useState(false),
     options = script.runOptions || [];
   const option = options[Number(selected)];
@@ -288,8 +329,9 @@ export function RunScriptForm({
       <form
         onSubmit={async (event) => {
           event.preventDefault();
+          if (script.confirmRun && !await appConfirm(`Run “${script.name}” with “${option?.label}”?`, "Run script", "Run", true)) return;
           try {
-            const result = await api("script/run", { id: script.id, option: selected, file: selectedFile });
+            const result = await api("script/run", { id: script.id, option: selected, file: selectedFile, value });
             done(script, result.run.id);
           } catch (reason) {
             setError(reason instanceof Error ? reason.message : "Could not start script");
@@ -304,6 +346,7 @@ export function RunScriptForm({
             onChange={(event) => {
               setSelected(event.target.value);
               setSelectedFile("");
+              setValue("");
               setShowFileBrowser(false);
             }}
           >
@@ -313,6 +356,12 @@ export function RunScriptForm({
           </select>
           <small>{option?.description || option?.value}</small>
         </label>
+        {option?.input && (
+          <label>
+            {option.input}
+            <input autoFocus required maxLength={500} value={value} onChange={(event) => setValue(event.target.value)} spellCheck={false} />
+          </label>
+        )}
         {option?.needsFile && (
           <section className="run-file-picker">
             <b>Select a file</b>
@@ -333,7 +382,7 @@ export function RunScriptForm({
           </section>
         )}
         {error && <div className="alert">{error}</div>}
-        <Btn className="primary" disabled={!!option?.needsFile && !selectedFile}>Run script</Btn>
+        <Btn className="primary" disabled={(!!option?.needsFile && !selectedFile) || (!!option?.input && !value.trim())}>Run script</Btn>
       </form>
     </Modal>
   );

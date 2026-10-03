@@ -366,9 +366,16 @@ async function main() {
     await tablet.close();
     // A run in progress, in its log with the button that stops it, and the
     // form of its script, which has a time limit.
-    await post("script/save", { name: "Rebuild search index", path: "/srv/scripts/maintenance/rebuild-index.sh", folder: "Maintenance", runAs: "user", runOptions: "[]", timeLimitMinutes: "60" });
+    await post("script/save", {
+      name: "Rebuild search index", path: "/srv/scripts/maintenance/rebuild-index.sh", folder: "Maintenance", runAs: "user", timeLimitMinutes: "60",
+      variables: "INDEX_DIR=/srv/media/.index\nTHREADS=4", singleRun: "true", notifySuccess: "true",
+      runOptions: JSON.stringify([
+        { label: "Rebuild everything", value: "", description: "Reads every file again" },
+        { label: "One library", value: "--library {value}", description: "Only the folder named", input: "Library folder" },
+      ]),
+    });
     const rebuild = (await get("state?scope=records")).scripts.find((item) => item.name === "Rebuild search index");
-    const { run } = await post("script/run", { id: rebuild.id });
+    const { run } = await post("script/run", { id: rebuild.id, option: "0" });
     try {
       for (const [target, name] of [[small, "phone-log.png"], [page, "log.jpg"]]) {
         await open(target, "Settings");
@@ -380,10 +387,17 @@ async function main() {
         await picture(target, name);
         await target.getByRole("dialog").getByRole("button", { name: "Close" }).click();
       }
-      await small.locator(".script-row", { hasText: "Rebuild search index" }).getByRole("button", { name: /^Actions for/ }).click();
-      await small.getByRole("menuitem", { name: "Edit" }).click();
-      await small.getByRole("dialog", { name: "Edit script" }).waitFor();
-      await picture(small, "phone-script-form.png");
+      for (const [target, name] of [[small, "phone-script-form.png"], [page, "script-form.png"]]) {
+        await target.locator(".script-row", { hasText: "Rebuild search index" }).getByRole("button", { name: /^Actions for/ }).click();
+        await target.getByRole("menuitem", { name: "Edit" }).click();
+        const form = target.getByRole("dialog", { name: "Edit script" });
+        await form.waitFor();
+        await form.locator(".run-conditions").scrollIntoViewIfNeeded();
+        await picture(target, name);
+        await form.locator(".run-options-editor").scrollIntoViewIfNeeded();
+        await picture(target, name.replace("form", "options"));
+        await form.getByRole("button", { name: "Close" }).click();
+      }
     } finally {
       await post("script/stop", { runId: run.id });
     }

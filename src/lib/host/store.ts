@@ -51,9 +51,10 @@ export function persistSessions() {
 // because Next.js loads this module separately for the API routes and for the
 // background monitor; both must reach the same listeners.
 export const EVENT_TYPES = {
-  alert: "Alert triggered",
+  alert: "Alert triggered or back to normal",
   "script-failed": "Script run failed",
   "cron-failed": "Scheduled run failed",
+  "script-succeeded": "Run succeeded, for scripts set to announce it",
   "power-offline": "Power device stopped responding",
   "power-online": "Power device responding again",
 } as const;

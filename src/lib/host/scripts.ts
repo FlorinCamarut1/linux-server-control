@@ -7,7 +7,7 @@ import { constants } from "node:os";
 import path from "node:path";
 import { DATA, audit, emitDashboardEvent, read, save } from "./store";
 import { ROOT_SCRIPT_HELPER, run, runInput, serverSettings, ssh } from "./ssh";
-import { RECORD_ID, type RunOption, type Script, type ScriptRun, folders, schedules, scriptRuns, scripts } from "./records";
+import { RECORD_ID, type RunOption, type Script, type ScriptRun, folders, parseArguments, schedules, scriptRuns, scripts } from "./records";
 import { rootScriptStatus, syncCron } from "./cron";
 import { isAllowedPath, resolveAllowedDirectory, resolveSelectedFile } from "./files";
 const MAX_SCRIPT_RUNS = 2000;
@@ -30,6 +30,7 @@ export function recoverInterruptedRuns() {
     return { ...item, status: "failed" as const, completedAt: now, durationMs: Date.parse(now) - Date.parse(item.startedAt) };
   }));
 }
+// An option needs a name; its arguments may be empty, for a plain run.
 export function parseRunOptions(value: unknown): RunOption[] {
   try {
     const parsed = typeof value === "string" ? JSON.parse(value || "[]") : value ?? [];
@@ -38,12 +39,59 @@ export function parseRunOptions(value: unknown): RunOption[] {
       const label = String(item?.label || "").trim().slice(0, 80);
       const value = String(item?.value || "").trim().slice(0, 500);
       const description = String(item?.description || "").trim().slice(0, 180);
-      if (!label || !value || /[\r\n\0]/.test(label + value + description)) throw Error();
-      return { label, value, description, needsFile: item.needsFile === true };
+      const input = String(item?.input || "").trim().slice(0, 80);
+      if (!label || /[\r\n\0]/.test(label + value + description + input)) throw Error();
+      parseArguments(value);
+      return { label, value, description, needsFile: item.needsFile === true, ...(input ? { input } : {}) };
     });
   } catch {
-    throw Error("Each run option needs a name and an argument value");
+    throw Error("Each run option needs a name, and its arguments must be one line with closed quotes");
   }
+}
+// Environment variables of a script's runs, one NAME=value per line; empty
+// lines and lines starting with # are left out. Names that change how a shell
+// or the dynamic loader behaves are refused.
+const VARIABLE_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/;
+const RESERVED_VARIABLES = /^(PATH|HOME|USER|LOGNAME|SHELL|IFS|ENV|BASH_ENV|BASHOPTS|SHELLOPTS|PS4|PROMPT_COMMAND|GLOBIGNORE|CDPATH|POSIXLY_CORRECT|LD_\w*|BASH_FUNC_\w*)$/;
+export function parseVariables(value: unknown): Record<string, string> | undefined {
+  const lines = typeof value === "string" ? value.split(/\r?\n/)
+    : value && typeof value === "object" && !Array.isArray(value) ? Object.entries(value).map(([name, text]) => `${name}=${text}`)
+    : [];
+  const variables: Record<string, string> = {};
+  for (const line of lines) {
+    if (!line.trim() || line.trim().startsWith("#")) continue;
+    const at = line.indexOf("=");
+    const name = (at < 0 ? line : line.slice(0, at)).trim();
+    const text = at < 0 ? "" : line.slice(at + 1);
+    if (at < 0 || !VARIABLE_NAME.test(name)) throw Error(`Write each variable as NAME=value, with a name of letters, digits and _: ${line.trim().slice(0, 40)}`);
+    if (RESERVED_VARIABLES.test(name)) throw Error(`${name} cannot be set here: it changes how the shell runs the script`);
+    if (text.length > 1000 || /[\0\r]/.test(text)) throw Error(`The value of ${name} must be one line up to 1,000 characters`);
+    variables[name] = text;
+  }
+  if (Object.keys(variables).length > 40) throw Error("A script can have up to 40 variables");
+  return Object.keys(variables).length ? variables : undefined;
+}
+// The arguments of a run: the option's own, the chosen file after --file (or
+// last), and the typed value in place of "{value}" (or last). Also returns them
+// as one line, the way History shows them.
+export async function runArguments(option: string, file = "", typed = "") {
+  const args = parseArguments(option);
+  if (file) {
+    const fileIndex = args.indexOf("--file");
+    args.splice(fileIndex >= 0 ? fileIndex + 1 : args.length, 0, await resolveSelectedFile(file));
+  }
+  let shown = option;
+  if (typed) {
+    if (typed.length > 500 || /[\r\n\0]/.test(typed)) throw Error("The value must be one line up to 500 characters");
+    if (args.includes("{value}")) {
+      for (let index = 0; index < args.length; index++) if (args[index] === "{value}") args[index] = typed;
+      shown = option.replaceAll("{value}", typed);
+    } else {
+      args.push(typed);
+      shown = `${option} ${typed}`.trim();
+    }
+  }
+  return { args, shown };
 }
 // A script's time limit in whole minutes, at most a week; empty or 0 for none.
 export function parseTimeLimit(value: unknown) {
@@ -85,28 +133,6 @@ export async function deleteDashboardFolder(input: string, deleteScripts = false
   audit(`folder deleted ${name} (${removedScripts.length} scripts)`);
   return { deletedScripts: removedScripts.length };
 }
-export function parseArguments(value: string) {
-  if (value.length > 2000 || /[\r\n]/.test(value))
-    throw Error("Arguments must be a single line shorter than 2,000 characters");
-  const args: string[] = [];
-  let current = "", quote = "", escaped = false;
-  for (const char of value) {
-    if (escaped) { current += char; escaped = false; }
-    else if (char === "\\") escaped = true;
-    else if (quote) {
-      if (char === quote) quote = "";
-      else current += char;
-    } else if (char === "'" || char === '"') quote = char;
-    else if (/\s/.test(char)) {
-      if (current) { args.push(current); current = ""; }
-    } else current += char;
-  }
-  if (escaped || quote) throw Error("Arguments contain an unfinished quote or escape");
-  if (current) args.push(current);
-  if (args.length > 30 || args.some((arg) => arg.length > 500))
-    throw Error("Too many or overly long arguments");
-  return args;
-}
 const MAX_RUN_LOG_BYTES = 10 * 1024 * 1024;
 // The end of a run log, for the log viewer. Only the end is read from disk: a
 // live view asks every two seconds, and a log may be 10 MB. A view that starts
@@ -129,6 +155,7 @@ export function readRunLogEnd(logPath: string): string | null {
 // what stopping it takes. Kept on globalThis, like the event bus, so that every
 // instance of this module sees the same runs.
 type ActiveRun = {
+  scriptId: string;
   child: ChildProcess;
   // The run's process group on the server, as RUN_WRAPPER reported it.
   group?: number;
@@ -158,25 +185,21 @@ function later(active: ActiveRun, ms: number, work: () => void) {
   timer.unref?.();
   active.timers.push(timer);
 }
-export async function runScript(s: Script, rawArguments = "", selectedFile = "") {
-  const scriptArguments = parseArguments(rawArguments);
-  if (selectedFile) {
-    const fileIndex = scriptArguments.indexOf("--file");
-    scriptArguments.splice(
-      fileIndex >= 0 ? fileIndex + 1 : scriptArguments.length,
-      0,
-      await resolveSelectedFile(selectedFile),
-    );
-  }
+export async function runScript(s: Script, rawArguments = "", selectedFile = "", typedValue = "") {
+  const { args: scriptArguments, shown } = await runArguments(rawArguments, selectedFile, typedValue);
+  if (s.singleRun && [...activeRuns.values()].some((active) => active.scriptId === s.id))
+    throw Error(`${s.name} is already running, and runs one at a time. Wait for that run to end, or stop it.`);
   const root = s.runAs === "root";
   const helper = root ? await rootScriptStatus() : { available: false, stop: false };
   if (root && !helper.available)
     throw Error("Root script access has not been enabled on this server");
   const runId = randomUUID(),
     // A helper that can stop runs records this one under its ID.
+    // A script's variables reach its runs as the SSH user; root runs take arguments only.
+    variables = root ? [] : Object.entries(s.variables ?? {}).map(([name, value]) => `${name}=${value}`),
     command = root
       ? ["sudo", "-n", ROOT_SCRIPT_HELPER, "run", ...(helper.stop ? ["--id", runId] : []), s.path, ...scriptArguments]
-      : ["/bin/bash", s.path, ...scriptArguments],
+      : [...(variables.length ? ["env", ...variables] : []), "/bin/bash", s.path, ...scriptArguments],
     log = path.join(DATA, "runs", runId + ".log"),
     local = !serverSettings().sshTarget,
     [cmd, args] = ssh(["sh", "-c", RUN_WRAPPER, "sh", ...command]);
@@ -184,7 +207,7 @@ export async function runScript(s: Script, rawArguments = "", selectedFile = "")
   const started = Date.now();
   const record: ScriptRun = {
     id: runId, scriptId: s.id, scriptName: s.name, startedAt: new Date(started).toISOString(),
-    arguments: rawArguments, status: "running", logPath: log,
+    arguments: shown, status: "running", logPath: log,
   };
   saveScriptRuns([record, ...scriptRuns()]);
   const out = openSync(log, "a");
@@ -235,6 +258,13 @@ export async function runScript(s: Script, rawArguments = "", selectedFile = "")
     } : item);
     save("script-runs", all);
     audit(`script ${s.name} ${status === "success" ? "completed" : status} (${runId})`);
+    if (status === "success" && s.notifySuccess) {
+      const last = (readRunLogEnd(log) ?? "").split("\n").map((line) => line.trim()).filter(Boolean).pop();
+      emitDashboardEvent({
+        type: "script-succeeded", severity: "success", title: `Script finished: ${s.name}`,
+        message: `The run took ${Math.round((completed - started) / 1000)} s.${last ? ` Last output: ${last.slice(0, 300)}` : ""}`,
+      });
+    }
     if (status === "failed") emitDashboardEvent({
       type: "script-failed", severity: "critical", title: `Script failed: ${s.name}`,
       message: stop?.timedOut ? `The run was stopped after its time limit of ${s.timeLimitMinutes} minutes.`
@@ -245,7 +275,7 @@ export async function runScript(s: Script, rawArguments = "", selectedFile = "")
   try {
     // Locally the run gets a process group of its own, which stopping it signals.
     const child = spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"], detached: local });
-    active = { child, root, helperStop: helper.stop, timers: [] };
+    active = { scriptId: s.id, child, root, helperStop: helper.stop, timers: [] };
     activeRuns.set(runId, active);
     child.stdout?.on("data", output);
     child.stderr?.on("data", write);
@@ -313,6 +343,9 @@ export async function addScript(input: Record<string, string>) {
   if (/[\r\n]/.test(folder)) throw Error("The folder name must be one line");
   const runOptions = parseRunOptions(input.runOptions);
   const timeLimitMinutes = parseTimeLimit(input.timeLimitMinutes);
+  const variables = parseVariables(input.variables);
+  if (runAs === "root" && variables)
+    throw Error("Root scripts take arguments only, not variables: the dashboard may not change how a root script behaves beyond its arguments");
   if (folder && !folders().includes(folder)) throw Error("Choose an existing folder");
   if (runAs === "root") {
     const helper = await rootScriptStatus();
@@ -335,7 +368,15 @@ export async function addScript(input: Record<string, string>) {
   catch { throw Error("The script must be a regular file"); }
   const id = RECORD_ID.test(input.id || "") ? input.id : randomUUID();
   const all = scripts().filter((x) => x.id !== id);
-  all.push({ id, name, path: resolved, cron: expr, folder, runAs, runOptions, ...(timeLimitMinutes ? { timeLimitMinutes } : {}) });
+  const flag = (value: unknown) => value === true || value === "true";
+  all.push({
+    id, name, path: resolved, cron: expr, folder, runAs, runOptions,
+    ...(timeLimitMinutes ? { timeLimitMinutes } : {}),
+    ...(variables ? { variables } : {}),
+    ...(flag(input.singleRun) ? { singleRun: true } : {}),
+    ...(flag(input.confirmRun) ? { confirmRun: true } : {}),
+    ...(flag(input.notifySuccess) ? { notifySuccess: true } : {}),
+  });
   save("scripts", all);
 }
 export async function createCustomScript(input: Record<string, string>) {

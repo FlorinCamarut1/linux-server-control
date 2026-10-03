@@ -205,3 +205,44 @@ test("the root script helper records, stops and forgets the runs it starts", asy
     bystander.kill("SIGKILL");
   }
 });
+
+test("a run gets the script's variables and the value typed for its option", async () => {
+  const { server, data, readJson } = loadServer({ realProcesses: true });
+  const file = path.join(mkdtempSync(path.join(tmpdir(), "lsc-run-")), "show.sh");
+  writeFileSync(file, 'echo "greeting=$GREETING keep=$KEEP args=$*"\n');
+  const record = await server.runScript({ ...SCRIPT, path: file, variables: { GREETING: "hello world", KEEP: "3" } }, "--luna {value} --yes", "", "2026-06");
+  await until(() => latestRun(readJson).status !== "running", "the run to end");
+  assert.equal(latestRun(readJson).status, "success");
+  assert.equal(latestRun(readJson).arguments, "--luna 2026-06 --yes", "History shows the value that was typed");
+  assert.equal(server.readRunLogEnd(path.join(data, "runs", `${record.id}.log`)), "greeting=hello world keep=3 args=--luna 2026-06 --yes\n");
+});
+
+test("a script that runs one at a time refuses a second run until the first ends", async () => {
+  const { server, data, readJson } = loadServer({ realProcesses: true });
+  const script = { ...SCRIPT, path: slowScript(), singleRun: true };
+  const { record } = await startSlowRun(server, data, script);
+  await assert.rejects(server.runScript(script), /already running, and runs one at a time/);
+  // Other scripts are not held up.
+  const other = await server.runScript({ ...script, id: "other", singleRun: false });
+  await server.stopRun(record.id, "maria");
+  await server.stopRun(other.id, "maria");
+  await until(() => readJson("script-runs").every((run) => run.status !== "running"), "the runs to end");
+  const again = await server.runScript(script);
+  await server.stopRun(again.id, "maria");
+  await until(() => latestRun(readJson).status !== "running", "the last run to end");
+});
+
+test("a script set to announce its successful runs does, with its last line of output", async () => {
+  const { server, readJson } = loadServer({ realProcesses: true });
+  const events = [];
+  server.onDashboardEvent((event) => events.push(event));
+  const file = path.join(mkdtempSync(path.join(tmpdir(), "lsc-run-")), "backup.sh");
+  writeFileSync(file, 'echo "copying"\necho "3 files saved, 1.2 GB"\necho\n');
+  await server.runScript({ ...SCRIPT, path: file, notifySuccess: true });
+  await until(() => latestRun(readJson).status !== "running", "the run to end");
+  await server.runScript({ ...SCRIPT, id: "quiet", path: file });
+  await until(() => readJson("script-runs").every((run) => run.status !== "running"), "the second run to end");
+  assert.equal(events.length, 1, "only the script that asks is announced");
+  assert.equal(events[0].type, "script-succeeded");
+  assert.match(events[0].message, /^The run took \d+ s\. Last output: 3 files saved, 1\.2 GB$/);
+});

@@ -238,7 +238,9 @@ const scriptRoutes: Routes<Context> = {
     const selected = script.runOptions[option];
     if (selected.needsFile && !body.file)
       throw Error("Choose a file before running this option");
-    return ok({ run: await runScript(script, selected.value, selected.needsFile ? body.file : "") });
+    const value = selected.input ? String(body.value ?? "").trim() : "";
+    if (selected.input && !value) throw Error(`Enter ${selected.input.toLowerCase()} before running this option`);
+    return ok({ run: await runScript(script, selected.value, selected.needsFile ? body.file : "", value) });
   },
   // The end of a run's log (the script's latest run without runId) and the
   // run itself, so the log viewer can show its status and stop it.

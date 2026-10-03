@@ -5,7 +5,7 @@ import { readdirSync, rmSync } from "node:fs";
 import path from "node:path";
 import { DATA, audit, emitDashboardEvent, save } from "./store";
 import { CommandError, ROOT_CRON_HELPER, ROOT_SCRIPT_HELPER, run, runInput, serverSettings, shell } from "./ssh";
-import { type CronRun, RECORD_ID, type Schedule, type Script, cronRuns, oneLine, schedules, scripts } from "./records";
+import { type CronRun, RECORD_ID, type Schedule, type Script, cronRuns, oneLine, parseArguments, schedules, scripts } from "./records";
 // Shared by the schedule form and configuration restore, so both enforce the
 // same rules, in particular that root schedules may only run approved scripts.
 export function normalizeSchedule(input: Record<string, unknown>, knownScripts: Script[], rootCronAvailable: boolean): Schedule {
@@ -22,6 +22,10 @@ export function normalizeSchedule(input: Record<string, unknown>, knownScripts: 
     throw Error("Root schedules must use an approved script; custom root commands are disabled");
   if (runAs === "root" && !rootCronAvailable)
     throw Error("Root schedules have not been enabled on this server: they need both the root cron helper and the root script helper");
+  // A script's arguments for this schedule, such as one of its run options; a
+  // custom command carries its own.
+  const args = script && typeof input.arguments === "string" ? input.arguments.trim() : "";
+  parseArguments(args);
   return {
     id,
     scriptId: script?.id || "",
@@ -30,7 +34,22 @@ export function normalizeSchedule(input: Record<string, unknown>, knownScripts: 
     enabled: input.enabled !== false && input.enabled !== "false",
     runAs,
     ...(command ? { command } : {}),
+    ...(args ? { arguments: args } : {}),
   };
+}
+// What a schedule runs. The conditions set on its script hold here as well: its
+// arguments, its variables (for the SSH user) and its time limit, which
+// timeout(1) enforces with TERM and, 10 seconds later, KILL.
+export function scheduleCommand(schedule: Schedule, script: Script | undefined, user: CronUser) {
+  if (schedule.command) return schedule.command;
+  if (!script) return "";
+  const args = parseArguments(schedule.arguments || "");
+  const limit = script.timeLimitMinutes ? `timeout -k 10s ${script.timeLimitMinutes}m ` : "";
+  // Root's crontab calls the same helper as an immediate root run, so the
+  // approved root-script directories also apply to scheduled runs.
+  if (user === "root") return `${limit}${ROOT_SCRIPT_HELPER} run ${shell([script.path, ...args])}`;
+  const variables = Object.entries(script.variables ?? {}).map(([name, value]) => `${name}=${value}`);
+  return `${limit}${variables.length ? `env ${shell(variables)} ` : ""}/bin/bash ${shell([script.path, ...args])}`;
 }
 export async function saveSchedule(input: Record<string, unknown>) {
   const item = normalizeSchedule(input, scripts(), input.runAs === "root" && await rootSchedulesAvailable());
@@ -167,12 +186,7 @@ async function installSchedules(extraUsers: CronUser[]) {
     for (const schedule of items.filter(
       (item) => (item.runAs || "user") === user,
     )) {
-      const script = available.find((item) => item.id === schedule.scriptId);
-      // Root's crontab calls the same helper as an immediate root run, so the
-      // approved root-script directories also apply to scheduled runs.
-      const command = schedule.command || (!script ? "" : user === "root"
-        ? `${ROOT_SCRIPT_HELPER} run ${shell([script.path])}`
-        : `/bin/bash ${shell([script.path])}`);
+      const command = scheduleCommand(schedule, available.find((item) => item.id === schedule.scriptId), user);
       if (schedule.enabled && command) lines.push(cronLine(schedule, command, scheduleLog(user), user !== "root"));
     }
     const data = lines.join("\n") + "\n";
@@ -225,13 +239,21 @@ export async function collectCronRuns(log?: string | null) {
   const all = [...parsed, ...[...active.values()].sort((a, b) => time(a.startedAt) - time(b.startedAt))].slice(-500).reverse();
   const previous = cronRuns();
   if (JSON.stringify(all) !== JSON.stringify(previous)) {
-    // Announce only failures that are new since the last collection; the first
-    // collection establishes what is already known.
-    const known = new Set(previous.map((run) => `${run.scheduleId} ${run.startedAt}`));
+    // Announce only what ended since the last collection; the first collection
+    // establishes what is already known. A run seen while it was still going
+    // is announced once it has ended.
+    const key = (run: CronRun) => `${run.scheduleId} ${run.startedAt} ${run.status}`;
+    const known = new Set(previous.map(key));
+    const owner = new Map(schedules().map((item) => [item.id, scripts().find((script) => script.id === item.scriptId)]));
     if (previous.length)
-      for (const run of all)
-        if (run.status === "failed" && !known.has(`${run.scheduleId} ${run.startedAt}`))
-          emitDashboardEvent({ type: "cron-failed", severity: "critical", title: `Scheduled run failed: ${run.label}`, message: `Started ${run.startedAt}, exit code ${run.exitCode ?? "unknown"}.` });
+      for (const run of all) {
+        if (known.has(key(run))) continue;
+        const script = owner.get(run.scheduleId);
+        if (run.status === "failed")
+          emitDashboardEvent({ type: "cron-failed", severity: "critical", title: `Scheduled run failed: ${run.label}`, message: `Started ${run.startedAt}, exit code ${run.exitCode ?? "unknown"}${run.exitCode === 124 && script?.timeLimitMinutes ? `: it took longer than its time limit of ${script.timeLimitMinutes} minutes` : ""}.` });
+        else if (run.status === "success" && script?.notifySuccess)
+          emitDashboardEvent({ type: "script-succeeded", severity: "success", title: `Scheduled run finished: ${run.label}`, message: `${script.name}, started ${run.startedAt}, ended ${run.completedAt}.` });
+      }
     save("cron-runs", all);
   }
   return all;

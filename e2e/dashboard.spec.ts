@@ -137,6 +137,25 @@ test("a running script is stopped from its log and recorded as stopped", async (
   await expect(page.locator(".panel", { hasText: "Attention needed" })).not.toContainText("Long job");
 });
 
+test("run conditions set in the dashboard reach the script", async ({ page }) => {
+  await page.goto("/");
+  writeFileSync(path.join(FILES, "conditions.sh"), 'echo "keep=$KEEP args=$*"\n');
+  const options = [{ label: "A month", value: "--luna {value}", description: "", input: "Month" }];
+  const saved = await page.request.post("/api/script/save", { data: { name: "Conditions", path: path.join(FILES, "conditions.sh"), runAs: "user", variables: "KEEP=3", confirmRun: "true", runOptions: JSON.stringify(options) } });
+  expect(saved.status()).toBe(200);
+  await open(page, "Scripts");
+  await page.locator(".script-folder summary", { hasText: "Unfiled" }).click();
+  await page.locator(".script-row", { hasText: "Conditions" }).getByRole("button", { name: "Run" }).click();
+  const form = page.getByRole("dialog", { name: "Run Conditions" });
+  await expect(form.getByRole("button", { name: "Run script" })).toBeDisabled();
+  await form.getByRole("textbox", { name: "Month" }).fill("2026-06");
+  await form.getByRole("button", { name: "Run script" }).click();
+  // The script asks before each run; the question comes first.
+  await expect(modal(page).getByText("Run “Conditions” with “A month”?")).toBeVisible();
+  await modal(page).getByRole("button", { name: "Run", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "Conditions logs" }).locator("pre")).toContainText("keep=3 args=--luna 2026-06", { timeout: 15000 });
+});
+
 test("a schedule is written to the crontab, runs, and can be paused and deleted", async ({ page }) => {
   await page.goto("/");
   const created = await page.request.post("/api/script/create-custom", { data: { name: "Nightly job", filename: "nightly.sh", directory: FILES, content: "echo nightly output\n" } });

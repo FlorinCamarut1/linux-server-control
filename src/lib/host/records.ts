@@ -10,14 +10,27 @@ export type Script = {
   runAs?: "user" | "root";
   argumentHint?: string;
   runOptions?: RunOption[];
+  // The conditions of its runs, set in the dashboard rather than in the script.
   // A run that takes longer is stopped and counts as failed; absent for no limit.
   timeLimitMinutes?: number;
+  // Environment variables of its runs as the SSH user, manual and scheduled.
+  variables?: Record<string, string>;
+  // A run from the dashboard is refused while another one of it is going.
+  singleRun?: boolean;
+  // The dashboard asks before each run started from it.
+  confirmRun?: boolean;
+  // A successful run is announced too (script-succeeded), not only a failed one.
+  notifySuccess?: boolean;
 };
+// An option of a script's Run menu: its arguments (possibly none), a file to
+// choose, or a value to type when running, which takes the place of "{value}"
+// in the arguments or follows them.
 export type RunOption = {
   label: string;
   value: string;
   description: string;
   needsFile?: boolean;
+  input?: string;
 };
 export type Schedule = {
   id: string;
@@ -27,6 +40,8 @@ export type Schedule = {
   enabled: boolean;
   runAs?: "user" | "root";
   command?: string;
+  // The script's arguments for this schedule, such as one of its run options.
+  arguments?: string;
 };
 // A run someone stopped is "stopped", not "failed": it needs no attention, and
 // stoppedBy names the account. A run its script's time limit stopped failed,
@@ -37,9 +52,11 @@ export type ScriptRun = {
   status: "running" | "success" | "failed" | "stopped"; logPath: string;
   stoppedBy?: string; timedOut?: boolean;
 };
+// active: the rule has announced that its value reached the threshold, and
+// has not yet announced that it is back below.
 export type AlertRule = {
   id: string; name: string; metric: "temperature" | "cpu" | "ram" | "disk" | "storage" | "failedScripts" | "stoppedContainers";
-  threshold: number; enabled: boolean; cooldownMinutes: number; lastTriggeredAt?: number;
+  threshold: number; enabled: boolean; cooldownMinutes: number; lastTriggeredAt?: number; active?: boolean;
 };
 // storage maps each monitored path to its used percentage (absent in older samples).
 export type MetricSample = { at: number; cpu: number; ram: number; temperature: number | null; disk: number; storage?: Record<string, number> };
@@ -121,4 +138,28 @@ export function schedules(): Schedule[] {
       enabled: true,
       runAs: "user",
     }));
+}
+// Splits a line of arguments the way a shell would: quotes group words and a
+// backslash escapes one character. Used for run options and schedules.
+export function parseArguments(value: string) {
+  if (value.length > 2000 || /[\r\n]/.test(value))
+    throw Error("Arguments must be a single line shorter than 2,000 characters");
+  const args: string[] = [];
+  let current = "", quote = "", escaped = false;
+  for (const char of value) {
+    if (escaped) { current += char; escaped = false; }
+    else if (char === "\\") escaped = true;
+    else if (quote) {
+      if (char === quote) quote = "";
+      else current += char;
+    } else if (char === "'" || char === '"') quote = char;
+    else if (/\s/.test(char)) {
+      if (current) { args.push(current); current = ""; }
+    } else current += char;
+  }
+  if (escaped || quote) throw Error("Arguments contain an unfinished quote or escape");
+  if (current) args.push(current);
+  if (args.length > 30 || args.some((arg) => arg.length > 500))
+    throw Error("Too many or overly long arguments");
+  return args;
 }

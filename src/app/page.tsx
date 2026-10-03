@@ -511,11 +511,11 @@ export default function Home() {
                       <div className="actions">
                         {!readOnly && <Btn
                           disabled={!!busy}
-                          onClick={() =>
-                            s.runOptions?.length
-                              ? setRunPrompt(s)
-                              : startScript(s)
-                          }
+                          onClick={async () => {
+                            if (s.runOptions?.length) return setRunPrompt(s);
+                            if (s.confirmRun && !await appConfirm(`Run “${s.name}”?`, "Run script", "Run", true)) return;
+                            await startScript(s);
+                          }}
                         >
                           <Play size={15} />
                           Run
@@ -592,7 +592,7 @@ export default function Home() {
                       {/* A schedule without a script runs a command, which says more than its label. */}
                       <b>{script?.name || schedule.command || schedule.label}</b>
                       <small>
-                        {schedule.label} · {schedule.expression}
+                        {schedule.label} · {schedule.expression}{schedule.arguments ? ` · ${schedule.arguments}` : ""}
                       </small>
                     </div>
                     <span
