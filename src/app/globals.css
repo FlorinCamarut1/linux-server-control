@@ -621,7 +621,16 @@ header {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 16px;
   margin-bottom: 24px;
+}
+/* The title and its line may wrap; the page's buttons stay one row beside them. */
+header > div:first-child {
+  min-width: 0;
+}
+header > .actions {
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
 }
 /* One vertical rhythm for every page: sections are separated by the same gap. */
 main > * + * {
@@ -2239,10 +2248,19 @@ label > textarea:disabled {
   header {
     gap: 12px;
   }
-  header > .actions .button:first-child {
-    font-size: 0;
+  /* The page's buttons become square icons; their labels stay for screen readers. */
+  header > .actions .button {
+    position: relative;
     width: var(--control-h);
     padding: 0;
+  }
+  header .button-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
   }
   .container-row summary {
     grid-template-columns: var(--icon-box) 1fr 80px 20px;

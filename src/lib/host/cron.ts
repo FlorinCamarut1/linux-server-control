@@ -244,15 +244,19 @@ export async function collectCronRuns(log?: string | null) {
     // is announced once it has ended.
     const key = (run: CronRun) => `${run.scheduleId} ${run.startedAt} ${run.status}`;
     const known = new Set(previous.map(key));
-    const owner = new Map(schedules().map((item) => [item.id, scripts().find((script) => script.id === item.scriptId)]));
+    const owned = new Map(schedules().map((item) => [item.id, item]));
     if (previous.length)
       for (const run of all) {
         if (known.has(key(run))) continue;
-        const script = owner.get(run.scheduleId);
+        // Named after what runs: the script, or the command; the schedule's
+        // label ("Every 5 minutes") follows.
+        const schedule = owned.get(run.scheduleId);
+        const script = scripts().find((item) => item.id === schedule?.scriptId);
+        const name = script?.name || schedule?.command || run.label;
         if (run.status === "failed")
-          emitDashboardEvent({ type: "cron-failed", severity: "critical", title: `Scheduled run failed: ${run.label}`, message: `Started ${run.startedAt}, exit code ${run.exitCode ?? "unknown"}${run.exitCode === 124 && script?.timeLimitMinutes ? `: it took longer than its time limit of ${script.timeLimitMinutes} minutes` : ""}.` });
+          emitDashboardEvent({ type: "cron-failed", severity: "critical", title: `Scheduled run failed: ${name}`, message: `${run.label}, started ${run.startedAt}, exit code ${run.exitCode ?? "unknown"}${run.exitCode === 124 && script?.timeLimitMinutes ? `: it took longer than its time limit of ${script.timeLimitMinutes} minutes` : ""}.` });
         else if (run.status === "success" && script?.notifySuccess)
-          emitDashboardEvent({ type: "script-succeeded", severity: "success", title: `Scheduled run finished: ${run.label}`, message: `${script.name}, started ${run.startedAt}, ended ${run.completedAt}.` });
+          emitDashboardEvent({ type: "script-succeeded", severity: "success", title: `Scheduled run finished: ${name}`, message: `${run.label}, started ${run.startedAt}, ended ${run.completedAt}.` });
       }
     save("cron-runs", all);
   }

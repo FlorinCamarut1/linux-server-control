@@ -115,8 +115,11 @@ async function history({ req, session }: Context) {
   const cron = query.get("kind") === "cron";
   const scheduled = cron ? await collectCronRuns() : cronRuns();
   const manual = scriptRuns();
+  // A scheduled run is named after what it runs, the script or the command.
+  const names = new Map(schedules().map((item) => [item.id, scripts().find((script) => script.id === item.scriptId)?.name || item.command || ""]));
+  const named = scheduled.map((run) => ({ ...run, name: names.get(run.scheduleId) || run.label }));
   const result = cron
-    ? historyPage(scheduled, (run) => run.label, page)
+    ? historyPage(named, (run) => `${run.name} ${run.label}`, page)
     : historyPage(manual.map(publicRun), (run) => run.scriptName, page);
   return NextResponse.json({ ...result, counts: { scripts: manual.length, cron: scheduled.length } });
 }

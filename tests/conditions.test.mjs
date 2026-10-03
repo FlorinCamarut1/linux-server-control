@@ -126,9 +126,10 @@ test("scheduled runs announce failures once ended, and successes when their scri
   const ended = ["", start("q", 1), end("q", 1, 0), start("q", 2), end("q", 2, 124), start("l", 2), end("l", 2, 0)].join("\n");
   await server.collectCronRuns(ended);
   assert.deepEqual(plain(events.map((event) => [event.type, event.title])).sort(), [
-    ["cron-failed", "Scheduled run failed: Quiet hourly"],
-    ["script-succeeded", "Scheduled run finished: Loud hourly"],
+    ["cron-failed", "Scheduled run failed: Quiet"],
+    ["script-succeeded", "Scheduled run finished: Loud"],
   ]);
+  assert.match(events.find((event) => event.type === "script-succeeded").message, /^Loud hourly, started /);
   assert.match(events.find((event) => event.type === "cron-failed").message, /exit code 124: it took longer than its time limit of 20 minutes\./);
   await server.collectCronRuns(ended);
   assert.equal(events.length, 2, "nothing is announced twice");

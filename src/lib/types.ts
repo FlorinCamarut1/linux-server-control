@@ -33,7 +33,8 @@ export type Schedule = {
   arguments?: string;
 };
 export type User = { name: string; role: "admin" | "viewer" };
-export type CronRun = { scheduleId: string; label: string; startedAt: string; completedAt?: string; exitCode?: number; status: "running" | "success" | "failed" };
+// name: what the schedule runs, its script or command, as History lists it.
+export type CronRun = { scheduleId: string; label: string; name?: string; startedAt: string; completedAt?: string; exitCode?: number; status: "running" | "success" | "failed" };
 // "stopped" when an account stopped the run (stoppedBy); a run its time limit
 // stopped is "failed" with timedOut.
 export type Run = { id: string; scriptId: string; scriptName: string; startedAt: string; completedAt?: string; exitCode?: number; durationMs?: number; arguments: string; status: "running" | "success" | "failed" | "stopped"; stoppedBy?: string; timedOut?: boolean };

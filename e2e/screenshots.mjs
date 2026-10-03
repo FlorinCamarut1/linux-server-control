@@ -354,6 +354,13 @@ async function main() {
       if (name === "Scripts") for (const folder of await small.locator(".script-folder summary").all()) await folder.click();
       await picture(small, `phone-${name.toLowerCase()}.png`, { fullPage: true });
     }
+    // A narrow phone, where the page's title line wraps beside its buttons.
+    const narrow = await browser.newContext({ ...desktop, viewport: { width: 340, height: 700 }, storageState: await context.storageState(), isMobile: true, hasTouch: true });
+    const tiny = await narrow.newPage();
+    await tiny.goto("/");
+    await tiny.getByRole("heading", { name: "Overview", level: 1 }).waitFor();
+    await picture(tiny, "phone-narrow-overview.png");
+    await narrow.close();
     // A tablet, where the pages are in the menu as well.
     const tablet = await browser.newContext({ ...desktop, viewport: { width: 768, height: 1024 }, storageState: await context.storageState(), hasTouch: true });
     const medium = await tablet.newPage();

@@ -317,7 +317,7 @@ export default function Home() {
           <div className="actions">
             <Btn onClick={() => refresh()}>
               <RefreshCw size={16} />
-              Refresh
+              <span className="button-label">Refresh</span>
             </Btn>
             <Btn aria-label="Log out" onClick={signOut}>
               <LogOut size={16} />
