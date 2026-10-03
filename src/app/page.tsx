@@ -27,13 +27,17 @@ import {
   HardDrive,
   KeyRound,
   LayoutGrid,
+  Loader2,
   LogOut,
+  Menu,
   Pause,
   Pencil,
   Play,
   RefreshCw,
+  Square,
   Thermometer,
   Trash2,
+  X,
 } from "lucide-react";
 const nav = [
   ["overview", LayoutGrid, "Overview"],
@@ -75,8 +79,11 @@ export default function Home() {
     [copied, setCopied] = useState<"idle" | "copied" | "manual">("idle"),
     [needsSetup, setNeedsSetup] = useState(false),
     [initializing, setInitializing] = useState(true),
-    [pendingRequests, setPendingRequests] = useState(0);
+    [pendingRequests, setPendingRequests] = useState(0),
+    // On narrow screens the pages are listed in a menu opened from the top bar.
+    [menuOpen, setMenuOpen] = useState(false);
   const accessCode = useRef<HTMLElement>(null);
+  const menuToggle = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     const start = () => setPendingRequests((count) => count + 1);
     const end = () => setPendingRequests((count) => Math.max(0, count - 1));
@@ -138,10 +145,25 @@ export default function Home() {
   // The saved theme is applied before the first paint by the script in the
   // document head; this also gives the phone's browser bar the theme's color.
   useEffect(() => applyTheme(savedTheme()), []);
-  // On phones the navigation scrolls sideways; keep the active tab visible.
+  // The open menu takes the focus to the current page, closes on Escape, which
+  // gives the focus back to its button, and closes when the screen widens.
   useEffect(() => {
-    document.querySelector("nav button.active")?.scrollIntoView({ block: "nearest", inline: "nearest" });
-  }, [tab]);
+    if (!menuOpen) return;
+    document.querySelector<HTMLButtonElement>("nav button.active")?.focus({ preventScroll: true });
+    const key = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setMenuOpen(false);
+      menuToggle.current?.focus();
+    };
+    const wide = window.matchMedia("(min-width: 801px)");
+    const widened = () => { if (wide.matches) setMenuOpen(false); };
+    document.addEventListener("keydown", key);
+    wide.addEventListener("change", widened);
+    return () => {
+      document.removeEventListener("keydown", key);
+      wide.removeEventListener("change", widened);
+    };
+  }, [menuOpen]);
   const active = useMemo(
     () => state?.containers.filter((c) => c.State === "running").length || 0,
     [state],
@@ -230,7 +252,7 @@ export default function Home() {
   // Read-only accounts see the pages without the controls; the API refuses the rest.
   const readOnly = state.user?.role === "viewer";
   return (
-    <div className="shell">
+    <div className={`shell${menuOpen ? " menu-open" : ""}`}>
       {pendingRequests > 0 && <AppLoading />}
       <aside>
         <div className="brand">
@@ -238,31 +260,52 @@ export default function Home() {
             <img src="/icon.svg" alt="" />
           </span>
           <b>Linux Server Control</b>
+          <button
+            ref={menuToggle}
+            type="button"
+            className="menu-toggle"
+            aria-label={menuOpen ? "Close the menu" : "Open the menu"}
+            aria-expanded={menuOpen}
+            aria-controls="main-menu"
+            onClick={() => setMenuOpen((open) => !open)}
+          >
+            {menuOpen ? <X size={20} /> : <Menu size={20} />}
+          </button>
         </div>
-        <nav>
-          {nav.filter(([id]) => !readOnly || id !== "files").map(([id, Icon, label]) => (
-            <button
-              key={id}
-              className={tab === id ? "active" : ""}
-              onClick={() => {
-                setTab(id);
-                tabRef.current = id;
-                void refresh(true);
-              }}
-            >
-              <Icon size={18} />
-              {label}
-            </button>
-          ))}
-        </nav>
-        <div className="server">
-          <i />
-          <div>
-            <b>Server connected</b>
-            <small>{state.host}</small>
+        <div id="main-menu" className="menu-panel">
+          <nav>
+            {nav.filter(([id]) => !readOnly || id !== "files").map(([id, Icon, label]) => (
+              <button
+                key={id}
+                className={tab === id ? "active" : ""}
+                aria-current={tab === id ? "page" : undefined}
+                onClick={() => {
+                  setTab(id);
+                  tabRef.current = id;
+                  // A page opens at its top; from the menu, the focus returns to its button.
+                  window.scrollTo(0, 0);
+                  if (menuOpen) {
+                    setMenuOpen(false);
+                    menuToggle.current?.focus({ preventScroll: true });
+                  }
+                  void refresh(true);
+                }}
+              >
+                <Icon size={18} />
+                {label}
+              </button>
+            ))}
+          </nav>
+          <div className="server">
+            <i />
+            <div>
+              <b>Server connected</b>
+              <small>{state.host}</small>
+            </div>
           </div>
         </div>
       </aside>
+      {menuOpen && <div className="menu-backdrop" onClick={() => setMenuOpen(false)} />}
       <main>
         <header>
           <div>
@@ -446,7 +489,10 @@ export default function Home() {
                     />}
                     <ChevronDown className="chevron" size={18} />
                   </summary>
-                  {scripts.map((s) => (
+                  {scripts.map((s) => {
+                    const { schedule, lastRun } = scriptStatus.get(s.id) || {};
+                    const running = lastRun?.status === "running";
+                    return (
                     <div className="script-row" key={s.id}>
                       <div className="service-icon">
                         <FileTerminal size={19} />
@@ -454,8 +500,13 @@ export default function Home() {
                       <div className="grow">
                         <b>{s.name}</b>
                         <small>{s.path}</small>
-                        {(() => { const { schedule, lastRun } = scriptStatus.get(s.id) || {}; return <small>{schedule ? `${schedule.enabled ? "Scheduled" : "Schedule paused"}: ${schedule.expression}` : "Not scheduled"}{lastRun ? ` · last run ${lastRun.status}` : " · never run"}</small>; })()}
-                        {s.runAs === "root" && <span className="badge root">root</span>}
+                        <small>{schedule ? `${schedule.enabled ? "Scheduled" : "Schedule paused"}: ${schedule.expression}` : "Not scheduled"}{lastRun ? (running ? ` · running since ${new Date(lastRun.startedAt).toLocaleTimeString()}` : ` · last run ${lastRun.status}`) : " · never run"}{s.timeLimitMinutes ? ` · time limit ${s.timeLimitMinutes} min` : ""}</small>
+                        {(running || s.runAs === "root") && (
+                          <span className="row-badges">
+                            {running && <span className="badge root"><Loader2 className="spin" size={12} />Running</span>}
+                            {s.runAs === "root" && <span className="badge root">root</span>}
+                          </span>
+                        )}
                       </div>
                       <div className="actions">
                         {!readOnly && <Btn
@@ -478,7 +529,14 @@ export default function Home() {
                           label={`Actions for ${s.name}`}
                           disabled={!!busy}
                           items={[
-                            { label: "Schedule", icon: <CalendarPlus size={15} />, onSelect: () => { const schedule = scriptStatus.get(s.id)?.schedule; setScheduleEditor(schedule || { id: "", scriptId: s.id, expression: "0 3 * * *", label: `Run ${s.name}`, enabled: true, runAs: s.runAs || "user" }); } },
+                            running && lastRun && {
+                              label: "Stop run", icon: <Square size={15} />, danger: true,
+                              onSelect: async () => {
+                                if (await appConfirm(`Stop the run of “${s.name}” that started at ${new Date(lastRun.startedAt).toLocaleTimeString()}? The script and every process it started are ended.`, "Stop run", "Stop run", true))
+                                  await action(s.id, "script/stop", { runId: lastRun.id });
+                              },
+                            },
+                            { label: "Schedule", icon: <CalendarPlus size={15} />, onSelect: () => setScheduleEditor(schedule || { id: "", scriptId: s.id, expression: "0 3 * * *", label: `Run ${s.name}`, enabled: true, runAs: s.runAs || "user" }) },
                             { label: "Edit", icon: <Pencil size={15} />, onSelect: () => setEdit(s) },
                             {
                               label: "Delete", icon: <Trash2 size={15} />, danger: true,
@@ -491,7 +549,8 @@ export default function Home() {
                         />}
                       </div>
                     </div>
-                  ))}
+                    );
+                  })}
                 </details>
               ))
             ) : (
@@ -601,13 +660,14 @@ export default function Home() {
         {tab === "settings" && !readOnly && <><AppearancePanel /><NotificationsPanel /><ServerSettings /><Panel title="Storage monitoring" note="Choose which mounted paths appear in capacity cards."><div className="panel-body"><Btn onClick={() => setStorageManager(true)}><HardDrive size={16}/>Manage storage paths</Btn></div></Panel><DevicePanel devices={state.devices} current={state.device} revoke={(id) => action(id, "device/revoke", { id })} createCode={async () => { try { setEnrollment(await api("enrollment/create", { minutes: "15" })); setCopied("idle"); } catch (e) { setErr(e instanceof Error ? e.message : "Error"); } }} /><UsersPanel current={state.user?.name || ""} /><PasswordForm /><ConfigurationPanel refresh={refresh} /></>}
       </main>
       {logs && (
-        <LiveLogViewer logs={logs} close={() => setLogs(null)} />
+        <LiveLogViewer logs={logs} close={() => setLogs(null)} canStop={!readOnly} />
       )}
       {edit !== undefined && (
         <ScriptForm
           initial={edit}
           folders={state.folders}
           rootAccess={state.rootScript.available}
+          rootStop={!!state.rootScript.stop}
           close={() => setEdit(undefined)}
           done={async () => {
             setEdit(undefined);

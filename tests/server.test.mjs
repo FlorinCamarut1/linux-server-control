@@ -249,6 +249,16 @@ test("preflight names what is missing on the server", async () => {
   assert.ok(commands.at(-1).argv.at(-1).endsWith(" 'sh' '/tmp/media-dashboard' '/srv/scripts'"), "the logs folder and allowed paths are passed as arguments");
 });
 
+test("preflight says when the root script helper is too old to stop runs", async () => {
+  const root = async (rootrun) => {
+    const output = `rootrun=${rootrun}\nrootcron=ok\n`;
+    const { server } = loadServer({ env: { SSH_TARGET: "admin@server" }, host: (argv) => argv.at(-1) === "'hostname'" ? { stdout: "example\n" } : { stdout: output } });
+    return (await server.preflight()).checks.find((check) => check.id === "root").detail;
+  };
+  assert.equal(await root("ok"), "Root scripts and root schedules are enabled.");
+  assert.match(await root("old"), /^Root scripts and root schedules are enabled\. The root script helper is an older version that cannot stop a running root script/);
+});
+
 test("container names may not start with a dash", () => {
   const { server } = loadServer();
   for (const name of ["jellyfin", "app_1", "my.app-2"]) assert.ok(server.CONTAINER_NAME.test(name), name);
@@ -347,6 +357,16 @@ test("the monitored storage paths are part of a backup", async () => {
   for (const invalid of [["relative/path"], ["/mnt/a\n/etc"], "/mnt/media", [42]])
     await assert.rejects(server.restoreConfiguration(backup({ monitoredPaths: invalid })), /monitored paths|single line/, JSON.stringify(invalid));
   assert.deepEqual(readJson("monitored-paths"), ["/mnt/media", "/mnt/backup"], "a rejected backup changes nothing");
+});
+
+test("the root folder can be a monitored storage path", async () => {
+  // The installer and the guide use "/" on servers without other disks; a
+  // trimmed trailing slash used to leave nothing of it.
+  const { server, readJson } = loadServer({ env: { MONITORED_PATHS: "/, /srv/media//" }, host: (argv) => (argv[0] === "realpath" ? { stdout: argv.at(-1) + "\n" } : {}) });
+  assert.deepEqual(plain(server.monitoredPaths()), ["/", "/srv/media"]);
+  server.save("monitored-paths", ["/srv/media"]);
+  assert.equal(await server.addMonitoredPath("/"), "/");
+  assert.deepEqual(readJson("monitored-paths"), ["/srv/media", "/"]);
 });
 
 test("metrics are sampled at most once per interval", () => {

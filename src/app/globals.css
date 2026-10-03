@@ -542,6 +542,18 @@ aside {
   font-size: var(--text-base);
   white-space: nowrap;
 }
+/* The pages and the server box. On narrow screens they are a menu that the
+   top bar's button opens. */
+.menu-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.menu-toggle,
+.menu-backdrop {
+  display: none;
+}
 nav {
   display: grid;
   gap: 4px;
@@ -738,9 +750,17 @@ header p,
 .metric svg {
   width: 20px;
 }
+.metric > div {
+  min-width: 0;
+}
 .metric small,
 .metric strong {
   display: block;
+}
+.metric small,
+.metric strong,
+.metric em {
+  overflow-wrap: anywhere;
 }
 .metric small {
   color: var(--muted);
@@ -827,6 +847,7 @@ header p,
   min-height: var(--control-h-sm);
   padding: 0 8px;
   font-size: var(--text-sm);
+  white-space: nowrap;
   cursor: pointer;
 }
 .container-filters button:hover {
@@ -1194,6 +1215,20 @@ a.button {
   background: var(--violet-soft);
   color: var(--violet-text);
 }
+.badge.neutral {
+  background: var(--hover);
+  color: var(--text-soft);
+}
+.badge svg {
+  flex: 0 0 auto;
+}
+/* Badges under a row's title, such as Running and root. */
+.row-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
 .uptime {
   font-size: var(--text-md);
   color: var(--muted);
@@ -1390,10 +1425,14 @@ a.button {
   color: var(--muted);
   font-size: var(--text-md);
 }
-.live-log-controls span {
+.live-log-controls > span {
   display: inline-flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
+}
+.live-log-alert {
+  margin: 12px var(--modal-space) 0;
 }
 .live-status {
   color: var(--success-text);
@@ -1457,7 +1496,9 @@ label {
   font-size: var(--text-md);
   margin-bottom: 16px;
 }
-input:not([type="checkbox"]):not([type="radio"]) {
+/* Lower in specificity than any component rule, so that a component can set an
+   input's margin (beside a select or a button) without being overruled. */
+input:where(:not([type="checkbox"]):not([type="radio"])) {
   display: block;
   width: 100%;
   height: var(--control-h);
@@ -1559,7 +1600,7 @@ select:focus {
 .file-explorer-roots {
   width: auto;
   margin: 0;
-  height: var(--control-h-sm);
+  height: var(--control-h);
   padding: 0 28px 0 8px;
   font-size: var(--text-sm);
 }
@@ -1678,6 +1719,10 @@ select:focus {
 .menu-trigger:disabled {
   cursor: wait;
   opacity: .5;
+}
+/* Takes a menu button's place in a row that has no menu. */
+.menu-spacer {
+  flex: 0 0 var(--control-h);
 }
 .menu-items {
   position: fixed;
@@ -2040,29 +2085,82 @@ select:focus {
   body {
     overflow-x: hidden;
   }
+  /* On a short page the space left over goes to the page, not the top bar. */
   .shell {
     grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto 1fr;
     min-width: 0;
   }
+  /* A top bar that stays in view, with the pages in a menu under it. */
   aside {
-    position: static;
+    position: sticky;
+    top: 0;
+    z-index: 40;
     height: auto;
     border-right: 0;
     border-bottom: 1px solid var(--line);
-    padding: 16px;
+    padding: 8px 16px;
   }
   .brand {
-    padding: 0 4px 12px;
+    padding: 0;
   }
-  .server {
+  .menu-toggle {
+    display: grid;
+    place-items: center;
+    flex: 0 0 auto;
+    width: 44px;
+    height: 44px;
+    /* The icon lines up with the page's edge, not the button's. */
+    margin: 0 -10px 0 auto;
+    padding: 0;
+    border: 0;
+    border-radius: var(--radius-md);
+    background: transparent;
+    color: var(--text);
+    cursor: pointer;
+  }
+  .menu-toggle:hover,
+  .menu-toggle[aria-expanded="true"] {
+    background: var(--hover);
+  }
+  .menu-panel {
     display: none;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    /* Below the top bar: its padding, the button and its border. */
+    max-height: calc(100vh - 61px);
+    max-height: calc(100dvh - 61px);
+    overflow-y: auto;
+    padding: 8px 16px 16px;
+    border-bottom: 1px solid var(--line);
+    background: var(--sidebar);
+    box-shadow: 0 16px 40px var(--shadow);
   }
-  nav {
+  .menu-open .menu-panel {
     display: flex;
-    overflow: auto;
   }
   nav button {
-    white-space: nowrap;
+    min-height: 44px;
+  }
+  .server {
+    margin-top: 12px;
+    padding: 12px;
+  }
+  .server small {
+    max-width: none;
+  }
+  .menu-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 30;
+    background: var(--overlay);
+  }
+  /* The page behind the open menu does not scroll. */
+  body:has(.menu-open) {
+    overflow: hidden;
   }
   main {
     padding: 24px 16px;
@@ -2075,9 +2173,6 @@ select:focus {
     font-size: 0;
     width: var(--control-h);
     padding: 0;
-  }
-  .metrics {
-    grid-template-columns: 1fr;
   }
   .container-row summary {
     grid-template-columns: var(--icon-box) 1fr 80px 20px;
@@ -2122,19 +2217,10 @@ select:focus {
     --section-gap: 12px;
   }
   aside {
-    padding: 12px 12px;
-  }
-  .brand {
-    padding-bottom: 12px;
-    font-size: var(--text-base);
-  }
-  nav {
-    gap: 4px;
-    margin: 0 -4px;
-  }
-  nav button {
     padding: 8px 12px;
-    font-size: var(--text-md);
+  }
+  .menu-panel {
+    padding: 8px 12px 12px;
   }
   main {
     padding: 16px 12px;
@@ -2161,8 +2247,17 @@ select:focus {
     flex: 1;
     justify-content: center;
   }
+  /* Two cards to a row: the icon gives way to the value, and the cards of a
+     row start their text at the same height. */
   .metric {
+    align-items: flex-start;
     padding: 12px;
+  }
+  .metric > span {
+    display: none;
+  }
+  .metric strong {
+    font-size: var(--text-lg);
   }
   .container-row summary {
     grid-template-columns: var(--icon-box) minmax(0, 1fr) auto 16px;
@@ -2194,6 +2289,17 @@ select:focus {
   }
   .history-fields {
     grid-template-columns: 1fr;
+  }
+  .history-toolbar .container-filters {
+    width: 100%;
+  }
+  /* Three themes to a row keep the list of twelve short. */
+  .theme-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+  }
+  .theme-option {
+    padding: 8px;
   }
   .script-row .actions,
   .schedule-row .actions {
@@ -2292,6 +2398,9 @@ select:focus {
   .file-browser-footer .button,
   .live-log-controls .button {
     justify-content: center;
+  }
+  .live-log-controls .actions .button {
+    flex: 1;
   }
   .file-browser-head small,
   .file-browser-footer small {

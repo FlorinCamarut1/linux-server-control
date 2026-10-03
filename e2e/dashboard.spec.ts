@@ -6,7 +6,10 @@ import { ADMIN_STATE, CRONTAB, DATA, FILES, PASSWORD, PLUG, USERNAME, WEBHOOK, W
 
 const PAGES = ["Overview", "Containers", "Scripts", "Files", "Schedules", "Power", "History", "Alerts", "Settings"];
 const heading = (page: Page, name: string) => page.getByRole("heading", { name, level: 1 });
+// On a phone the pages are in the menu of the top bar.
 async function open(page: Page, name: string) {
+  const menu = page.getByRole("button", { name: "Open the menu" });
+  if (await menu.isVisible()) await menu.click();
   await page.getByRole("navigation").getByRole("button", { name, exact: true }).click();
   await expect(heading(page, name)).toBeVisible();
 }
@@ -101,6 +104,37 @@ test("a script is created, run and recorded in the history", async ({ page }) =>
   await open(page, "History");
   const run = page.locator(".schedule-row", { hasText: "Greeting" }).first();
   await expect(run.locator(".badge")).toHaveText("success", { timeout: 15000 });
+});
+
+test("a running script is stopped from its log and recorded as stopped", async ({ page }) => {
+  await page.goto("/");
+  const created = await page.request.post("/api/script/create-custom", { data: { name: "Long job", filename: "long.sh", directory: FILES, content: "echo working\nsleep 600\n" } });
+  expect(created.status()).toBe(200);
+  await open(page, "Scripts");
+  await page.locator(".script-folder summary", { hasText: "Unfiled" }).click();
+  const row = page.locator(".script-row", { hasText: "Long job" });
+  await row.getByRole("button", { name: "Run" }).click();
+  const viewer = page.getByRole("dialog", { name: "Long job logs" });
+  await expect(viewer.locator("pre")).toContainText("working", { timeout: 15000 });
+  await expect(viewer).toContainText("Running since");
+  await expect(row.locator(".badge", { hasText: "Running" })).toBeVisible();
+
+  // Stopping asks first; the confirmation opens above the log.
+  await viewer.getByRole("button", { name: "Stop run" }).click();
+  await expect(modal(page).getByText("Stop this run of Long job?")).toBeVisible();
+  await modal(page).getByRole("button", { name: "Stop run" }).click();
+  await expect(viewer).toContainText("Stopped by admin", { timeout: 15000 });
+  await expect(viewer.locator("pre")).toContainText("[Stopped by admin.]");
+  await expect(viewer.getByRole("button", { name: "Stop run" })).toHaveCount(0);
+  await viewer.getByRole("button", { name: "Close" }).click();
+
+  await open(page, "History");
+  const run = page.locator(".schedule-row", { hasText: "Long job" }).first();
+  await expect(run.locator(".badge")).toHaveText("stopped");
+  await expect(run).toContainText("stopped by admin");
+  // A stopped run needs no attention.
+  await open(page, "Overview");
+  await expect(page.locator(".panel", { hasText: "Attention needed" })).not.toContainText("Long job");
 });
 
 test("a schedule is written to the crontab, runs, and can be paused and deleted", async ({ page }) => {
@@ -211,7 +245,7 @@ test("a read-only account sees the pages but cannot change anything", async ({ p
   await expect(guest.getByRole("heading", { name: "Change password" })).toBeVisible();
   await expect(guest.getByRole("heading", { name: "Accounts" })).toHaveCount(0);
   // The interface hides the controls; the API refuses the requests as well.
-  for (const [route, data] of [["script/run", { id: "any" }], ["file/browse", { path: FILES }], ["container", { name: "any", action: "stop" }], ["users/save", { username: "x", role: "admin", password: "another-long-password" }], ["power/device/switch", { id: "any", on: false }]] as const)
+  for (const [route, data] of [["script/run", { id: "any" }], ["script/stop", { runId: "any" }], ["file/browse", { path: FILES }], ["container", { name: "any", action: "stop" }], ["users/save", { username: "x", role: "admin", password: "another-long-password" }], ["power/device/switch", { id: "any", on: false }]] as const)
     expect((await guest.request.post(`/api/${route}`, { data })).status(), route).toBe(403);
   expect((await guest.request.get("/api/config/export")).status()).toBe(403);
   expect((await guest.request.get("/api/state?scope=records")).status()).toBe(200);
@@ -372,6 +406,31 @@ test("the editor asks before discarding changes that were not saved", async ({ p
 
 test.describe("on a phone", () => {
   test.use({ viewport: { width: 390, height: 844 } });
+  test("the pages are in a menu under a top bar that stays in view", async ({ page }) => {
+    await page.goto("/");
+    await expect(heading(page, "Overview")).toBeVisible();
+    const nav = page.getByRole("navigation");
+    const toggle = page.getByRole("button", { name: "Open the menu" });
+    await expect(nav).toBeHidden();
+    // The open menu takes the focus to the current page; Escape gives it back.
+    await toggle.click();
+    await expect(nav.getByRole("button", { name: "Overview" })).toBeFocused();
+    await expect(nav.getByRole("button", { name: "Overview" })).toHaveAttribute("aria-current", "page");
+    await page.keyboard.press("Escape");
+    await expect(nav).toBeHidden();
+    await expect(toggle).toBeFocused();
+    // Choosing a page opens it and closes the menu, and so does a press beside the menu.
+    await toggle.click();
+    await nav.getByRole("button", { name: "Settings", exact: true }).click();
+    await expect(heading(page, "Settings")).toBeVisible();
+    await expect(nav).toBeHidden();
+    await toggle.click();
+    await page.mouse.click(195, 830);
+    await expect(nav).toBeHidden();
+    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+    await expect(toggle).toBeInViewport();
+  });
+
   test("no page scrolls sideways", async ({ page }) => {
     await page.goto("/");
     await expect(heading(page, "Overview")).toBeVisible();

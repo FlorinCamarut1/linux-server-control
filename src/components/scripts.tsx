@@ -12,12 +12,15 @@ export function ScriptForm({
   initial,
   folders,
   rootAccess,
+  rootStop = false,
   close,
   done,
 }: {
   initial: S | null;
   folders: string[];
   rootAccess: boolean;
+  // Whether the root script helper can stop runs, which a time limit needs.
+  rootStop?: boolean;
   close: () => void;
   done: () => void;
 }) {
@@ -97,6 +100,11 @@ export function ScriptForm({
             <option value="root" disabled={!rootAccess}>root{rootAccess ? "" : " (not enabled)"}</option>
           </select>
           <small>Root is available only for script folders approved by the server helper.</small>
+        </label>
+        <label>
+          Time limit (minutes)
+          <input name="timeLimitMinutes" type="number" min={1} max={10080} step={1} inputMode="numeric" defaultValue={initial?.timeLimitMinutes ?? ""} placeholder="No limit" />
+          <small>A run that takes longer is stopped and counts as failed. Leave empty for no limit.{rootAccess && !rootStop ? " On root scripts this needs the current root script helper." : ""}</small>
         </label>
         <input type="hidden" name="runOptions" value={hasRunOptions ? JSON.stringify(runOptions) : "[]"} />
         <label className="option-toggle">

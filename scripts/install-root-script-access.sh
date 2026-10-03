@@ -27,7 +27,8 @@ for requested in "$@"; do
   printf '%s\n' "$root_path" >> /etc/media-dashboard/root-script-paths
 done
 chmod 0644 /etc/media-dashboard/root-script-paths
-printf '%s ALL=(root) NOPASSWD: /usr/local/sbin/media-dashboard-root-run status, /usr/local/sbin/media-dashboard-root-run run *\n' "$dashboard_ssh_user" > /etc/sudoers.d/media-dashboard-root-run
+# stop ends a run the helper started with an ID, and nothing else.
+printf '%s ALL=(root) NOPASSWD: /usr/local/sbin/media-dashboard-root-run status, /usr/local/sbin/media-dashboard-root-run run *, /usr/local/sbin/media-dashboard-root-run stop *\n' "$dashboard_ssh_user" > /etc/sudoers.d/media-dashboard-root-run
 chmod 0440 /etc/sudoers.d/media-dashboard-root-run
 visudo -cf /etc/sudoers.d/media-dashboard-root-run
 echo "Root script access enabled."

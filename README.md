@@ -7,7 +7,7 @@ It is intended for people comfortable administering their own server. It runs en
 ## What it does
 
 - See, start, stop, restart, and inspect Docker containers, and open their web interfaces in one click.
-- Run approved shell scripts and follow the exact run log live.
+- Run approved shell scripts, follow the exact run log live, and stop a run, by hand or with a time limit.
 - Create and manage guided cron schedules.
 - Browse and edit files only inside paths you explicitly allow.
 - Chart CPU, RAM, temperature, and storage over the last day, week, or month.
@@ -24,22 +24,19 @@ See the **[user guide](docs/USER-GUIDE.md)** for a tour of every page.
 
 ## Install
 
-**[INSTALL.md](INSTALL.md)** walks through it in six steps and about 10 minutes: install Docker, download two files, fill in `.env`, create an SSH key, start the container, and sign in.
+On the server, signed in as the account you administer it with (not `root`):
 
-The normal installation uses the ready-made multi-architecture image from GitHub Container Registry. No Git clone and no local Node.js setup are needed.
+```bash
+curl -fsSL https://raw.githubusercontent.com/FlorinCamarut1/linux-server-control/main/install.sh | sh
+```
+
+The installer checks the server, shows the few commands it needs `sudo` for (installing Docker or the SSH server, for example) and asks before running them, asks for the server's address and the folders to manage, and starts the dashboard. It ends with the address to open and the one-time setup token. See [what it does](INSTALL.md#install-with-one-command), or **[INSTALL.md](INSTALL.md)** for the same installation in six steps by hand.
 
 The server needs an SSH account, `bash`, and the usual GNU tools; `python3`, `file`, `cron` and Docker each enable one page. The account's login shell may be bash, zsh or fish. See [What you need](INSTALL.md#what-you-need); the dashboard also checks them for you during setup.
 
-```bash
-mkdir -p ~/linux-server-control/{data,ssh}
-cd ~/linux-server-control
-curl -fsSLo compose.yaml https://raw.githubusercontent.com/FlorinCamarut1/linux-server-control/main/compose.github.yaml
-curl -fsSLo .env https://raw.githubusercontent.com/FlorinCamarut1/linux-server-control/main/.env.example
-```
-
-Then continue at [Step 3: Fill in `.env`](INSTALL.md#step-3-fill-in-env).
-
 ## Update
+
+Run the same command again: it keeps your settings, key and data. Or, in the dashboard's folder:
 
 ```bash
 cd ~/linux-server-control

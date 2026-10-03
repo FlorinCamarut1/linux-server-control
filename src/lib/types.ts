@@ -12,7 +12,7 @@ export type C = {
   Labels?: string;
 };
 export type RunOption = { label: string; value: string; description: string; needsFile?: boolean };
-export type S = { id: string; name: string; path: string; cron: string; folder?: string; runAs?: "user" | "root"; argumentHint?: string; runOptions?: RunOption[] };
+export type S = { id: string; name: string; path: string; cron: string; folder?: string; runAs?: "user" | "root"; argumentHint?: string; runOptions?: RunOption[]; timeLimitMinutes?: number };
 export type Schedule = {
   id: string;
   scriptId: string;
@@ -24,7 +24,9 @@ export type Schedule = {
 };
 export type User = { name: string; role: "admin" | "viewer" };
 export type CronRun = { scheduleId: string; label: string; startedAt: string; completedAt?: string; exitCode?: number; status: "running" | "success" | "failed" };
-export type Run = { id: string; scriptId: string; scriptName: string; startedAt: string; completedAt?: string; exitCode?: number; durationMs?: number; arguments: string; status: "running" | "success" | "failed" };
+// "stopped" when an account stopped the run (stoppedBy); a run its time limit
+// stopped is "failed" with timedOut.
+export type Run = { id: string; scriptId: string; scriptName: string; startedAt: string; completedAt?: string; exitCode?: number; durationMs?: number; arguments: string; status: "running" | "success" | "failed" | "stopped"; stoppedBy?: string; timedOut?: boolean };
 export type St = {
   user?: User;
   containers: C[];
@@ -40,7 +42,8 @@ export type St = {
   host: string;
   time: string;
   root: { available: boolean; cron: string; system: string };
-  rootScript: { available: boolean };
+  // stop: the root script helper can stop the root runs it starts.
+  rootScript: { available: boolean; stop?: boolean };
   stats: {
     temperatureC: number | null;
     memoryUsedBytes: number;

@@ -1,6 +1,6 @@
 # Installation
 
-This guide installs Linux Server Control on the server it will manage. It takes about 10 minutes and six steps:
+This guide installs Linux Server Control on the server it will manage. One command does it all; the same installation is also described step by step, for those who want to see or change each part:
 
 1. [Install Docker](#step-1-install-docker)
 2. [Download the two files](#step-2-download-the-files)
@@ -10,6 +10,31 @@ This guide installs Linux Server Control on the server it will manage. It takes 
 6. [Sign in for the first time](#step-6-sign-in-for-the-first-time)
 
 Run every command on the server, signed in as the normal user account you administer it with (not `root`). No Git clone, Node.js, proxy or certificate is needed.
+
+## Install with one command
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/FlorinCamarut1/linux-server-control/main/install.sh | sh
+```
+
+The installer does steps 1 to 5 for you:
+
+- It checks the server and lists what is missing: the SSH server, Docker and Docker Compose, your account in the `docker` group, and, where the `ufw` firewall is on, a rule that lets the dashboard's container reach SSH. It shows the `sudo` commands for these and runs them only after you agree. It offers `python3`, `file` and `cron` as well, which the Files page, the file editor and Schedules use.
+- It asks three things, each with a suggestion you can keep by pressing Enter: the server's address on your network, the folders the dashboard may manage (`~/scripts` unless you name others), and the disks to show as storage cards (the mounts under `/mnt`, `/media` and `/srv`, or `/` when there are none).
+- It creates `~/linux-server-control` with `compose.yaml`, `.env`, the dashboard's own SSH key, allowed to sign in to your account, and the server's recorded identity, and checks that the key signs in.
+- It starts the dashboard, checks from inside its container that it reaches the server over SSH, and prints the address to open and the one-time setup token.
+
+Then continue at [step 6](#step-6-sign-in-for-the-first-time). The installer supports Debian, Ubuntu, Fedora, Arch (also CachyOS and Manjaro) and openSUSE; elsewhere it says what is missing, and the steps below do the rest.
+
+To read the script before running it:
+
+```bash
+curl -fsSLo install.sh https://raw.githubusercontent.com/FlorinCamarut1/linux-server-control/main/install.sh
+less install.sh
+sh install.sh
+```
+
+Running it again updates the dashboard and keeps its settings, key and data. Without a terminal, for example from another script, it asks nothing: it keeps every suggestion and runs no `sudo` command, unless `LSC_YES=1` agrees to them. `sh install.sh --help` lists the variables that answer its questions in advance.
 
 ## What you need
 
@@ -221,7 +246,10 @@ sudo sh root-helpers/install-root-cron-access.sh "$USER"
 Then, in the dashboard, add `/srv/dashboard-root-scripts` to **Settings → Server connection → Allowed paths**, so its scripts can be registered.
 
 - The first helper allows root runs only for `.sh` files inside the folders you name. Never make such a folder writable by the SSH user: whoever can edit a root script can run anything as root.
+- The first helper also stops a root run when you stop it in the dashboard or it passes its script's time limit. It can only stop runs it started itself.
 - The second helper lets the dashboard manage root's crontab. Root schedules need both helpers, and run only registered scripts from the approved folders.
+
+A first helper installed by an earlier version of the dashboard cannot stop root runs. To update it, copy the installers out of the image again and run `install-root-script-access.sh` again with the same folders. **Settings → Server connection → Check server requirements** says when the helper needs this.
 
 ## Optional: HTTPS
 
@@ -246,6 +274,8 @@ To use a name instead of the address, set `HTTPS_HOST=server.lan` in `.env`. Wit
 The account created at setup is the owner. Under **Settings → Accounts** an administrator can add more: administrators, or read-only accounts that see status, history and logs but cannot change anything. A new browser needs an access code the first time, whichever account signs in.
 
 ## Update
+
+Run the [installer](#install-with-one-command) again, or:
 
 ```bash
 cd ~/linux-server-control
@@ -330,5 +360,7 @@ docker compose exec -T dashboard ssh -o BatchMode=yes -o StrictHostKeyChecking=y
 **"Containers cannot be read".** The message says why: Docker is not installed, its daemon is stopped, or the SSH user is not in the `docker` group. For the last one, run `sudo usermod -aG docker "$USER"` and then `docker compose restart`.
 
 **A page reports a missing command.** Open **Settings → Server connection → Check server requirements** and install what it lists.
+
+**Setup says the server connection could not be verified, and the server has the `ufw` firewall.** `ufw` also drops the container's connection to SSH; the installer adds a rule for it. By hand: `sudo ufw allow from 172.16.0.0/12 to any port 22 proto tcp`, which lets Docker's networks, and nothing else, reach SSH.
 
 **The setup token is not in the log.** It is printed on every start until setup is completed, so `docker compose restart` followed by the `grep` of step 6 shows it again. It is also stored in `data/setup-bootstrap.json` (`sudo cat data/setup-bootstrap.json`).

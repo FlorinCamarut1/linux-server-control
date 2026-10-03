@@ -46,6 +46,7 @@ import {
   scriptRuns,
   scripts,
   serverSettings,
+  stopRun,
   syncCron,
   testServerConnection,
   updateServerSettings,
@@ -239,13 +240,19 @@ const scriptRoutes: Routes<Context> = {
       throw Error("Choose a file before running this option");
     return ok({ run: await runScript(script, selected.value, selected.needsFile ? body.file : "") });
   },
+  // The end of a run's log (the script's latest run without runId) and the
+  // run itself, so the log viewer can show its status and stop it.
   "POST script/log": ({ body }) => {
     const script = findScript(body);
     const runRecord = body.runId
       ? scriptRuns().find((item) => item.id === body.runId && item.scriptId === script.id)
       : scriptRuns().find((item) => item.scriptId === script.id);
     const output = (runRecord?.logPath ? readRunLogEnd(runRecord.logPath) : null) ?? "No dashboard run log is available yet.";
-    return NextResponse.json({ output });
+    return NextResponse.json({ output, run: runRecord ? publicRun(runRecord) : null });
+  },
+  "POST script/stop": async ({ body, user }) => {
+    await stopRun(body.runId || "", user.name);
+    return ok();
   },
   "POST script/delete": async ({ body }) => {
     const script = findScript(body);

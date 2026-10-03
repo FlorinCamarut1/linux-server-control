@@ -3,7 +3,7 @@ import { ChartFrame, LineChart, RangeFilter, type Range } from "@/components/cha
 import { PowerPage } from "@/components/power";
 import { memo, useEffect, useMemo, useState } from "react";
 import { api } from "@/lib/client-api";
-import { Btn, Panel, Metric, formatBytes, formatPercent, Modal } from "@/components/ui";
+import { Btn, Panel, Metric, formatBytes, formatDuration, formatPercent, Modal, RunBadge } from "@/components/ui";
 import type { CronRun, Run, St } from "@/lib/types";
 import {
   Circle,
@@ -95,7 +95,7 @@ export function HistoryPanel({ metrics, openLog }: { metrics: St["metrics"]; ope
   const total = loading ? 0 : data!.total;
   const pages = Math.max(1, Math.ceil(total / HISTORY_PAGE_ROWS));
   const switchKind = (next: "scripts" | "cron") => { setKind(next); setSearch(""); setStatus("all"); setPage(0); };
-  const badge = (run: Run | CronRun) => <span className={`badge ${run.status === "success" ? "up" : run.status === "failed" ? "down" : "root"}`}>{run.status}{run.status === "failed" && run.exitCode !== undefined ? ` · code ${run.exitCode}` : ""}</span>;
+  const badge = (run: Run | CronRun) => <RunBadge run={run} />;
   return <>
     <section className="metrics">
       <Metric label="CPU history" value={latest ? `${latest.cpu.toFixed(1)}%` : "No samples"} icon={<Gauge />} />
@@ -110,13 +110,13 @@ export function HistoryPanel({ metrics, openLog }: { metrics: St["metrics"]; ope
         </div>
         <div className="history-fields">
           <input aria-label="Search execution history" value={search} onChange={(event) => { setSearch(event.target.value); setPage(0); }} placeholder={kind === "scripts" ? "Search script name or run" : "Search cron schedule"} />
-          <select aria-label="Filter status" value={status} onChange={(event) => { setStatus(event.target.value); setPage(0); }}><option value="all">All statuses</option><option value="success">Success</option><option value="failed">Failed</option><option value="running">Running</option></select>
+          <select aria-label="Filter status" value={status} onChange={(event) => { setStatus(event.target.value); setPage(0); }}><option value="all">All statuses</option><option value="success">Success</option><option value="failed">Failed</option><option value="running">Running</option>{kind === "scripts" && <option value="stopped">Stopped</option>}</select>
         </div>
         <small>{loading ? "Loading…" : `${total} result${total === 1 ? "" : "s"}`}</small>
       </div>
       {error && <div className="panel-body"><div className="alert">{error}</div></div>}
       {rows.map((row, index) => kind === "scripts"
-        ? (() => { const run = row as Run; return <div className="schedule-row" key={run.id}><div className="grow"><b>{run.scriptName}</b><small>{new Date(run.startedAt).toLocaleString()} · {run.arguments || "no arguments"} · {run.durationMs === undefined ? "in progress" : `${(run.durationMs / 1000).toFixed(1)}s`}</small></div>{badge(run)}<Btn onClick={() => openLog(run)}>Log</Btn></div>; })()
+        ? (() => { const run = row as Run; return <div className="schedule-row" key={run.id}><div className="grow"><b>{run.scriptName}</b><small>{new Date(run.startedAt).toLocaleString()} · {run.arguments || "no arguments"} · {run.durationMs === undefined ? "in progress" : formatDuration(run.durationMs)}{run.stoppedBy ? ` · stopped by ${run.stoppedBy}` : ""}</small></div>{badge(run)}<Btn onClick={() => openLog(run)}>Log</Btn></div>; })()
         : (() => { const run = row as CronRun; return <div className="schedule-row" key={`${run.scheduleId}-${run.startedAt}-${index}`}><div className="grow"><b>{run.label}</b><small>Started {new Date(run.startedAt).toLocaleString()}{run.completedAt ? ` · completed ${new Date(run.completedAt).toLocaleString()}` : ""}</small></div>{badge(run)}</div>; })())}
       {!loading && !total && !error && <div className="empty-state"><Clock3 size={22}/><b>{search || status !== "all" ? "No matching runs" : kind === "scripts" ? "No execution history yet" : "No cron runs recorded yet"}</b><p>{kind === "scripts" ? "Runs started from the dashboard will appear here." : "Save or change an existing schedule to enable tracking."}</p></div>}
       {total > HISTORY_PAGE_ROWS && <div className="actions panel-pagination"><Btn disabled={page === 0} onClick={() => setPage((value) => value - 1)}>Previous</Btn><small>Page {Math.min(page, pages - 1) + 1} of {pages}</small><Btn disabled={page + 1 >= pages} onClick={() => setPage((value) => value + 1)}>Next</Btn></div>}

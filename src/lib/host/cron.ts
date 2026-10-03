@@ -42,7 +42,7 @@ export async function saveSchedule(input: Record<string, unknown>) {
 export type CronUser = "user" | "root";
 // The root helpers' availability and root's crontabs rarely change, so they are
 // read at most every few minutes, and again right after the dashboard changes them.
-type RootStatus = { target: string; at: number; root: { available: boolean; cron: string; system: string }; rootScript: { available: boolean } };
+type RootStatus = { target: string; at: number; root: { available: boolean; cron: string; system: string }; rootScript: { available: boolean; stop: boolean } };
 const ROOT_STATUS_TTL_MS = 5 * 60 * 1000;
 let rootStatus: RootStatus | undefined;
 function cachedRootStatus() {
@@ -88,12 +88,14 @@ export async function rootSchedulesAvailable() {
   const [cron, script] = await Promise.all([rootCronStatus(), rootScriptStatus()]);
   return cron.available && script.available;
 }
+// A helper that can stop the runs it starts says so in its status; older
+// helpers print nothing, and their root runs cannot be stopped.
 export async function rootScriptStatus() {
   try {
-    await run(["sudo", "-n", ROOT_SCRIPT_HELPER, "status"]);
-    return { available: true };
+    const output = await run(["sudo", "-n", ROOT_SCRIPT_HELPER, "status"]);
+    return { available: true, stop: /^stop$/m.test(output) };
   } catch {
-    return { available: false };
+    return { available: false, stop: false };
   }
 }
 export function validCron(x: string) {

@@ -72,6 +72,7 @@ file("scripts/backup-library.sh", script(['echo "Backing up the library index to
 file("scripts/clean-downloads.sh", script(['echo "Removing downloads older than 30 days"', 'echo "Nothing to remove"']), 0o755);
 file("scripts/maintenance/sync-vpn-port.sh", script(['echo "Asking the VPN for its forwarded port"', 'echo "error: the VPN did not answer" >&2', "exit 1"]), 0o755);
 file("scripts/maintenance/update-containers.sh", script(['echo "Pulling new images"', 'echo "All containers are up to date"']), 0o755);
+file("scripts/maintenance/rebuild-index.sh", script(['echo "Rebuilding the search index"', 'for part in 1 2 3; do echo "Indexed part $part of 40"; done', "sleep 300"]), 0o755);
 for (const [name, size] of [["Big Buck Bunny (2008).mkv", 4.2], ["Sintel (2010).mkv", 6.8], ["Tears of Steel (2012).mkv", 9.1], ["Elephants Dream (2006).mkv", 3.4]]) media(`media/movies/${name}`, size);
 for (let episode = 1; episode <= 6; episode++) media(`media/shows/Caminandes/Season 01/Caminandes S01E0${episode}.mkv`, 1.4);
 for (const [name, size] of [["Open Goldberg Variations.flac", 0.4], ["Kimiko Ishizaka - Well-Tempered Clavier.flac", 0.9]]) media(`media/music/${name}`, size);
@@ -203,7 +204,10 @@ async function main() {
     await pause(350);
     await target.screenshot({ path: path.join(out, name), type: name.endsWith(".png") ? "png" : "jpeg", ...(name.endsWith(".png") ? {} : { quality: 88 }), ...options });
   };
+  // On a phone the pages are in the menu of the top bar.
   const open = async (target, name) => {
+    const menu = target.getByRole("button", { name: "Open the menu" });
+    if (await menu.isVisible()) await menu.click();
     await target.getByRole("navigation").getByRole("button", { name, exact: true }).click();
     await target.getByRole("heading", { name, level: 1 }).waitFor();
   };
@@ -341,11 +345,47 @@ async function main() {
   await small.getByRole("heading", { name: "Overview", level: 1 }).waitFor();
   await charts(small);
   await picture(small, "mobile.png");
+  await small.getByRole("button", { name: "Open the menu" }).click();
+  await picture(small, "mobile-menu.png");
+  await small.keyboard.press("Escape");
   if (review) {
     for (const name of PAGES) {
       await open(small, name);
       if (name === "Scripts") for (const folder of await small.locator(".script-folder summary").all()) await folder.click();
       await picture(small, `phone-${name.toLowerCase()}.png`, { fullPage: true });
+    }
+    // A tablet, where the pages are in the menu as well.
+    const tablet = await browser.newContext({ ...desktop, viewport: { width: 768, height: 1024 }, storageState: await context.storageState(), hasTouch: true });
+    const medium = await tablet.newPage();
+    await medium.goto("/");
+    await medium.getByRole("heading", { name: "Overview", level: 1 }).waitFor();
+    await charts(medium);
+    await picture(medium, "tablet-overview.png");
+    await open(medium, "Containers");
+    await picture(medium, "tablet-containers.png");
+    await tablet.close();
+    // A run in progress, in its log with the button that stops it, and the
+    // form of its script, which has a time limit.
+    await post("script/save", { name: "Rebuild search index", path: "/srv/scripts/maintenance/rebuild-index.sh", folder: "Maintenance", runAs: "user", runOptions: "[]", timeLimitMinutes: "60" });
+    const rebuild = (await get("state?scope=records")).scripts.find((item) => item.name === "Rebuild search index");
+    const { run } = await post("script/run", { id: rebuild.id });
+    try {
+      for (const [target, name] of [[small, "phone-log.png"], [page, "log.jpg"]]) {
+        await open(target, "Settings");
+        await open(target, "Scripts");
+        const row = target.locator(".script-row", { hasText: "Rebuild search index" });
+        if (!(await row.isVisible())) await target.locator(".script-folder summary", { hasText: "Maintenance" }).click();
+        await row.getByRole("button", { name: "Logs" }).click();
+        await target.getByText("Indexed part 3 of 40").waitFor();
+        await picture(target, name);
+        await target.getByRole("dialog").getByRole("button", { name: "Close" }).click();
+      }
+      await small.locator(".script-row", { hasText: "Rebuild search index" }).getByRole("button", { name: /^Actions for/ }).click();
+      await small.getByRole("menuitem", { name: "Edit" }).click();
+      await small.getByRole("dialog", { name: "Edit script" }).waitFor();
+      await picture(small, "phone-script-form.png");
+    } finally {
+      await post("script/stop", { runId: run.id });
     }
   }
 

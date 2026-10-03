@@ -2,10 +2,11 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { api } from "@/lib/client-api";
-import type { PreflightCheck } from "@/lib/types";
+import type { PreflightCheck, Run } from "@/lib/types";
 import {
   Loader2,
   MoreHorizontal,
+  Pause,
   Play,
   Square,
 } from "lucide-react";
@@ -312,27 +313,61 @@ export function PromptDialog({ request, finish }: { request: DialogRequest; fini
     </form>
   </Modal>;
 }
+// How long a run took, in the largest units that matter.
+export function formatDuration(ms: number) {
+  const seconds = ms / 1000;
+  if (seconds < 60) return `${seconds.toFixed(1)} s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes} min ${Math.floor(seconds % 60)} s`;
+  return `${Math.floor(minutes / 60)} h ${minutes % 60} min`;
+}
+// A script run's status as a badge: running, success, failed (with its exit
+// code, or the time limit that stopped it) or stopped.
+export function RunBadge({ run }: { run: Pick<Run, "status" | "exitCode" | "timedOut"> }) {
+  const tone = { success: "up", failed: "down", running: "root", stopped: "neutral" }[run.status];
+  const detail = run.status !== "failed" ? "" : run.timedOut ? " · time limit" : run.exitCode !== undefined ? ` · code ${run.exitCode}` : "";
+  return <span className={`badge ${tone}`}>{run.status}{detail}</span>;
+}
+// What became of a run, in words, for the log viewer.
+function describeRun(run: Run) {
+  const took = run.durationMs === undefined ? "" : ` after ${formatDuration(run.durationMs)}`;
+  if (run.status === "running") return `Running since ${new Date(run.startedAt).toLocaleTimeString()}`;
+  if (run.status === "success") return `Finished${took}`;
+  if (run.status === "stopped") return `Stopped${run.stoppedBy ? ` by ${run.stoppedBy}` : ""}${took}`;
+  return run.timedOut ? `Stopped by its time limit${took}` : `Failed with exit code ${run.exitCode ?? "unknown"}${took}`;
+}
+// A log that follows its source every 2 seconds. A script's log also shows its
+// run: whether it still runs, how it ended, and, with canStop, a way to stop
+// it. A finished run's log no longer changes, so it is not read again.
 export function LiveLogViewer({
   logs,
   close,
+  canStop = false,
 }: {
   logs: { title: string; path: string; request: unknown };
   close: () => void;
+  canStop?: boolean;
 }) {
   const [body, setBody] = useState("Loading logs…"),
     [live, setLive] = useState(true),
-    [loading, setLoading] = useState(true);
+    [loading, setLoading] = useState(true),
+    [run, setRun] = useState<Run | null>(null),
+    [stopping, setStopping] = useState(false),
+    [error, setError] = useState("");
+  const finished = run !== null && run.status !== "running";
+  const following = live && !finished;
   // New output keeps the end of the log in view, until the reader scrolls up.
   const view = useRef<HTMLPreElement>(null);
-  const following = useRef(true);
+  const atEnd = useRef(true);
   useLayoutEffect(() => {
-    if (view.current && following.current) view.current.scrollTop = view.current.scrollHeight;
+    if (view.current && atEnd.current) view.current.scrollTop = view.current.scrollHeight;
   }, [body]);
   // Only sets state after awaiting, so it can run directly from the effect.
   const refreshLogs = useCallback(async () => {
     try {
       const result = await api(logs.path, logs.request, true);
       setBody(result.output || "No logs available.");
+      if (result.run) setRun(result.run);
     } catch (reason) {
       setBody(reason instanceof Error ? reason.message : "Could not load logs");
     } finally {
@@ -340,7 +375,7 @@ export function LiveLogViewer({
     }
   }, [logs]);
   useEffect(() => {
-    if (!live) return;
+    if (!following) return;
     // Waits for each response before scheduling the next, so a slow server never
     // gets overlapping requests, and skips reads while the tab is hidden.
     let timer = 0, stopped = false;
@@ -360,24 +395,48 @@ export function LiveLogViewer({
       stopped = true;
       window.clearTimeout(timer);
     };
-  }, [live, refreshLogs]);
+  }, [following, refreshLogs]);
+  async function stopRun() {
+    if (!run || !await appConfirm(`Stop this run of ${run.scriptName}? The script and every process it started are ended, and the run is recorded as stopped.`, "Stop run", "Stop run", true)) return;
+    setError("");
+    setStopping(true);
+    try {
+      await api("script/stop", { runId: run.id });
+      await refreshLogs();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not stop the run");
+      setStopping(false);
+    }
+  }
   return (
     <Modal title={logs.title} close={close}>
       <div className="live-log-controls">
-        <span className={live ? "live-status" : ""}>
+        <span className={following ? "live-status" : ""}>
           {loading && <Loader2 className="spin" size={14} />}
-          {live ? "Live updates every 2 seconds" : "Live updates stopped"}
+          {run && <RunBadge run={run} />}
+          {run ? describeRun(run) : following ? "Live updates every 2 seconds" : "Live updates paused"}
         </span>
-        <Btn type="button" onClick={() => { if (!live) setLoading(true); setLive(!live); }}>
-          {live ? <Square size={15} /> : <Play size={15} />}
-          {live ? "Stop live" : "Start live"}
-        </Btn>
+        <div className="actions">
+          {!finished && (
+            <Btn type="button" onClick={() => { if (!live) setLoading(true); setLive(!live); }}>
+              {live ? <Pause size={15} /> : <Play size={15} />}
+              {live ? "Pause updates" : "Resume updates"}
+            </Btn>
+          )}
+          {canStop && run?.status === "running" && (
+            <Btn type="button" className="danger" disabled={stopping} onClick={stopRun}>
+              <Square size={15} />
+              {stopping ? "Stopping…" : "Stop run"}
+            </Btn>
+          )}
+        </div>
       </div>
+      {error && <div className="alert live-log-alert">{error}</div>}
       <pre
         ref={view}
         onScroll={(event) => {
           const log = event.currentTarget;
-          following.current = log.scrollHeight - log.scrollTop - log.clientHeight < 24;
+          atEnd.current = log.scrollHeight - log.scrollTop - log.clientHeight < 24;
         }}
       >{body}</pre>
     </Modal>

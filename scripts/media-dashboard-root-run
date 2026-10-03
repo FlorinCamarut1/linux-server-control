@@ -2,6 +2,9 @@
 set -eu
 
 paths_file=/etc/media-dashboard/root-script-paths
+# The runs started with an ID, so that the dashboard can stop them. Only root
+# writes here, and stop signals nothing but what a run recorded.
+runs_dir=/run/media-dashboard-root-run
 
 inside_allowed_path() {
   script_path=$1
@@ -14,12 +17,38 @@ inside_allowed_path() {
   return 1
 }
 
+valid_id() {
+  case "$1" in
+    ""|*[!A-Za-z0-9-]*) return 1 ;;
+  esac
+  [ "${#1}" -le 64 ]
+}
+
+# A process's start time, which tells it from a later process with the same ID.
+# The process name, in parentheses, may contain spaces; the fields follow it.
+started_at() {
+  stat=$(cat "/proc/$1/stat" 2>/dev/null) || return 0
+  set -f
+  set -- ${stat##*) }
+  set +f
+  printf '%s\n' "${20-}"
+}
+
 case "${1-}" in
   status)
-    [ "$#" -eq 1 ] && [ -s "$paths_file" ]
+    [ "$#" -eq 1 ] && [ -s "$paths_file" ] || exit 1
+    # What this helper can do besides running scripts.
+    if command -v setsid >/dev/null 2>&1; then echo stop; fi
     ;;
   run)
     [ "$#" -ge 2 ] || exit 64
+    run_id=
+    if [ "$2" = --id ]; then
+      [ "$#" -ge 4 ] || exit 64
+      run_id=$3
+      valid_id "$run_id" || exit 64
+      shift 2
+    fi
     requested=$2
     shift 2
     case "$requested" in /*.sh) ;; *) exit 64 ;; esac
@@ -27,7 +56,39 @@ case "${1-}" in
     script_path=$(realpath -e -- "$requested")
     [ -f "$script_path" ] || exit 64
     inside_allowed_path "$script_path" || exit 77
-    exec /bin/bash "$script_path" "$@"
+    if [ -z "$run_id" ] || ! command -v setsid >/dev/null 2>&1; then
+      exec /bin/bash "$script_path" "$@"
+    fi
+    # The script runs in a session of its own, so that stopping it reaches
+    # every process it started, and is recorded under the run's ID.
+    mkdir -p -m 0700 "$runs_dir"
+    setsid /bin/bash "$script_path" "$@" &
+    pid=$!
+    printf '%s %s\n' "$pid" "$(started_at "$pid")" > "$runs_dir/$run_id"
+    # A signal that sudo passes on reaches the script as well.
+    trap 'kill -s TERM -- "-$pid" 2>/dev/null || :' HUP INT TERM
+    while :; do
+      code=0
+      # The shell's own report of a killed script stays out of the run's log.
+      wait "$pid" 2>/dev/null || code=$?
+      # A trapped signal interrupts wait, above 128, while the script still runs.
+      [ "$code" -gt 128 ] && kill -0 "$pid" 2>/dev/null || break
+    done
+    rm -f "$runs_dir/$run_id"
+    exit "$code"
+    ;;
+  stop)
+    [ "$#" -ge 2 ] && [ "$#" -le 3 ] || exit 64
+    valid_id "$2" || exit 64
+    signal=${3-TERM}
+    case "$signal" in TERM|KILL) ;; *) exit 64 ;; esac
+    record=$runs_dir/$2
+    [ -f "$record" ] || exit 0
+    read -r pid started < "$record" || exit 0
+    case "$pid" in ""|*[!0-9]*) exit 0 ;; esac
+    # Once the run has ended, its process ID may belong to another process.
+    [ -n "$started" ] && [ "$(started_at "$pid")" = "$started" ] || exit 0
+    kill -s "$signal" -- "-$pid" 2>/dev/null || :
     ;;
   *)
     exit 64

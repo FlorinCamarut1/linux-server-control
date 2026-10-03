@@ -23,9 +23,10 @@ On every page, the **⋯** button at the end of a row opens what can be done wit
 
 ## Signing in
 
-The first time the dashboard starts, it prints a one-time setup token to its logs:
+The installer ends with the dashboard's address and a one-time setup token. The dashboard also prints the token to its logs until setup is done:
 
 ```bash
+cd ~/linux-server-control
 docker compose logs dashboard | grep "setup token"
 ```
 
@@ -74,6 +75,8 @@ Shell scripts you approve can be run from the dashboard and followed live.
 - **Add script** registers an existing `.sh` file from the allowed folders; **New custom script** writes a new one.
 - Group scripts in folders, and give a script **run options** (preset arguments) to choose from when you run it.
 - **Run** starts the script and opens its live log. Scripts can run as the SSH user or, with the [optional root helpers](../INSTALL.md#optional-run-scripts-and-schedules-as-root), as root. A run log keeps the first 10 MB of output.
+- While a script runs, its row shows **Running**, and its log says since when. **Stop run**, in the log or in the script's **⋯** menu, ends the script and every process it started, after asking. A stopped run is recorded as *stopped*, not as a failure; a script that ignores the request is ended after 10 seconds.
+- A script can have a **time limit** (in **Edit**). A run that takes longer is stopped and counts as failed, so alerts and notifications report it.
 - **Schedule**, **Edit** and **Delete** are in the script's **⋯** menu. Deleting a script or a folder removes it from the dashboard, with its schedules; the `.sh` files stay on the server.
 
 ![Scripts grouped in folders, with the menu of one script open](screenshots/scripts.jpg)
@@ -113,7 +116,7 @@ A plug that is away for a while can be paused instead of deleted: edit it and cl
 
 ## History
 
-Every script run from the dashboard, with its status, duration, arguments and full log, and every run of a schedule. Search and filter by status.
+Every script run from the dashboard, with its status (running, success, failed or stopped), duration, arguments and full log, and every run of a schedule. Search and filter by status. A run that is still going can be stopped from its log.
 
 ![History of script and scheduled runs](screenshots/history.jpg)
 
@@ -141,9 +144,9 @@ To create a Discord webhook: in Discord, open the channel's settings, then **Int
 
 ## On a phone
 
-The dashboard adapts to small screens: the menu becomes a row you can scroll, and tables and charts fit the width. Add it to your home screen from the browser menu for quick access.
+The dashboard adapts to small screens. The pages are in the menu behind the **☰** button of the top bar, which stays in view while you scroll; health tiles sit two to a row, and tables and charts fit the width. Add the dashboard to your home screen from the browser menu for quick access.
 
-<img src="screenshots/mobile.png" alt="Overview on a phone" width="360">
+<img src="screenshots/mobile.png" alt="Overview on a phone" width="300"> <img src="screenshots/mobile-menu.png" alt="The menu of pages, opened from the top bar" width="300">
 
 ## Troubleshooting
 
@@ -159,7 +162,7 @@ The dashboard adapts to small screens: the menu becomes a row you can scroll, an
 
 **A notification channel shows "Last delivery failed".** Use **Test** to see the exact error. A removed Discord webhook answers HTTP 404: create a new one and paste its URL when editing the channel.
 
-**Updating.** On the server, in the dashboard's folder:
+**Updating.** Run the [installer](../INSTALL.md#install-with-one-command) again, or, on the server, in the dashboard's folder:
 
 ```bash
 docker compose pull

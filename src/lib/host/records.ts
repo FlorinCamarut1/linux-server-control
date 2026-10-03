@@ -10,6 +10,8 @@ export type Script = {
   runAs?: "user" | "root";
   argumentHint?: string;
   runOptions?: RunOption[];
+  // A run that takes longer is stopped and counts as failed; absent for no limit.
+  timeLimitMinutes?: number;
 };
 export type RunOption = {
   label: string;
@@ -26,10 +28,14 @@ export type Schedule = {
   runAs?: "user" | "root";
   command?: string;
 };
+// A run someone stopped is "stopped", not "failed": it needs no attention, and
+// stoppedBy names the account. A run its script's time limit stopped failed,
+// and has timedOut.
 export type ScriptRun = {
   id: string; scriptId: string; scriptName: string; startedAt: string;
   completedAt?: string; exitCode?: number; durationMs?: number; arguments: string;
-  status: "running" | "success" | "failed"; logPath: string;
+  status: "running" | "success" | "failed" | "stopped"; logPath: string;
+  stoppedBy?: string; timedOut?: boolean;
 };
 export type AlertRule = {
   id: string; name: string; metric: "temperature" | "cpu" | "ram" | "disk" | "storage" | "failedScripts" | "stoppedContainers";

@@ -277,6 +277,8 @@ export function UsersPanel({ current }: { current: string }) {
           <small>{user.owner ? "Owner, created at setup" : user.created ? `Created ${formatCreated(user.created)}` : ""}</small>
         </div>
         <span className={`badge ${user.role === "admin" ? "up" : "root"}`}>{ROLE_LABELS[user.role]}</span>
+        {/* The owner has no menu; the space keeps the badges in one column. */}
+        {user.owner && <span className="menu-spacer" aria-hidden="true" />}
         {!user.owner && <RowMenu label={`Actions for the account ${user.username}`} items={[
           { label: "Edit", icon: <Pencil size={15} />, onSelect: () => setEditing(user) },
           user.username !== current && {

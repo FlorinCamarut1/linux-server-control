@@ -36,8 +36,9 @@ function loadModule(entry, globals, modules = () => undefined) {
 
 // Loads src/lib/server.ts in its own context with a fresh DATA_DIR. Host commands
 // never run: `host(args, input)` answers them with { stdout, stderr, code } or a
-// thrown error, and every command is recorded in `commands`.
-export function loadServer({ env = {}, host = () => ({ stdout: "" }), delay = 0 } = {}) {
+// thrown error, and every command is recorded in `commands`. With
+// realProcesses, commands run for real instead, for tests of running scripts.
+export function loadServer({ env = {}, host = () => ({ stdout: "" }), delay = 0, realProcesses = false } = {}) {
   const data = mkdtempSync(path.join(tmpdir(), "lsc-test-"));
   const commands = [];
   const childProcess = {
@@ -62,17 +63,20 @@ export function loadServer({ env = {}, host = () => ({ stdout: "" }), delay = 0 
       };
       return { stdin: { on() {}, end: answer } };
     },
-    // A process whose output comes from `host` once its stdin is closed.
+    // A process whose output comes from `host` once its stdin is closed. A
+    // process that never reads its stdin (a script run) keeps running.
     spawn(command, args) {
       const child = new EventEmitter();
+      const argv = [command, ...args];
+      const entry = { argv, input: undefined };
+      commands.push(entry);
       child.stdout = new EventEmitter();
       child.stderr = new EventEmitter();
       child.kill = () => {};
       child.stdin = {
         on() {},
         end(input) {
-          const argv = [command, ...args];
-          commands.push({ argv, input });
+          entry.input = input;
           setTimeout(() => {
             let result;
             try { result = host(argv, input) ?? {}; }
@@ -90,7 +94,7 @@ export function loadServer({ env = {}, host = () => ({ stdout: "" }), delay = 0 
     Buffer, setTimeout, clearTimeout, setInterval, clearInterval,
     console: { ...console, error() {} },
     process: { env: { DATA_DIR: data, SSH_TARGET: "", ALLOWED_PATHS: "/srv/scripts", SCRIPT_ROOT: "/srv/scripts", MONITORED_PATHS: "/srv/example", ...env } },
-  }, (name) => (name === "node:child_process" ? childProcess : undefined));
+  }, (name) => (name === "node:child_process" && !realProcesses ? childProcess : undefined));
   const file = (name) => path.join(data, name + ".json");
   return {
     server, commands, data,

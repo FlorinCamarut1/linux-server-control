@@ -43,13 +43,15 @@ export function metricsSummary() {
   const samples = metricSamples();
   return { latest: samples.at(-1) ?? null, count: samples.length, intervalMinutes: METRIC_INTERVAL_MS / 60000 };
 }
+// A storage path without its trailing slashes; "/" itself stays.
+export const cleanStoragePath = (value: string) => value.trim().replace(/(.)\/+$/, "$1");
 export function monitoredPaths() {
   const configured = read<string[]>("monitored-paths", []);
   if (configured.length) return configured;
-  return [...new Set((process.env.MONITORED_PATHS || "/mnt/storage").split(",").map((item) => item.trim().replace(/\/$/, "")).filter((item) => item.startsWith("/")))];
+  return [...new Set((process.env.MONITORED_PATHS || "/mnt/storage").split(",").map(cleanStoragePath).filter((item) => item.startsWith("/")))];
 }
 export async function addMonitoredPath(input: string) {
-  const requested = input.trim().replace(/\/$/, "");
+  const requested = cleanStoragePath(input);
   if (!requested.startsWith("/") || /[\r\n\0]/.test(requested)) throw Error("Enter an absolute storage path");
   let resolved: string;
   try {
@@ -152,7 +154,8 @@ const PREFLIGHT_SCRIPT = [
   'logs=$1; shift',
   'if mkdir -p -- "$logs" 2>/dev/null && [ -w "$logs" ]; then echo logs=ok; else echo logs=missing; fi',
   'for folder in "$@"; do if [ -d "$folder" ]; then echo "path:$folder=ok"; else echo "path:$folder=missing"; fi; done',
-  `if sudo -n ${ROOT_SCRIPT_HELPER} status >/dev/null 2>&1; then echo rootrun=ok; else echo rootrun=missing; fi`,
+  // A helper that can stop runs lists "stop" in its status; older ones print nothing.
+  `if out=$(sudo -n ${ROOT_SCRIPT_HELPER} status 2>/dev/null); then case "$out" in *stop*) echo rootrun=ok ;; *) echo rootrun=old ;; esac; else echo rootrun=missing; fi`,
   `if sudo -n ${ROOT_CRON_HELPER} list >/dev/null 2>&1; then echo rootcron=ok; else echo rootcron=missing; fi`,
 ].join("; ");
 export type PreflightCheck = { id: string; label: string; status: "ok" | "warning" | "error" | "info"; detail: string };
@@ -183,8 +186,9 @@ export async function preflight(): Promise<{ host: string; checks: PreflightChec
     const found = values.get(`path:${folder}`) === "ok";
     checks.push({ id: `path:${folder}`, label: `Allowed path ${folder}`, status: found ? "ok" : "warning", detail: found ? "The folder exists." : "This folder does not exist on the server." });
   }
-  const rootRun = values.get("rootrun") === "ok", rootCron = values.get("rootcron") === "ok";
-  checks.push({ id: "root", label: "Root helpers", status: "info", detail: rootRun && rootCron ? "Root scripts and root schedules are enabled." : rootRun ? "Root scripts are enabled; root schedules are not." : rootCron ? "Only the root cron helper is installed; root schedules also need the root script helper." : "Not installed. Scripts and schedules run as the SSH user." });
+  const rootRun = values.get("rootrun") === "ok" || values.get("rootrun") === "old", rootCron = values.get("rootcron") === "ok";
+  const outdated = values.get("rootrun") === "old" ? " The root script helper is an older version that cannot stop a running root script or enforce a time limit; run install-root-script-access.sh again to update it." : "";
+  checks.push({ id: "root", label: "Root helpers", status: "info", detail: (rootRun && rootCron ? "Root scripts and root schedules are enabled." : rootRun ? "Root scripts are enabled; root schedules are not." : rootCron ? "Only the root cron helper is installed; root schedules also need the root script helper." : "Not installed. Scripts and schedules run as the SSH user.") + outdated });
   return { host, checks };
 }
 // Turns Docker's error into what the administrator has to do about it.

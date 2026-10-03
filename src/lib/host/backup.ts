@@ -3,8 +3,8 @@ import { audit, read, save } from "./store";
 import { type ServerSettings, serverSettings, validateServerSettings } from "./ssh";
 import { type Script, RECORD_ID, alertRules, folders, oneLine, schedules, scripts } from "./records";
 import { normalizeSchedule, rootSchedulesAvailable, syncCron } from "./cron";
-import { monitoredPaths, normalizeAlert } from "./monitor";
-import { parseRunOptions } from "./scripts";
+import { cleanStoragePath, monitoredPaths, normalizeAlert } from "./monitor";
+import { parseRunOptions, parseTimeLimit } from "./scripts";
 export function exportConfiguration() {
   return { version: 1, exportedAt: new Date().toISOString(), scripts: scripts(), folders: folders(), schedules: schedules(), devices: read("devices", {}), alerts: alertRules(), serverSettings: serverSettings(), monitoredPaths: monitoredPaths() };
 }
@@ -31,6 +31,7 @@ function restoredScript(input: Record<string, unknown>, roots: string[], knownFo
     runAs: input.runAs === "root" ? "root" : "user",
     argumentHint: oneLine(input.argumentHint, 200) || undefined,
     runOptions: parseRunOptions(input.runOptions),
+    timeLimitMinutes: parseTimeLimit(input.timeLimitMinutes),
   };
 }
 const objects = (value: unknown, label: string) => {
@@ -68,9 +69,9 @@ export async function restoreConfiguration(payload: Record<string, unknown>) {
   if (payload.monitoredPaths !== undefined) {
     if (!Array.isArray(payload.monitoredPaths)) throw Error("Invalid configuration backup: monitored paths");
     restoredPaths = [...new Set(payload.monitoredPaths.map((item) => {
-      const storagePath = oneLine(item, 4096).replace(/\/$/, "");
-      if (!storagePath.startsWith("/")) throw Error("Invalid configuration backup: monitored paths must be absolute");
-      return storagePath;
+      const restored = cleanStoragePath(oneLine(item, 4096));
+      if (!restored.startsWith("/")) throw Error("Invalid configuration backup: monitored paths must be absolute");
+      return restored;
     }))];
   }
   const previousUsers = schedules().map((item) => item.runAs || "user");
