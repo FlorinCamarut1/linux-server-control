@@ -253,7 +253,7 @@ A first helper installed by an earlier version of the dashboard cannot stop root
 
 ## Optional: HTTPS
 
-The dashboard is served over plain HTTP, which is acceptable on a home network you trust. For HTTPS, the Compose file includes a Caddy service that is off by default:
+The dashboard is served over plain HTTP, which is acceptable on a home network you trust. HTTPS also lets Android phones and computers [install it as an app](docs/USER-GUIDE.md#on-a-phone). For HTTPS, the Compose file includes a Caddy service that is off by default:
 
 ```bash
 cd ~/linux-server-control

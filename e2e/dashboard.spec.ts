@@ -42,6 +42,22 @@ test("every page opens without a script error", async ({ page }) => {
   expect(errors).toEqual([]);
 });
 
+test("the dashboard can be added to a home screen as an app", async ({ page, playwright, baseURL }) => {
+  await page.goto("/");
+  const manifestUrl = await page.locator('link[rel="manifest"]').getAttribute("href");
+  const appleIcon = await page.locator('link[rel="apple-touch-icon"]').getAttribute("href");
+  // Browsers fetch the manifest and the icons without the sign-in cookies.
+  const anonymous = await playwright.request.newContext({ baseURL });
+  const manifest = await (await anonymous.get(manifestUrl!)).json();
+  expect(manifest).toMatchObject({ name: "Linux Server Control", start_url: "/", display: "standalone" });
+  for (const icon of [...manifest.icons.map((icon: { src: string }) => icon.src), appleIcon!]) {
+    const response = await anonymous.get(icon);
+    expect(response.ok(), icon).toBe(true);
+    expect(response.headers()["content-type"], icon).toBe("image/png");
+  }
+  await anonymous.dispose();
+});
+
 test("settings check what the server provides", async ({ page }) => {
   await page.goto("/");
   await open(page, "Settings");
@@ -458,6 +474,17 @@ test.describe("on a phone", () => {
       const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
       expect(overflow, `${name} is wider than the screen`).toBeLessThanOrEqual(1);
     }
+  });
+
+  test("held sideways, the side menu scrolls to every page", async ({ page }) => {
+    await page.setViewportSize({ width: 844, height: 390 });
+    await page.goto("/");
+    await expect(heading(page, "Overview")).toBeVisible();
+    const settings = page.getByRole("navigation").getByRole("button", { name: "Settings", exact: true });
+    await settings.scrollIntoViewIfNeeded();
+    await expect(settings).toBeInViewport();
+    await settings.click();
+    await expect(heading(page, "Settings")).toBeVisible();
   });
 });
 

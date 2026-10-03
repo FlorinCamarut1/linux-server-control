@@ -19,6 +19,7 @@ rmSync(tmp, { recursive: true, force: true });
 // tests must never read them.
 cpSync(standalone, app, { recursive: true, filter: (source) => ![".env", "data"].includes(path.relative(standalone, source)) });
 cpSync(path.join(root, ".next", "static"), path.join(app, ".next", "static"), { recursive: true });
+cpSync(path.join(root, "public"), path.join(app, "public"), { recursive: true });
 const bin = path.join(tmp, "bin");
 for (const folder of [data, files, logs, bin]) mkdirSync(folder, { recursive: true });
 writeFileSync(path.join(files, "notes.txt"), "A file for the browser tests.\n");

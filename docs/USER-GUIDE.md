@@ -151,9 +151,17 @@ To create a Discord webhook: in Discord, open the channel's settings, then **Int
 
 ## On a phone
 
-The dashboard adapts to small screens. The pages are in the menu behind the **☰** button of the top bar, which stays in view while you scroll; health tiles sit two to a row, and tables and charts fit the width. Add the dashboard to your home screen from the browser menu for quick access.
+The dashboard adapts to small screens. The pages are in the menu behind the **☰** button of the top bar, which stays in view while you scroll; health tiles sit two to a row, and tables and charts fit the width.
 
 <img src="screenshots/mobile.png" alt="Overview on a phone" width="300"> <img src="screenshots/mobile-menu.png" alt="The menu of pages, opened from the top bar" width="300">
+
+Added to the home screen, the dashboard opens as an app of its own: with its icon, on the whole screen, without the browser's address bar.
+
+- **iPhone and iPad:** open the dashboard in Safari, then **Share → Add to Home Screen**.
+- **Android:** in Chrome, **⋮ → Add to Home screen**, then **Install**.
+- **A computer:** Chrome and Edge show **Install** in the address bar.
+
+Android and computers install it as an app only over [HTTPS](../INSTALL.md#optional-https); over plain HTTP they add a shortcut that opens the browser. An iPhone installs it over either. The app may keep its sign-in apart from the browser's: if it opens on the sign-in page, sign in again, with an access code if it asks for one.
 
 ## Troubleshooting
 

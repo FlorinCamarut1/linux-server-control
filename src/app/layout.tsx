@@ -12,10 +12,16 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+// The manifest (manifest.ts) and the apple-icon file make it an installable app.
+// On a phone's home screen it fills the screen under a translucent status bar,
+// which the page keeps clear of with the safe-area insets. The icons are the
+// icon, apple-icon and favicon files next to this one; setting icons here too
+// would replace them.
 export const metadata: Metadata = {
   title: "Linux Server Control",
   description: "Local dashboard for containers, scripts, and scheduled jobs",
-  icons: { icon: "/icon.svg" },
+  applicationName: "Linux Server Control",
+  appleWebApp: { title: "Server Control", statusBarStyle: "black-translucent" },
 };
 
 // maximum-scale stops phones from zooming in when a form field is focused and
@@ -24,6 +30,7 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   maximumScale: 1,
+  viewportFit: "cover",
   themeColor: "#090c10",
   colorScheme: "dark",
 };

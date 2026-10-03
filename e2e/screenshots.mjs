@@ -39,6 +39,7 @@ const MINUTE = 60000, HOUR = 60 * MINUTE, DAY = 24 * HOUR;
 rmSync(tmp, { recursive: true, force: true });
 cpSync(standalone, app, { recursive: true, filter: (source) => ![".env", "data"].includes(path.relative(standalone, source)) });
 cpSync(path.join(root, ".next", "static"), path.join(app, ".next", "static"), { recursive: true });
+cpSync(path.join(root, "public"), path.join(app, "public"), { recursive: true });
 for (const folder of [data, bin, out]) mkdirSync(folder, { recursive: true });
 
 // The same numbers on every run, so the pictures only change when the page does.
@@ -371,6 +372,36 @@ async function main() {
     await open(medium, "Containers");
     await picture(medium, "tablet-containers.png");
     await tablet.close();
+    // Opened from a phone's home screen: the page is drawn under the status bar
+    // and above the home indicator, which Chromium stands in for with insets.
+    const homeScreen = await browser.newContext({ ...desktop, viewport: { width: 390, height: 844 }, storageState: await context.storageState(), isMobile: true, hasTouch: true });
+    const installed = await homeScreen.newPage();
+    const cdp = await homeScreen.newCDPSession(installed);
+    const insets = (top, bottom, side) => cdp.send("Emulation.setSafeAreaInsetsOverride", { insets: { top, bottom, left: side, right: side } });
+    await insets(59, 34, 0);
+    await installed.goto("/");
+    await installed.getByRole("heading", { name: "Overview", level: 1 }).waitFor();
+    await charts(installed);
+    await picture(installed, "home-screen.png");
+    await installed.getByRole("button", { name: "Open the menu" }).click();
+    await picture(installed, "home-screen-menu.png");
+    await installed.keyboard.press("Escape");
+    await open(installed, "Containers");
+    await installed.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+    await picture(installed, "home-screen-end.png");
+    await installed.evaluate(() => localStorage.setItem("lsc-theme", "light"));
+    await installed.goto("/");
+    await charts(installed);
+    await picture(installed, "home-screen-light.png");
+    await installed.evaluate(() => localStorage.setItem("lsc-theme", "dark"));
+    await installed.setViewportSize({ width: 844, height: 390 });
+    await insets(0, 21, 59);
+    await installed.goto("/");
+    await charts(installed);
+    await picture(installed, "home-screen-landscape.png");
+    await installed.locator("aside").evaluate((element) => element.scrollTo(0, element.scrollHeight));
+    await picture(installed, "home-screen-landscape-menu.png");
+    await homeScreen.close();
     // A run in progress, in its log with the button that stops it, and the
     // form of its script, which has a time limit.
     await post("script/save", {
