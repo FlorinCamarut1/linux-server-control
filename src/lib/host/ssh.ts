@@ -1,6 +1,7 @@
 // The connection settings and the one way commands reach the managed server.
 import { execFile } from "node:child_process";
 import { read, save } from "./store";
+import { t } from "../i18n";
 // The root helpers installed by scripts/install-root-*.sh.
 export const ROOT_CRON_HELPER = "/usr/local/sbin/media-dashboard-root-cron";
 export const ROOT_SCRIPT_HELPER = "/usr/local/sbin/media-dashboard-root-run";
@@ -26,7 +27,7 @@ const defaultServerSettings = (): ServerSettings => {
 const validPort = (value: number) => Number.isInteger(value) && value >= 1 && value <= 65535;
 function cleanPath(value: string) {
   const cleaned = value.trim().replace(/\/$/, "");
-  if (!cleaned.startsWith("/") || /[\r\n\0]/.test(cleaned)) throw Error("Use absolute paths only");
+  if (!cleaned.startsWith("/") || /[\r\n\0]/.test(cleaned)) throw Error(t("Use absolute paths only"));
   return cleaned;
 }
 export function serverSettings(): ServerSettings {
@@ -50,14 +51,14 @@ export function validateServerSettings(input: Partial<ServerSettings>): ServerSe
   const current = serverSettings();
   const sshTarget = (input.sshTarget ?? current.sshTarget).trim();
   if (sshTarget && !/^[a-zA-Z0-9_.-]+@[a-zA-Z0-9_.:-]+$/.test(sshTarget))
-    throw Error("SSH target must look like user@host");
+    throw Error(t("SSH target must look like user@host"));
   const sshPort = Number(input.sshPort ?? current.sshPort);
-  if (!validPort(sshPort)) throw Error("SSH port must be between 1 and 65535");
+  if (!validPort(sshPort)) throw Error(t("SSH port must be between 1 and 65535"));
   const scriptRoot = cleanPath(input.scriptRoot ?? current.scriptRoot);
   const allowedPaths = (input.allowedPaths ?? current.allowedPaths).map(cleanPath);
-  if (!allowedPaths.length) throw Error("Keep at least one allowed path");
+  if (!allowedPaths.length) throw Error(t("Keep at least one allowed path"));
   const retention = Number(input.metricsRetentionDays ?? current.metricsRetentionDays);
-  if (!Number.isInteger(retention) || retention < 1 || retention > 365) throw Error("Metric retention must be between 1 and 365 days");
+  if (!Number.isInteger(retention) || retention < 1 || retention > 365) throw Error(t("Metric retention must be between 1 and 365 days"));
   return { sshTarget, sshPort, scriptRoot, allowedPaths: [...new Set(allowedPaths)], remoteLogs: cleanPath(input.remoteLogs ?? current.remoteLogs), metricsRetentionDays: retention };
 }
 export function allowedRoots() { return serverSettings().allowedPaths; }
@@ -132,7 +133,7 @@ export function runAsync(args: string[], timeout = 30000, input?: string) {
       }
       // Node also ends a command whose output passes maxBuffer, which is not a timeout.
       const tooLong = (error as NodeJS.ErrnoException).code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER";
-      reject(new CommandError(tooLong ? "The server command returned too much output" : error.killed ? "The server command timed out" : detail || "The server command failed"));
+      reject(new CommandError(tooLong ? t("The server command returned too much output") : error.killed ? t("The server command timed out") : detail || t("The server command failed")));
     });
     child?.stdin?.on("error", () => {});
     child?.stdin?.end(input ?? "");
@@ -142,11 +143,11 @@ export const run = runAsync;
 // Checks the SSH user's sudo password on the server: sudo asks for it even when
 // it was given recently (-k), and forgets it again afterwards.
 export async function verifySudoPassword(password: string) {
-  if (!password || password.length > 1024 || /[\r\n\0]/.test(password)) throw Error("Enter the sudo password");
+  if (!password || password.length > 1024 || /[\r\n\0]/.test(password)) throw Error(t("Enter the sudo password"));
   try {
     await runAsync(["sudo", "-S", "-k", "-p", "", "-v"], 20000, password + "\n");
   } catch {
-    throw Error("Wrong sudo password, or this account cannot use sudo on the server");
+    throw Error(t("Wrong sudo password, or this account cannot use sudo on the server"));
   } finally {
     await runAsync(["sudo", "-k"], 10000).catch(() => "");
   }

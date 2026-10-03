@@ -1,7 +1,8 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "@/lib/client-api";
-import { appConfirm, appPrompt, Btn, Panel, formatBytes, Modal, RowMenu } from "@/components/ui";
+import { appConfirm, appPrompt, Btn, Panel, formatBytes, Modal, RowMenu, rich } from "@/components/ui";
+import { t } from "@/lib/i18n";
 import type { ScriptBrowserData, FileBrowserData } from "@/lib/types";
 import {
   ClipboardPaste,
@@ -61,7 +62,7 @@ export function useDirectory<T>(endpoint: string, directory: string, includeSize
       }
     } catch (reason) {
       if (current === generation.current)
-        setError(reason instanceof Error ? reason.message : "Could not read folder");
+        setError(reason instanceof Error ? reason.message : t("Could not read folder"));
     } finally {
       if (current === generation.current) setLoading(false);
     }
@@ -86,7 +87,7 @@ export function useDirectory<T>(endpoint: string, directory: string, includeSize
 const PICKER_PAGE = { limit: 1000 };
 function PickerOverflow({ data }: { data: { entries: unknown[]; total?: number } | null }) {
   if (!data?.total || data.total <= data.entries.length) return null;
-  return <div className="file-browser-empty">Showing the first {data.entries.length} of {data.total} items. Use the Files page to reach the rest.</div>;
+  return <div className="file-browser-empty">{t("Showing the first {shown} of {total} items. Use the Files page to reach the rest.", { shown: data.entries.length, total: data.total })}</div>;
 }
 export function currentLocation(data: FileBrowserData | ScriptBrowserData | null, directory: string) {
   const current = directory || data?.path || "";
@@ -110,7 +111,7 @@ export function FileExplorer() {
   // After 15 minutes the server stops showing them; the switch follows.
   if (showHidden && data?.hiddenRequested && !data.hidden) {
     setShowHidden(false);
-    setHiddenNote("Hidden files are hidden again after 15 minutes. Show them again with the sudo password.");
+    setHiddenNote(t("Hidden files are hidden again after 15 minutes. Show them again with the sudo password."));
   }
   async function toggleHidden(show: boolean) {
     setHiddenNote("");
@@ -135,17 +136,17 @@ export function FileExplorer() {
       if (action === "move" || action === "delete") setClipboard(null);
       await load();
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not change file");
+      setError(reason instanceof Error ? reason.message : t("Could not change file"));
     } finally { setOpening(""); }
   }
   async function removeEntry(entry: FileBrowserData["entries"][number]) {
     const description = entry.type === "directory"
-      ? `Delete folder ${entry.path} and ALL its contents? This permanently deletes files from the server.`
-      : `Delete file ${entry.path}? This cannot be undone.`;
-    if (await appConfirm(description, `Delete ${entry.type}`, "Delete", true)) await operate("delete", entry.path);
+      ? t("Delete folder {path} and ALL its contents? This permanently deletes files from the server.", { path: entry.path })
+      : t("Delete file {path}? This cannot be undone.", { path: entry.path });
+    if (await appConfirm(description, entry.type === "directory" ? t("Delete folder") : t("Delete file"), t("Delete"), true)) await operate("delete", entry.path);
   }
   async function renameEntry(entry: FileBrowserData["entries"][number]) {
-    const name = (await appPrompt(`Rename ${entry.name} to:`, entry.name, "Rename item", "Rename"))?.trim();
+    const name = (await appPrompt(t("Rename {name} to:", { name: entry.name }), entry.name, t("Rename item"), t("Rename")))?.trim();
     if (name && name !== entry.name) await operate("rename", entry.path, "", name);
   }
   async function paste() {
@@ -158,38 +159,38 @@ export function FileExplorer() {
       const result = await api("file/read", { path, hidden: showHidden });
       setEditor(result);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not open file");
+      setError(reason instanceof Error ? reason.message : t("Could not open file"));
     } finally {
       setOpening("");
     }
   }
   async function create(kind: "file" | "folder") {
     if (!data) return;
-    const name = (await appPrompt(`Enter the new ${kind} name:`, "", `New ${kind}`, `Create ${kind}`))?.trim();
+    const name = (kind === "folder" ? await appPrompt(t("Enter the new folder name:"), "", t("New folder"), t("Create folder")) : await appPrompt(t("Enter the new file name:"), "", t("New file"), t("Create file")))?.trim();
     if (!name) return;
     try { setOpening(name); await api("file/create", { path: data.path, name, kind, hidden: showHidden }); await load(); }
-    catch (reason) { setError(reason instanceof Error ? reason.message : "Could not create item"); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : t("Could not create item")); }
     finally { setOpening(""); }
   }
   return (
     <>
       <Panel
-        title="File explorer"
-        note="Browse and edit files inside the allowed folders"
+        title={t("File explorer")}
+        note={t("Browse and edit files inside the allowed folders")}
         extra={
           <div className="actions">
             {(data?.roots.length || 0) > 1 && (
-              <select className="file-explorer-roots" aria-label="Location" value={currentLocation(data, directory)} onChange={(event) => navigate(event.target.value)}>
+              <select className="file-explorer-roots" aria-label={t("Location")} value={currentLocation(data, directory)} onChange={(event) => navigate(event.target.value)}>
                 {data?.roots.map((root) => <option key={root} value={root}>{root}</option>)}
               </select>
             )}
-            <div className="file-view-toggle" aria-label="File view">
+            <div className="file-view-toggle" aria-label={t("File view")}>
               <button
                 type="button"
                 className={view === "grid" ? "active" : ""}
-                aria-label="Grid view"
+                aria-label={t("Grid view")}
                 aria-pressed={view === "grid"}
-                title="Grid view"
+                title={t("Grid view")}
                 onClick={() => setView("grid")}
               >
                 <LayoutGrid size={16} />
@@ -197,20 +198,20 @@ export function FileExplorer() {
               <button
                 type="button"
                 className={view === "list" ? "active" : ""}
-                aria-label="List view"
+                aria-label={t("List view")}
                 aria-pressed={view === "list"}
-                title="List view"
+                title={t("List view")}
                 onClick={() => setView("list")}
               >
                 <LayoutList size={16} />
               </button>
             </div>
-            <Btn disabled={!clipboard || !!opening || !data} onClick={paste} title={clipboard ? `Paste ${clipboard.name}` : "Copy or cut a file first"}>
-              <ClipboardPaste size={16} />Paste
+            <Btn disabled={!clipboard || !!opening || !data} onClick={paste} title={clipboard ? t("Paste {name}", { name: clipboard.name }) : t("Copy or cut a file first")}>
+              <ClipboardPaste size={16} />{t("Paste")}
             </Btn>
-            <Btn disabled={!data || !!opening} onClick={() => create("folder")}><Folder size={16} />New folder</Btn>
-            <Btn disabled={!data || !!opening} onClick={() => create("file")}><FileTerminal size={16} />New file</Btn>
-            <Btn onClick={load}><RefreshCw size={16} />Refresh</Btn>
+            <Btn disabled={!data || !!opening} onClick={() => create("folder")}><Folder size={16} />{t("New folder")}</Btn>
+            <Btn disabled={!data || !!opening} onClick={() => create("file")}><FileTerminal size={16} />{t("New file")}</Btn>
+            <Btn onClick={load}><RefreshCw size={16} />{t("Refresh")}</Btn>
           </div>
         }
       >
@@ -223,31 +224,31 @@ export function FileExplorer() {
           }}
         >
           <input
-            aria-label="Folder path"
+            aria-label={t("Folder path")}
             key={data?.path}
             name="path"
             defaultValue={data?.path || ""}
-            placeholder="/home/folder or /mnt/folder"
+            placeholder={t("/home/folder or /mnt/folder")}
             spellCheck={false}
           />
-          <Btn disabled={loading}>Go</Btn>
+          <Btn disabled={loading}>{t("Go")}</Btn>
         </form>
         <div className="file-explorer-tools">
-          <input aria-label="Search files" value={search} onChange={(event) => { setSearch(event.target.value); setOffset(0); }} placeholder="Search this folder" />
-          <select aria-label="Sort files" value={sort} onChange={(event) => { setSort(event.target.value); setOffset(0); }}><option value="name">Sort by name</option><option value="size">Sort by size</option></select>
+          <input aria-label={t("Search files")} value={search} onChange={(event) => { setSearch(event.target.value); setOffset(0); }} placeholder={t("Search this folder")} />
+          <select aria-label={t("Sort files")} value={sort} onChange={(event) => { setSort(event.target.value); setOffset(0); }}><option value="name">{t("Sort by name")}</option><option value="size">{t("Sort by size")}</option></select>
           <label className="file-hidden-toggle">
             <input type="checkbox" checked={showHidden} onChange={(event) => void toggleHidden(event.target.checked)} />
-            Show hidden files
+            {t("Show hidden files")}
           </label>
-          <small>Folder sizes are calculated on demand.</small>
+          <small>{t("Folder sizes are calculated on demand.")}</small>
         </div>
         {hiddenNote && <div className="alert">{hiddenNote}</div>}
         {data?.parent && (
           <button type="button" className="file-explorer-up" onClick={() => navigate(data.parent!)}>
-            <ChevronLeft size={16} /> Up one folder
+            <ChevronLeft size={16} /> {t("Up one folder")}
           </button>
         )}
-        {loading && !error && <div className="empty-state"><Loader2 className="spin" /><b>Loading files…</b></div>}
+        {loading && !error && <div className="empty-state"><Loader2 className="spin" /><b>{t("Loading files…")}</b></div>}
         {error && <div className="alert">{error}</div>}
         {!loading && !error && data?.entries.length ? (
           <div className={`file-explorer-grid ${view}`}>
@@ -262,20 +263,20 @@ export function FileExplorer() {
               <span title={entry.name}>{entry.name}</span>
               <small>
                 {entry.size === null
-                  ? (sizesLoading ? "Calculating size…" : "Size unavailable")
-                  : `${entry.type === "directory" ? "Folder uses" : "File size"}: ${formatBytes(entry.size)}`}
+                  ? (sizesLoading ? t("Calculating size…") : t("Size unavailable"))
+                  : entry.type === "directory" ? t("Folder uses: {size}", { size: formatBytes(entry.size) }) : t("File size: {size}", { size: formatBytes(entry.size) })}
               </small>
             </button>
             <div className="file-explorer-menu">
               <RowMenu
-                label={`Actions for ${entry.name}`}
+                label={t("Actions for {name}", { name: entry.name })}
                 disabled={!!opening}
                 items={[
-                  entry.type === "file" && { label: "Edit", icon: <FilePenLine size={15} />, onSelect: () => openFile(entry.path) },
-                  { label: "Copy", icon: <Copy size={15} />, onSelect: () => setClipboard({ path: entry.path, action: "copy", name: entry.name }) },
-                  { label: "Cut", icon: <Scissors size={15} />, onSelect: () => setClipboard({ path: entry.path, action: "move", name: entry.name }) },
-                  { label: "Rename", icon: <FilePenLine size={15} />, onSelect: () => renameEntry(entry) },
-                  { label: "Delete", icon: <Trash2 size={15} />, danger: true, onSelect: () => removeEntry(entry) },
+                  entry.type === "file" && { label: t("Edit"), icon: <FilePenLine size={15} />, onSelect: () => openFile(entry.path) },
+                  { label: t("Copy"), icon: <Copy size={15} />, onSelect: () => setClipboard({ path: entry.path, action: "copy", name: entry.name }) },
+                  { label: t("Cut"), icon: <Scissors size={15} />, onSelect: () => setClipboard({ path: entry.path, action: "move", name: entry.name }) },
+                  { label: t("Rename"), icon: <FilePenLine size={15} />, onSelect: () => renameEntry(entry) },
+                  { label: t("Delete"), icon: <Trash2 size={15} />, danger: true, onSelect: () => removeEntry(entry) },
                 ]}
               />
             </div>
@@ -283,8 +284,8 @@ export function FileExplorer() {
           ))}
           </div>
         ) : null}
-        {!loading && !error && data && !data.entries.length && <div className="empty-state"><Folder size={22} /><b>This folder is empty</b></div>}
-        {!loading && !error && (data?.total || 0) > (data?.limit || 100) && <div className="actions"><Btn disabled={!offset} onClick={() => setOffset(Math.max(0, offset - 100))}>Previous</Btn><small>{offset + 1}–{Math.min(offset + 100, data!.total!)} of {data!.total}</small><Btn disabled={offset + 100 >= data!.total!} onClick={() => setOffset(offset + 100)}>Next</Btn></div>}
+        {!loading && !error && data && !data.entries.length && <div className="empty-state"><Folder size={22} /><b>{t("This folder is empty")}</b></div>}
+        {!loading && !error && (data?.total || 0) > (data?.limit || 100) && <div className="actions"><Btn disabled={!offset} onClick={() => setOffset(Math.max(0, offset - 100))}>{t("Previous")}</Btn><small>{t("{from}–{to} of {total}", { from: offset + 1, to: Math.min(offset + 100, data!.total!), total: data!.total! })}</small><Btn disabled={offset + 100 >= data!.total!} onClick={() => setOffset(offset + 100)}>{t("Next")}</Btn></div>}
       </Panel>
       {askingSudo && (
         <SudoPassword
@@ -322,23 +323,23 @@ function SudoPassword({ close, shown }: { close: () => void; shown: () => void }
       await api("file/hidden", { show: true, password });
       shown();
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not check the password");
+      setError(reason instanceof Error ? reason.message : t("Could not check the password"));
     } finally {
       setChecking(false);
     }
   }
   return (
-    <Modal title="Show hidden files" close={close}>
+    <Modal title={t("Show hidden files")} close={close}>
       <form onSubmit={submit}>
-        <p>Hidden files, such as <code>.ssh</code>, hold keys and settings. Enter the server account&apos;s sudo password to show them for 15 minutes.</p>
+        <p>{rich(t("Hidden files, such as {example}, hold keys and settings. Enter the server account's sudo password to show them for 15 minutes."), { example: <code>.ssh</code> })}</p>
         <label>
-          Sudo password
+          {t("Sudo password")}
           <input type="password" autoComplete="off" autoFocus value={password} onChange={(event) => setPassword(event.target.value)} />
         </label>
         {error && <div className="alert">{error}</div>}
         <div className="actions">
           <Btn className="primary" disabled={checking || !password}>
-            {checking ? <Loader2 className="spin" size={15} /> : <Eye size={15} />} Show hidden files
+            {checking ? <Loader2 className="spin" size={15} /> : <Eye size={15} />} {t("Show hidden files")}
           </Btn>
         </div>
       </form>
@@ -361,7 +362,7 @@ export function FileEditor({
     [saving, setSaving] = useState(false);
   // Closing by a stray click outside the editor, or by Escape, must not lose edits.
   async function closeEditor() {
-    if (content === file.content || await appConfirm("Close the editor and discard the changes you have not saved?", "Unsaved changes", "Discard changes", true)) close();
+    if (content === file.content || await appConfirm(t("Close the editor and discard the changes you have not saved?"), t("Unsaved changes"), t("Discard changes"), true)) close();
   }
   async function saveFile() {
     try {
@@ -369,34 +370,34 @@ export function FileEditor({
       await api("file/save", { path: file.path, content, hidden });
       changed();
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not save file");
+      setError(reason instanceof Error ? reason.message : t("Could not save file"));
     } finally {
       setSaving(false);
     }
   }
   async function deleteFile() {
-    if (!await appConfirm(`Delete ${file.path}? This cannot be undone.`, "Delete file", "Delete", true)) return;
+    if (!await appConfirm(t("Delete file {path}? This cannot be undone.", { path: file.path }), t("Delete file"), t("Delete"), true)) return;
     try {
       setSaving(true);
       await api("file/operation", { action: "delete", source: file.path, hidden });
       changed();
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not delete file");
+      setError(reason instanceof Error ? reason.message : t("Could not delete file"));
     } finally {
       setSaving(false);
     }
   }
   return (
-    <Modal title="Edit file" close={closeEditor}>
+    <Modal title={t("Edit file")} close={closeEditor}>
       <div className="file-editor">
         <code>{file.path}</code>
-        <textarea aria-label="File content" value={content} onChange={(event) => setContent(event.target.value)} spellCheck={false} />
+        <textarea aria-label={t("File content")} value={content} onChange={(event) => setContent(event.target.value)} spellCheck={false} />
         {error && <div className="alert">{error}</div>}
         <div className="actions">
           <Btn className="primary" disabled={saving} onClick={saveFile}>
-            {saving ? <Loader2 className="spin" size={15} /> : null} Save changes
+            {saving ? <Loader2 className="spin" size={15} /> : null} {t("Save changes")}
           </Btn>
-          <RowMenu label="More actions for this file" disabled={saving} items={[{ label: "Delete file", icon: <Trash2 size={15} />, danger: true, onSelect: deleteFile }]} />
+          <RowMenu label={t("More actions for this file")} disabled={saving} items={[{ label: t("Delete file"), icon: <Trash2 size={15} />, danger: true, onSelect: deleteFile }]} />
         </div>
       </div>
     </Modal>
@@ -406,26 +407,26 @@ export function FileBrowser({ choose }: { choose: (path: string) => void }) {
   const [directory, setDirectory] = useState("");
   const { data, error, loading } = useDirectory<FileBrowserData>("file/browse", directory, false, PICKER_PAGE);
   return (
-    <section className="file-browser" aria-label="File browser">
+    <section className="file-browser" aria-label={t("File browser")}>
       <div className="file-browser-head">
-        <div><b>Choose a file</b><small>{data?.path || "Loading folder…"}</small></div>
+        <div><b>{t("Choose a file")}</b><small className="path">{data?.path || t("Loading folder…")}</small></div>
         {(data?.roots.length || 0) > 1 && (
-          <select className="file-browser-roots" aria-label="Location" value={currentLocation(data, directory)} onChange={(event) => setDirectory(event.target.value)}>
+          <select className="file-browser-roots" aria-label={t("Location")} value={currentLocation(data, directory)} onChange={(event) => setDirectory(event.target.value)}>
             {data?.roots.map((root) => <option key={root} value={root}>{root}</option>)}
           </select>
         )}
-        <Btn type="button" disabled={!data?.parent} onClick={() => data?.parent && setDirectory(data.parent)}><ChevronLeft size={16} />Up</Btn>
+        <Btn type="button" disabled={!data?.parent} onClick={() => data?.parent && setDirectory(data.parent)}><ChevronLeft size={16} />{t("Up")}</Btn>
       </div>
       <div className="file-browser-list">
-        {loading && !error && <div className="file-browser-empty"><Loader2 className="spin" size={18} /> Loading files…</div>}
+        {loading && !error && <div className="file-browser-empty"><Loader2 className="spin" size={18} /> {t("Loading files…")}</div>}
         {error && <div className="file-browser-empty">{error}</div>}
         {!loading && !error && data?.entries.map((entry) => (
           <button key={entry.path} type="button" className="file-browser-row" onClick={() => entry.type === "directory" ? setDirectory(entry.path) : choose(entry.path)}>
             {entry.type === "directory" ? <Folder size={17} /> : <FileTerminal size={17} />}
-            <span>{entry.name}</span><small>{entry.type === "directory" ? "Folder" : "File"}</small>
+            <span>{entry.name}</span><small>{entry.type === "directory" ? t("Folder") : t("File")}</small>
           </button>
         ))}
-        {!loading && !error && data && !data.entries.length && <div className="file-browser-empty">No folders or files here.</div>}
+        {!loading && !error && data && !data.entries.length && <div className="file-browser-empty">{t("No folders or files here.")}</div>}
         {!loading && !error && <PickerOverflow data={data} />}
       </div>
     </section>
@@ -435,29 +436,29 @@ export function DirectoryBrowser({ choose }: { choose: (path: string) => void })
   const [directory, setDirectory] = useState("");
   const { data, error, loading } = useDirectory<FileBrowserData>("file/browse", directory, false, PICKER_PAGE);
   return (
-    <section className="file-browser" aria-label="Folder browser">
+    <section className="file-browser" aria-label={t("Folder browser")}>
       <div className="file-browser-head">
-        <div><b>Choose a folder</b><small>{data?.path || "Loading folder…"}</small></div>
+        <div><b>{t("Choose a folder")}</b><small className="path">{data?.path || t("Loading folder…")}</small></div>
         {(data?.roots.length || 0) > 1 && (
-          <select className="file-browser-roots" aria-label="Location" value={currentLocation(data, directory)} onChange={(event) => setDirectory(event.target.value)}>
+          <select className="file-browser-roots" aria-label={t("Location")} value={currentLocation(data, directory)} onChange={(event) => setDirectory(event.target.value)}>
             {data?.roots.map((root) => <option key={root} value={root}>{root}</option>)}
           </select>
         )}
-        <Btn type="button" disabled={!data?.parent} onClick={() => data?.parent && setDirectory(data.parent)}><ChevronLeft size={16} />Up</Btn>
+        <Btn type="button" disabled={!data?.parent} onClick={() => data?.parent && setDirectory(data.parent)}><ChevronLeft size={16} />{t("Up")}</Btn>
       </div>
       <div className="file-browser-list">
-        {loading && !error && <div className="file-browser-empty"><Loader2 className="spin" size={18} /> Loading folders…</div>}
+        {loading && !error && <div className="file-browser-empty"><Loader2 className="spin" size={18} /> {t("Loading folders…")}</div>}
         {error && <div className="file-browser-empty">{error}</div>}
         {!loading && !error && data?.entries.filter((entry) => entry.type === "directory").map((entry) => (
           <button key={entry.path} type="button" className="file-browser-row" onClick={() => setDirectory(entry.path)}>
-            <Folder size={17} /><span>{entry.name}</span><small>Folder</small>
+            <Folder size={17} /><span>{entry.name}</span><small>{t("Folder")}</small>
           </button>
         ))}
         {!loading && !error && <PickerOverflow data={data} />}
       </div>
       <div className="file-browser-footer">
-        <small>{data?.path || "Select a folder"}</small>
-        <Btn type="button" className="primary" disabled={!data?.path} onClick={() => data?.path && choose(data.path)}>Use this folder</Btn>
+        <small className="path">{data?.path || t("Select a folder")}</small>
+        <Btn type="button" className="primary" disabled={!data?.path} onClick={() => data?.path && choose(data.path)}>{t("Use this folder")}</Btn>
       </div>
     </section>
   );
@@ -472,14 +473,14 @@ export function ScriptBrowser({ choose }: { choose: (path: string) => void }) {
     setSelected(null);
   }
   return (
-    <section className="file-browser" aria-label="Script file browser">
+    <section className="file-browser" aria-label={t("Script file browser")}>
       <div className="file-browser-head">
         <div>
-          <b>Choose a script</b>
-          <small>{data?.path || "Loading folder…"}</small>
+          <b>{t("Choose a script")}</b>
+          <small className="path">{data?.path || t("Loading folder…")}</small>
         </div>
         {(data?.roots.length || 0) > 1 && (
-          <select className="file-browser-roots" aria-label="Location" value={currentLocation(data, directory)} onChange={(event) => setDirectory(event.target.value)}>
+          <select className="file-browser-roots" aria-label={t("Location")} value={currentLocation(data, directory)} onChange={(event) => setDirectory(event.target.value)}>
             {data?.roots.map((root) => <option key={root} value={root}>{root}</option>)}
           </select>
         )}
@@ -494,11 +495,11 @@ export function ScriptBrowser({ choose }: { choose: (path: string) => void }) {
           }}
         >
           <ChevronLeft size={16} />
-          Up
+          {t("Up")}
         </Btn>
       </div>
       <div className="file-browser-list">
-        {loading && !error && <div className="file-browser-empty"><Loader2 className="spin" size={18} /> Loading files…</div>}
+        {loading && !error && <div className="file-browser-empty"><Loader2 className="spin" size={18} /> {t("Loading files…")}</div>}
         {error && <div className="file-browser-empty">{error}</div>}
         {!loading && !error && data?.entries.map((entry) => (
           <button
@@ -515,21 +516,21 @@ export function ScriptBrowser({ choose }: { choose: (path: string) => void }) {
           >
             {entry.type === "directory" ? <Folder size={17} /> : <FileTerminal size={17} />}
             <span>{entry.name}</span>
-            <small>{entry.type === "directory" ? "Folder" : "Shell script"}</small>
+            <small>{entry.type === "directory" ? t("Folder") : t("Shell script")}</small>
           </button>
         ))}
-        {!loading && !error && data && !data.entries.length && <div className="file-browser-empty">No folders or .sh files here.</div>}
+        {!loading && !error && data && !data.entries.length && <div className="file-browser-empty">{t("No folders or .sh files here.")}</div>}
         {!loading && !error && <PickerOverflow data={data} />}
       </div>
       <div className="file-browser-footer">
-        <small>{selected ? selected : "Select a .sh file to continue."}</small>
+        <small>{selected ? selected : t("Select a .sh file to continue.")}</small>
         <Btn
           type="button"
           className="primary"
           disabled={!selected}
           onClick={() => selected && choose(selected)}
         >
-          Use selected script
+          {t("Use selected script")}
         </Btn>
       </div>
     </section>

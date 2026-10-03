@@ -10,6 +10,7 @@ import { ROOT_SCRIPT_HELPER, run, runInput, serverSettings, ssh } from "./ssh";
 import { RECORD_ID, type RunOption, type Script, type ScriptRun, folders, parseArguments, schedules, scriptRuns, scripts } from "./records";
 import { rootScriptStatus, syncCron } from "./cron";
 import { isAllowedPath, resolveAllowedDirectory, resolveSelectedFile } from "./files";
+import { t } from "../i18n";
 const MAX_SCRIPT_RUNS = 2000;
 // Keeps the newest runs and deletes the logs of the records that are dropped.
 function saveScriptRuns(runs: ScriptRun[]) {
@@ -45,7 +46,7 @@ export function parseRunOptions(value: unknown): RunOption[] {
       return { label, value, description, needsFile: item.needsFile === true, ...(input ? { input } : {}) };
     });
   } catch {
-    throw Error("Each run option needs a name, and its arguments must be one line with closed quotes");
+    throw Error(t("Each run option needs a name, and its arguments must be one line with closed quotes"));
   }
 }
 // Environment variables of a script's runs, one NAME=value per line; empty
@@ -63,12 +64,12 @@ export function parseVariables(value: unknown): Record<string, string> | undefin
     const at = line.indexOf("=");
     const name = (at < 0 ? line : line.slice(0, at)).trim();
     const text = at < 0 ? "" : line.slice(at + 1);
-    if (at < 0 || !VARIABLE_NAME.test(name)) throw Error(`Write each variable as NAME=value, with a name of letters, digits and _: ${line.trim().slice(0, 40)}`);
-    if (RESERVED_VARIABLES.test(name)) throw Error(`${name} cannot be set here: it changes how the shell runs the script`);
-    if (text.length > 1000 || /[\0\r]/.test(text)) throw Error(`The value of ${name} must be one line up to 1,000 characters`);
+    if (at < 0 || !VARIABLE_NAME.test(name)) throw Error(t("Write each variable as NAME=value, with a name of letters, digits and _: {line}", { line: line.trim().slice(0, 40) }));
+    if (RESERVED_VARIABLES.test(name)) throw Error(t("{name} cannot be set here: it changes how the shell runs the script", { name }));
+    if (text.length > 1000 || /[\0\r]/.test(text)) throw Error(t("The value of {name} must be one line up to 1,000 characters", { name }));
     variables[name] = text;
   }
-  if (Object.keys(variables).length > 40) throw Error("A script can have up to 40 variables");
+  if (Object.keys(variables).length > 40) throw Error(t("A script can have up to 40 variables"));
   return Object.keys(variables).length ? variables : undefined;
 }
 // The arguments of a run: the option's own, the chosen file after --file (or
@@ -82,7 +83,7 @@ export async function runArguments(option: string, file = "", typed = "") {
   }
   let shown = option;
   if (typed) {
-    if (typed.length > 500 || /[\r\n\0]/.test(typed)) throw Error("The value must be one line up to 500 characters");
+    if (typed.length > 500 || /[\r\n\0]/.test(typed)) throw Error(t("The value must be one line up to 500 characters"));
     if (args.includes("{value}")) {
       for (let index = 0; index < args.length; index++) if (args[index] === "{value}") args[index] = typed;
       shown = option.replaceAll("{value}", typed);
@@ -99,14 +100,14 @@ export function parseTimeLimit(value: unknown) {
   if (!text || text === "0") return undefined;
   const minutes = Number(text);
   if (!Number.isInteger(minutes) || minutes < 1 || minutes > 10080)
-    throw Error("The time limit must be a whole number of minutes, at most 10,080 (one week)");
+    throw Error(t("The time limit must be a whole number of minutes, at most 10,080 (one week)"));
   return minutes;
 }
 function folderName(input: string) {
   const name = input.trim().replace(/\s+/g, " ").slice(0, 60);
-  if (!name) throw Error("Enter a folder name");
-  if (name === "Unfiled") throw Error("This folder name is reserved");
-  if (/[\r\n]/.test(name)) throw Error("The folder name must be one line");
+  if (!name) throw Error(t("Enter a folder name"));
+  if (name === "Unfiled") throw Error(t("This folder name is reserved"));
+  if (/[\r\n]/.test(name)) throw Error(t("The folder name must be one line"));
   return name;
 }
 export function addFolder(input: string) {
@@ -118,24 +119,24 @@ export function addFolder(input: string) {
 export function renameDashboardFolder(input: string, newName: string) {
   const name = input.trim(), renamed = folderName(newName);
   const all = folders();
-  if (!all.includes(name)) throw Error("Folder not found");
+  if (!all.includes(name)) throw Error(t("Folder not found"));
   if (renamed === name) return;
-  if (all.includes(renamed)) throw Error("A folder with this name already exists");
+  if (all.includes(renamed)) throw Error(t("A folder with this name already exists"));
   save("folders", read<string[]>("folders", []).filter((folder) => folder !== name).concat(renamed));
   save("scripts", scripts().map((script) => script.folder === name ? { ...script, folder: renamed } : script));
   audit(`folder renamed ${name} -> ${renamed}`);
 }
 export async function deleteDashboardFolder(input: string, deleteScripts = false) {
   const name = input.trim();
-  if (!name) throw Error("Choose a dashboard folder");
+  if (!name) throw Error(t("Choose a dashboard folder"));
   const stored = read<string[]>("folders", []);
   const belongsToFolder = (script: Script) =>
     name === "Unfiled" ? !script.folder : script.folder === name;
   if (!stored.includes(name) && !scripts().some(belongsToFolder))
-    throw Error("Folder not found");
+    throw Error(t("Folder not found"));
   const removedScripts = scripts().filter(belongsToFolder);
   if (removedScripts.length && !deleteScripts)
-    throw Error("This folder still contains scripts");
+    throw Error(t("This folder still contains scripts"));
   const removedIds = new Set(removedScripts.map((script) => script.id));
   save("folders", stored.filter((folder) => folder !== name));
   if (removedIds.size) {
@@ -203,11 +204,11 @@ function later(active: ActiveRun, ms: number, work: () => void) {
 export async function runScript(s: Script, rawArguments = "", selectedFile = "", typedValue = "") {
   const { args: scriptArguments, shown } = await runArguments(rawArguments, selectedFile, typedValue);
   if (s.singleRun && [...activeRuns.values()].some((active) => active.scriptId === s.id))
-    throw Error(`${s.name} is already running, and runs one at a time. Wait for that run to end, or stop it.`);
+    throw Error(t("{name} is already running, and runs one at a time. Wait for that run to end, or stop it.", { name: s.name }));
   const root = s.runAs === "root";
   const helper = root ? await rootScriptStatus() : { available: false, stop: false };
   if (root && !helper.available)
-    throw Error("Root script access has not been enabled on this server");
+    throw Error(t("Root script access has not been enabled on this server"));
   const runId = randomUUID(),
     // A helper that can stop runs records this one under its ID.
     // A script's variables reach its runs as the SSH user; root runs take arguments only.
@@ -275,17 +276,17 @@ export async function runScript(s: Script, rawArguments = "", selectedFile = "",
     audit(`script ${s.name} ${status === "success" ? "completed" : status} (${runId})`);
     if (status === "success" && s.notifySuccess) {
       const last = (readRunLogEnd(log) ?? "").split("\n").map((line) => line.trim()).filter(Boolean).pop();
-      emitDashboardEvent({
-        type: "script-succeeded", severity: "success", title: `Script finished: ${s.name}`,
-        message: `The run took ${Math.round((completed - started) / 1000)} s.${last ? ` Last output: ${last.slice(0, 300)}` : ""}`,
-      });
+      emitDashboardEvent(() => ({
+        type: "script-succeeded", severity: "success", title: t("Script finished: {name}", { name: s.name }),
+        message: t("The run took {seconds} s.", { seconds: Math.round((completed - started) / 1000) }) + (last ? ` ${t("Last output: {output}", { output: last.slice(0, 300) })}` : ""),
+      }));
     }
-    if (status === "failed") emitDashboardEvent({
-      type: "script-failed", severity: "critical", title: `Script failed: ${s.name}`,
-      message: stop?.timedOut ? `The run was stopped after its time limit of ${s.timeLimitMinutes} minutes.`
-        : code === null && !signal ? "The run could not be started."
-        : `The run ended with exit code ${exitCode} after ${Math.round((completed - started) / 1000)} s.`,
-    });
+    if (status === "failed") emitDashboardEvent(() => ({
+      type: "script-failed", severity: "critical", title: t("Script failed: {name}", { name: s.name }),
+      message: stop?.timedOut ? t("The run was stopped after its time limit of {minutes} minutes.", { minutes: s.timeLimitMinutes ?? 0 })
+        : code === null && !signal ? t("The run could not be started.")
+        : t("The run ended with exit code {code} after {seconds} s.", { code: String(exitCode), seconds: Math.round((completed - started) / 1000) }),
+    }));
   };
   try {
     // Locally the run gets a process group of its own, which stopping it signals.
@@ -315,8 +316,8 @@ export async function runScript(s: Script, rawArguments = "", selectedFile = "",
 // command has ended, as stopped by this account.
 export async function stopRun(runId: string, account: string) {
   const record = scriptRuns().find((item) => item.id === runId);
-  if (!record) throw Error("Run not found");
-  if (record.status !== "running" || !activeRuns.has(runId)) throw Error("This run has already ended");
+  if (!record) throw Error(t("Run not found"));
+  if (record.status !== "running" || !activeRuns.has(runId)) throw Error(t("This run has already ended"));
   await stopActiveRun(runId, { by: account });
   audit(`stopping script ${record.scriptName} (${runId})`);
 }
@@ -324,7 +325,7 @@ async function stopActiveRun(runId: string, reason: NonNullable<ActiveRun["stop"
   const active = activeRuns.get(runId);
   if (!active) return;
   if (active.root && !active.helperStop)
-    throw Error("This root script cannot be stopped: the root script helper on the server is an older version. Run scripts/install-root-script-access.sh again to update it.");
+    throw Error(t("This root script cannot be stopped: the root script helper on the server is an older version. Run scripts/install-root-script-access.sh again to update it."));
   const signal = async (name: "TERM" | "KILL") => {
     if (active.root) await run(["sudo", "-n", ROOT_SCRIPT_HELPER, "stop", runId, name]);
     else if (active.group) await run(["sh", "-c", SIGNAL_GROUP, "sh", name, String(active.group)]);
@@ -354,33 +355,32 @@ export async function addScript(input: Record<string, string>) {
     folder = (input.folder || "").trim().replace(/\s+/g, " ").slice(0, 60),
     expr = "",
     runAs: "user" | "root" = input.runAs === "root" ? "root" : "user";
-  if (!name) throw Error("Enter a name");
-  if (/[\r\n]/.test(folder)) throw Error("The folder name must be one line");
+  if (!name) throw Error(t("Enter a name"));
+  if (/[\r\n]/.test(folder)) throw Error(t("The folder name must be one line"));
   const runOptions = parseRunOptions(input.runOptions);
   const timeLimitMinutes = parseTimeLimit(input.timeLimitMinutes);
   const variables = parseVariables(input.variables);
   if (runAs === "root" && variables)
-    throw Error("Root scripts take arguments only, not variables: the dashboard may not change how a root script behaves beyond its arguments");
-  if (folder && !folders().includes(folder)) throw Error("Choose an existing folder");
+    throw Error(t("Root scripts take arguments only, not variables: the dashboard may not change how a root script behaves beyond its arguments"));
+  if (folder && !folders().includes(folder)) throw Error(t("Choose an existing folder"));
   if (runAs === "root") {
     const helper = await rootScriptStatus();
-    if (!helper.available) throw Error("Root script access has not been enabled on this server");
+    if (!helper.available) throw Error(t("Root script access has not been enabled on this server"));
     // Reaching the limit stops the run, which root runs need the current helper for.
     if (timeLimitMinutes && !helper.stop)
-      throw Error("A time limit on a root script needs the current root script helper: run scripts/install-root-script-access.sh on the server again");
+      throw Error(t("A time limit on a root script needs the current root script helper: run scripts/install-root-script-access.sh on the server again"));
   }
   let resolved: string;
   try { resolved = (await run(["realpath", "-e", "--", requested])).trim(); }
-  catch { throw Error("The script file was not found"); }
+  catch { throw Error(t("The script file was not found")); }
   if (
     !isAllowedPath(resolved) ||
     !resolved.endsWith(".sh")
   )
-    throw Error(
-      "The script must be an existing .sh file inside an allowed location",
+    throw Error(t("The script must be an existing .sh file inside an allowed location"),
     );
   try { await run(["test", "-f", resolved]); }
-  catch { throw Error("The script must be a regular file"); }
+  catch { throw Error(t("The script must be a regular file")); }
   const id = RECORD_ID.test(input.id || "") ? input.id : randomUUID();
   const all = scripts().filter((x) => x.id !== id);
   const flag = (value: unknown) => value === true || value === "true";
@@ -398,17 +398,17 @@ export async function createCustomScript(input: Record<string, string>) {
   const directory = await resolveAllowedDirectory(input.directory || "");
   const filename = (input.filename || "").trim();
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]*\.sh$/.test(filename))
-    throw Error("Use a shell-script filename ending in .sh");
+    throw Error(t("Use a shell-script filename ending in .sh"));
   const target = path.posix.join(directory, filename);
-  if (!isAllowedPath(target)) throw Error("Choose an allowed script folder");
+  if (!isAllowedPath(target)) throw Error(t("Choose an allowed script folder"));
   try {
     await run(["test", "!", "-e", target]);
   } catch {
-    throw Error("A file or folder with this name already exists");
+    throw Error(t("A file or folder with this name already exists"));
   }
   const content = input.content || "";
   if (!content.trim() || content.includes("\0") || Buffer.byteLength(content, "utf8") > 128 * 1024)
-    throw Error("Enter a shell script up to 128 KB");
+    throw Error(t("Enter a shell script up to 128 KB"));
   const program = content.startsWith("#!")
     ? content
     : "#!/usr/bin/env bash\nset -eu\n\n" + content;

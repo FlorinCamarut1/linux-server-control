@@ -2,7 +2,8 @@
 import { useRef, useState } from "react";
 import { api } from "@/lib/client-api";
 import { FileBrowser, DirectoryBrowser, ScriptBrowser } from "@/components/files";
-import { appConfirm, Btn, Modal } from "@/components/ui";
+import { appConfirm, Btn, Modal, rich } from "@/components/ui";
+import { t } from "@/lib/i18n";
 import type { RunOption, S } from "@/lib/types";
 import {
   FolderOpen,
@@ -32,14 +33,14 @@ export function ScriptForm({
     [runOptions, setRunOptions] = useState<RunOption[]>(
       initial?.runOptions ||
         (initial?.argumentHint
-          ? [{ label: "Default option", value: initial.argumentHint, description: "Imported from the previous argument prompt" }]
+          ? [{ label: t("Default option"), value: initial.argumentHint, description: t("Imported from the previous argument prompt") }]
           : []),
     );
   const change = (index: number, patch: Partial<RunOption>) =>
     setRunOptions(runOptions.map((item, i) => (i === index ? { ...item, ...patch } : item)));
   const variables = Object.entries(initial?.variables ?? {}).map(([name, value]) => `${name}=${value}`).join("\n");
   return (
-    <Modal title={initial ? "Edit script" : "Add script"} close={close}>
+    <Modal title={initial ? t("Edit script") : t("Add script")} close={close}>
       <form
         onSubmit={async (e) => {
           e.preventDefault();
@@ -50,17 +51,17 @@ export function ScriptForm({
             );
             done();
           } catch (x) {
-            setErr(x instanceof Error ? x.message : "Error");
+            setErr(x instanceof Error ? x.message : t("Error"));
           }
         }}
       >
         <input type="hidden" name="id" defaultValue={initial?.id} />
         <label>
-          Name
+          {t("Name")}
           <input name="name" required defaultValue={initial?.name} />
         </label>
         <label>
-          Server path
+          {t("Server path")}
           <div className="path-input">
             <input
               name="path"
@@ -70,7 +71,7 @@ export function ScriptForm({
             />
             <Btn type="button" onClick={() => setShowBrowser((open) => !open)}>
               <FolderOpen size={16} />
-              Browse
+              {t("Browse")}
             </Btn>
           </div>
         </label>
@@ -83,55 +84,55 @@ export function ScriptForm({
           />
         )}
         <label>
-          Folder
+          {t("Folder")}
           <select
             name="folder"
             defaultValue={initial?.folder}
           >
-            <option value="">Unfiled</option>
+            <option value="">{t("Unfiled")}</option>
             {folders.map((folder) => (
               <option key={folder} value={folder}>
                 {folder}
               </option>
             ))}
           </select>
-          <small>Create folders from the Scripts page.</small>
+          <small>{t("Create folders from the Scripts page.")}</small>
         </label>
         <label>
-          Run as
+          {t("Run as")}
           <select name="runAs" value={runAs} onChange={(event) => setRunAs(event.target.value === "root" ? "root" : "user")}>
-            <option value="user">SSH user</option>
-            <option value="root" disabled={!rootAccess}>root{rootAccess ? "" : " (not enabled)"}</option>
+            <option value="user">{t("SSH user")}</option>
+            <option value="root" disabled={!rootAccess}>root{rootAccess ? "" : ` (${t("not enabled")})`}</option>
           </select>
-          <small>Root is available only for script folders approved by the server helper.</small>
+          <small>{t("Root is available only for script folders approved by the server helper.")}</small>
         </label>
         {/* How the script runs belongs here, not in the script: the conditions
             hold for runs from the dashboard and, but for the question, for its schedules. */}
         <fieldset className="run-conditions">
-          <legend>Run conditions</legend>
+          <legend>{t("Run conditions")}</legend>
           <label>
-            Time limit (minutes)
-            <input name="timeLimitMinutes" type="number" min={1} max={10080} step={1} inputMode="numeric" defaultValue={initial?.timeLimitMinutes ?? ""} placeholder="No limit" />
-            <small>A run that takes longer is stopped and counts as failed. Leave empty for no limit.{rootAccess && !rootStop ? " On root scripts this needs the current root script helper." : ""}</small>
+            {t("Time limit (minutes)")}
+            <input name="timeLimitMinutes" type="number" min={1} max={10080} step={1} inputMode="numeric" defaultValue={initial?.timeLimitMinutes ?? ""} placeholder={t("No limit")} />
+            <small>{t("A run that takes longer is stopped and counts as failed. Leave empty for no limit.")}{rootAccess && !rootStop ? ` ${t("On root scripts this needs the current root script helper.")}` : ""}</small>
           </label>
           <label>
-            Variables
+            {t("Variables")}
             <textarea name="variables" rows={3} spellCheck={false} disabled={runAs === "root"} defaultValue={variables} placeholder={"KEEP_SNAPSHOTS=3\nBACKUP_DIR=/mnt/storage/backups"} />
             <small>{runAs === "root"
-              ? "Root scripts take arguments only: the dashboard may not change how a root script behaves beyond them."
-              : "One NAME=value per line, given to the script as environment variables on every run, scheduled ones included; the script reads them as ${KEEP_SNAPSHOTS:-1}."}</small>
+              ? t("Root scripts take arguments only: the dashboard may not change how a root script behaves beyond them.")
+              : t("One NAME=value per line, given to the script as environment variables on every run, scheduled ones included; the script reads them as {example}.", { example: "${KEEP_SNAPSHOTS:-1}" })}</small>
           </label>
           <label className="option-toggle">
             <input type="checkbox" name="singleRun" value="true" defaultChecked={!!initial?.singleRun} />
-            <span>Only one run at a time<small>Run is refused while a run started from the dashboard is still going.</small></span>
+            <span>{t("Only one run at a time")}<small>{t("Run is refused while a run started from the dashboard is still going.")}</small></span>
           </label>
           <label className="option-toggle">
             <input type="checkbox" name="confirmRun" value="true" defaultChecked={!!initial?.confirmRun} />
-            <span>Ask before each run<small>For scripts that change or delete things; the dashboard asks before starting one.</small></span>
+            <span>{t("Ask before each run")}<small>{t("For scripts that change or delete things; the dashboard asks before starting one.")}</small></span>
           </label>
           <label className="option-toggle">
             <input type="checkbox" name="notifySuccess" value="true" defaultChecked={!!initial?.notifySuccess} />
-            <span>Announce successful runs<small>Notification channels with “Run succeeded” are told of each successful run, not only of failures.</small></span>
+            <span>{t("Announce successful runs")}<small>{t("Notification channels with “Run succeeded” are told of each successful run, not only of failures.")}</small></span>
           </label>
         </fieldset>
         <input type="hidden" name="runOptions" value={hasRunOptions ? JSON.stringify(runOptions) : "[]"} />
@@ -145,42 +146,42 @@ export function ScriptForm({
                 setRunOptions([{ label: "", value: "", description: "", needsFile: false }]);
             }}
           />
-          Ask me to choose an option before running
+          {t("Ask me to choose an option before running")}
         </label>
         {hasRunOptions && (
           <section className="run-options-editor">
             <div className="run-options-head">
               <div>
-                <b>Run options</b>
-                <small>Each option becomes an item in the Run dropdown.</small>
+                <b>{t("Run options")}</b>
+                <small>{t("Each option becomes an item in the Run dropdown.")}</small>
               </div>
               <Btn
                 type="button"
                 onClick={() => setRunOptions([...runOptions, { label: "", value: "", description: "", needsFile: false }])}
               >
-                Add option
+                {t("Add option")}
               </Btn>
             </div>
             {runOptions.map((option, index) => (
               <div className="run-option-fields" key={index}>
                 <input
                   className="option-name"
-                  aria-label="Option name"
-                  placeholder="Option name"
+                  aria-label={t("Option name")}
+                  placeholder={t("Option name")}
                   value={option.label}
                   onChange={(event) => change(index, { label: event.target.value })}
                 />
                 <input
                   className="option-arguments"
-                  aria-label="Arguments"
-                  placeholder="Arguments, e.g. --latest --yes; empty for none"
+                  aria-label={t("Arguments")}
+                  placeholder={t("Arguments, e.g. --latest --yes; empty for none")}
                   value={option.value}
                   onChange={(event) => change(index, { value: event.target.value })}
                 />
                 <Btn
                   type="button"
                   className="option-remove danger"
-                  aria-label={`Remove ${option.label || "option"}`}
+                  aria-label={option.label ? t("Remove {name}", { name: option.label }) : t("Remove option")}
                   disabled={runOptions.length === 1}
                   onClick={() => setRunOptions(runOptions.filter((_, i) => i !== index))}
                 >
@@ -188,16 +189,16 @@ export function ScriptForm({
                 </Btn>
                 <input
                   className="option-description"
-                  aria-label="Explanation"
-                  placeholder="Short explanation"
+                  aria-label={t("Explanation")}
+                  placeholder={t("Short explanation")}
                   value={option.description}
                   onChange={(event) => change(index, { description: event.target.value })}
                 />
                 <input
                   className="option-input"
-                  aria-label="Ask for a value"
-                  title="Asked when running; the value takes the place of {value} in the arguments, or follows them"
-                  placeholder="Ask for a value, e.g. Month (YYYY-MM)"
+                  aria-label={t("Ask for a value")}
+                  title={t("Asked when running; the value takes the place of {placeholder} in the arguments, or follows them", { placeholder: "{value}" })}
+                  placeholder={t("Ask for a value, e.g. Month (YYYY-MM)")}
                   value={option.input ?? ""}
                   onChange={(event) => change(index, { input: event.target.value })}
                 />
@@ -207,15 +208,15 @@ export function ScriptForm({
                     checked={!!option.needsFile}
                     onChange={(event) => change(index, { needsFile: event.target.checked })}
                   />
-                  Requires file
+                  {t("Requires file")}
                 </label>
               </div>
             ))}
-            <small className="run-options-note">An option may have no arguments. A value asked for takes the place of <code>{"{value}"}</code> in the arguments, or follows them.</small>
+            <small className="run-options-note">{rich(t("An option may have no arguments. A value asked for takes the place of {placeholder} in the arguments, or follows them."), { placeholder: <code>{"{value}"}</code> })}</small>
           </section>
         )}
         {err && <div className="alert">{err}</div>}
-        <Btn className="primary">Save</Btn>
+        <Btn className="primary">{t("Save")}</Btn>
       </form>
     </Modal>
   );
@@ -238,10 +239,10 @@ export function CustomScriptForm({
   // Closing by a stray click outside the form, or by Escape, must not lose a written script.
   const content = useRef<HTMLTextAreaElement>(null);
   async function closeForm() {
-    if ((content.current?.value ?? NEW_SCRIPT) === NEW_SCRIPT || await appConfirm("Close without creating the script? What you wrote is discarded.", "Unsaved script", "Discard", true)) close();
+    if ((content.current?.value ?? NEW_SCRIPT) === NEW_SCRIPT || await appConfirm(t("Close without creating the script? What you wrote is discarded."), t("Unsaved script"), t("Discard"), true)) close();
   }
   return (
-    <Modal title="New custom script" close={closeForm}>
+    <Modal title={t("New custom script")} close={closeForm}>
       <form
         onSubmit={async (event) => {
           event.preventDefault();
@@ -252,25 +253,25 @@ export function CustomScriptForm({
             );
             done();
           } catch (reason) {
-            setError(reason instanceof Error ? reason.message : "Could not create script");
+            setError(reason instanceof Error ? reason.message : t("Could not create script"));
           }
         }}
       >
         <label>
-          Name
-          <input name="name" required maxLength={80} placeholder="My maintenance task" />
+          {t("Name")}
+          <input name="name" required maxLength={80} placeholder={t("My maintenance task")} />
         </label>
         <label>
-          Script filename
+          {t("Script filename")}
           <input name="filename" required pattern="[A-Za-z0-9][A-Za-z0-9._\-]*\.sh" placeholder="maintenance.sh" />
-          <small>Only letters, numbers, dots, dashes, and underscores. The filename must end in .sh.</small>
+          <small>{t("Only letters, numbers, dots, dashes, and underscores. The filename must end in .sh.")}</small>
         </label>
         <label>
-          Server folder
+          {t("Server folder")}
           <div className="path-input">
-            <input name="directory" required value={directory} onChange={(event) => setDirectory(event.target.value)} placeholder="Choose an allowed folder" />
+            <input name="directory" required value={directory} onChange={(event) => setDirectory(event.target.value)} placeholder={t("Choose an allowed folder")} />
             <Btn type="button" onClick={() => setShowBrowser((open) => !open)}>
-              <FolderOpen size={16} />Browse
+              <FolderOpen size={16} />{t("Browse")}
             </Btn>
           </div>
         </label>
@@ -283,27 +284,27 @@ export function CustomScriptForm({
           />
         )}
         <label>
-          Dashboard folder
+          {t("Dashboard folder")}
           <select name="folder" defaultValue="">
-            <option value="">Unfiled</option>
+            <option value="">{t("Unfiled")}</option>
             {folders.map((folder) => <option key={folder} value={folder}>{folder}</option>)}
           </select>
         </label>
         <label>
-          Run as
+          {t("Run as")}
           <select name="runAs" defaultValue="user">
-            <option value="user">SSH user</option>
-            <option value="root" disabled={!rootAccess}>root{rootAccess ? "" : " (not enabled)"}</option>
+            <option value="user">{t("SSH user")}</option>
+            <option value="root" disabled={!rootAccess}>root{rootAccess ? "" : ` (${t("not enabled")})`}</option>
           </select>
-          <small>Root scripts must be created inside a folder approved by the server helper.</small>
+          <small>{t("Root scripts must be created inside a folder approved by the server helper.")}</small>
         </label>
         <label>
-          Script content
+          {t("Script content")}
           <textarea ref={content} name="content" rows={12} required spellCheck={false} defaultValue={NEW_SCRIPT} />
-          <small>The script runs as the dashboard SSH user. It is saved as an executable file inside the selected allowed folder.</small>
+          <small>{t("The script runs as the dashboard SSH user. It is saved as an executable file inside the selected allowed folder.")}</small>
         </label>
         {error && <div className="alert">{error}</div>}
-        <Btn className="primary">Create script</Btn>
+        <Btn className="primary">{t("Create script")}</Btn>
       </form>
     </Modal>
   );
@@ -325,21 +326,21 @@ export function RunScriptForm({
     options = script.runOptions || [];
   const option = options[Number(selected)];
   return (
-    <Modal title={`Run ${script.name}`} close={close}>
+    <Modal title={t("Run {name}", { name: script.name })} close={close}>
       <form
         onSubmit={async (event) => {
           event.preventDefault();
-          if (script.confirmRun && !await appConfirm(`Run “${script.name}” with “${option?.label}”?`, "Run script", "Run", true)) return;
+          if (script.confirmRun && !await appConfirm(t("Run “{name}” with “{option}”?", { name: script.name, option: option?.label ?? "" }), t("Run script"), t("Run"), true)) return;
           try {
             const result = await api("script/run", { id: script.id, option: selected, file: selectedFile, value });
             done(script, result.run.id);
           } catch (reason) {
-            setError(reason instanceof Error ? reason.message : "Could not start script");
+            setError(reason instanceof Error ? reason.message : t("Could not start script"));
           }
         }}
       >
         <label>
-          Choose an option
+          {t("Choose an option")}
           <select
             autoFocus
             value={selected}
@@ -364,12 +365,12 @@ export function RunScriptForm({
         )}
         {option?.needsFile && (
           <section className="run-file-picker">
-            <b>Select a file</b>
-            <small>The selected path is inserted after <code>--file</code>, before confirmation flags such as <code>--yes</code>.</small>
+            <b>{t("Select a file")}</b>
+            <small>{rich(t("The selected path is inserted after {file}, before confirmation flags such as {yes}."), { file: <code>--file</code>, yes: <code>--yes</code> })}</small>
             {selectedFile && <code>{selectedFile}</code>}
             <Btn type="button" onClick={() => setShowFileBrowser((open) => !open)}>
               <FolderOpen size={16} />
-              {selectedFile ? "Change file" : "Choose file"}
+              {selectedFile ? t("Change file") : t("Choose file")}
             </Btn>
             {showFileBrowser && (
               <FileBrowser
@@ -382,7 +383,7 @@ export function RunScriptForm({
           </section>
         )}
         {error && <div className="alert">{error}</div>}
-        <Btn className="primary" disabled={(!!option?.needsFile && !selectedFile) || (!!option?.input && !value.trim())}>Run script</Btn>
+        <Btn className="primary" disabled={(!!option?.needsFile && !selectedFile) || (!!option?.input && !value.trim())}>{t("Run script")}</Btn>
       </form>
     </Modal>
   );
@@ -390,7 +391,7 @@ export function RunScriptForm({
 export function FolderForm({ close, done }: { close: () => void; done: () => void }) {
   const [error, setError] = useState("");
   return (
-    <Modal title="New folder" close={close}>
+    <Modal title={t("New folder")} close={close}>
       <form
         onSubmit={async (event) => {
           event.preventDefault();
@@ -401,16 +402,16 @@ export function FolderForm({ close, done }: { close: () => void; done: () => voi
             );
             done();
           } catch (reason) {
-            setError(reason instanceof Error ? reason.message : "Error");
+            setError(reason instanceof Error ? reason.message : t("Error"));
           }
         }}
       >
         <label>
-          Folder name
+          {t("Folder name")}
           <input name="name" autoFocus required maxLength={60} />
         </label>
         {error && <div className="alert">{error}</div>}
-        <Btn className="primary">Create folder</Btn>
+        <Btn className="primary">{t("Create folder")}</Btn>
       </form>
     </Modal>
   );

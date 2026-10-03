@@ -137,6 +137,8 @@ Rules that fire when a value reaches a threshold: CPU temperature, CPU, RAM or s
 
 ## Settings
 
+**Language.** Under **Settings → Appearance**, or on the sign-in page, choose English, Română, 中文, हिन्दी, Español, العربية, Français, বাংলা, Português, Русский or اردو. The choice is kept in that browser; a new browser starts in its own language when the dashboard has it, otherwise in English. Pages, buttons, dates, numbers and the server's messages follow it; Arabic and Urdu are written right to left. Notifications go out in the language chosen under **Settings → Notifications → Language of notifications**, whoever caused them. Names you give (scripts, folders, schedules) and what the server prints (logs, Docker status) are shown as they are.
+
 - **Appearance**: choose a theme (Dark, Light, Nord, Dracula, Solarized, Gruvbox, Catppuccin, Tokyo Night, Rosé Pine, Black, Latte, or System to follow the device). Each browser keeps its own choice.
 - **Notifications**: send alerts (and their return to normal), failed runs, successful runs of the scripts set to announce them, and power device changes to Discord, Slack (also Mattermost and Rocket.Chat), ntfy, or any webhook that accepts JSON. Choose the events per channel and use **Test** to check it.
 - **Server connection**: the SSH target and port, the allowed folders and how long metrics are kept. Saving tests the connection first and keeps the previous settings if the server does not answer. **Check server requirements** tests what the server provides and names anything missing.

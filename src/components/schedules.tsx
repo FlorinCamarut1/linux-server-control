@@ -3,6 +3,9 @@ import { useState } from "react";
 import { api } from "@/lib/client-api";
 import { Btn, Modal } from "@/components/ui";
 import type { S, Schedule } from "@/lib/types";
+import { locale, t, tn } from "@/lib/i18n";
+// Weekday names in the chosen language, Sunday first like cron (4 January 2026 is a Sunday).
+const weekdays = () => Array.from({ length: 7 }, (_, index) => new Intl.DateTimeFormat(locale(), { weekday: "long" }).format(new Date(2026, 0, 4 + index)));
 export function ScheduleForm({
   initial,
   scripts,
@@ -30,7 +33,7 @@ export function ScheduleForm({
   // typed value needs someone to run it.
   const schedulable = (scripts.find((script) => script.id === scriptId)?.runOptions ?? []).filter((option) => !option.needsFile && !option.input);
   return (
-    <Modal title={existing ? "Edit schedule" : "New schedule"} close={close}>
+    <Modal title={existing ? t("Edit schedule") : t("New schedule")} close={close}>
       <form
         onSubmit={async (event) => {
           event.preventDefault();
@@ -44,27 +47,27 @@ export function ScheduleForm({
             label = "";
           if (frequency === "custom") {
             expression = (values.expression || "").trim();
-            label = (values.label || "Custom schedule").trim();
+            label = (values.label || t("Custom schedule")).trim();
           }
           if (frequency === "minutes") {
             expression = `*/${values.interval} * * * *`;
-            label = `Every ${values.interval} minutes`;
+            label = tn("Every minute|Every {count} minutes", Number(values.interval));
           }
           if (frequency === "hours") {
             expression = `0 */${values.interval} * * *`;
-            label = `Every ${values.interval} hour${values.interval === "1" ? "" : "s"}`;
+            label = tn("Every hour|Every {count} hours", Number(values.interval));
           }
           if (frequency === "daily") {
             expression = `${minute} ${hour} * * *`;
-            label = `Every day at ${values.time}`;
+            label = t("Every day at {time}", { time: values.time });
           }
           if (frequency === "weekly") {
             expression = `${minute} ${hour} * * ${values.weekday}`;
-            label = `Every ${["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][Number(values.weekday)]} at ${values.time}`;
+            label = t("Every {weekday} at {time}", { weekday: weekdays()[Number(values.weekday)], time: values.time });
           }
           if (frequency === "monthly") {
             expression = `${minute} ${hour} ${values.monthday} * *`;
-            label = `Day ${values.monthday} of every month at ${values.time}`;
+            label = t("Day {day} of every month at {time}", { day: values.monthday, time: values.time });
           }
           try {
             await api("schedule/save", {
@@ -79,27 +82,27 @@ export function ScheduleForm({
             });
             done();
           } catch (reason) {
-            setError(reason instanceof Error ? reason.message : "Error");
+            setError(reason instanceof Error ? reason.message : t("Error"));
           }
         }}
       >
         <input type="hidden" name="id" defaultValue={initial?.id} />
         <label>
-          Run
+          {t("Run")}
           <select value={targetKind} onChange={(event) => setTargetKind(event.target.value as "script" | "command")}>
-            <option value="script">An approved script</option>
-            <option value="command">A custom command</option>
+            <option value="script">{t("An approved script")}</option>
+            <option value="command">{t("A custom command")}</option>
           </select>
         </label>
         {targetKind === "command" ? (
           <label>
-            Custom command
+            {t("Custom command")}
             <input name="command" defaultValue={initial?.command} required maxLength={2000} placeholder="/usr/local/bin/task --option" />
-            <small>This one-line command runs through cron as the selected user.</small>
+            <small>{t("This one-line command runs through cron as the selected user.")}</small>
           </label>
         ) : (
           <label>
-            Script
+            {t("Script")}
             <select name="scriptId" required={targetKind === "script"} value={scriptId} onChange={(event) => { setScriptId(event.target.value); setArgs(""); }}>
               {scripts.map((script) => (
                 <option key={script.id} value={script.id}>
@@ -111,51 +114,51 @@ export function ScheduleForm({
         )}
         {targetKind === "script" && (schedulable.length > 0 || args) && (
           <label>
-            Run option
+            {t("Run option")}
             <select value={args} onChange={(event) => setArgs(event.target.value)}>
-              <option value="">No arguments</option>
+              <option value="">{t("No arguments")}</option>
               {schedulable.map((option) => <option key={`${option.label}-${option.value}`} value={option.value}>{option.label}{option.value ? ` (${option.value})` : ""}</option>)}
               {args && !schedulable.some((option) => option.value === args) && <option value={args}>{args}</option>}
             </select>
-            <small>The script&apos;s time limit and variables hold for its scheduled runs too. Options that need a file or a typed value can only be run by hand.</small>
+            <small>{t("The script's time limit and variables hold for its scheduled runs too. Options that need a file or a typed value can only be run by hand.")}</small>
           </label>
         )}
         <label>
-          Run as
+          {t("Run as")}
           <select name="runAs" defaultValue={initial?.runAs || "user"}>
-            <option value="user">SSH user</option>
+            <option value="user">{t("SSH user")}</option>
             <option value="root" disabled={!rootAccess}>
-              root{rootAccess ? "" : " (not enabled)"}
+              root{rootAccess ? "" : ` (${t("not enabled")})`}
             </option>
           </select>
           {!rootAccess && (
-            <small>Install both root helpers on the server to use this option.</small>
+            <small>{t("Install both root helpers on the server to use this option.")}</small>
           )}
         </label>
         <label>
-          Frequency
+          {t("Frequency")}
           <select
             value={frequency}
             onChange={(event) => setFrequency(event.target.value)}
           >
-            <option value="minutes">Every few minutes</option>
-            <option value="hours">Every few hours</option>
-            <option value="daily">Every day</option>
-            <option value="weekly">Every week</option>
-            <option value="monthly">Every month</option>
-            <option value="custom">Custom cron expression</option>
+            <option value="minutes">{t("Every few minutes")}</option>
+            <option value="hours">{t("Every few hours")}</option>
+            <option value="daily">{t("Every day")}</option>
+            <option value="weekly">{t("Every week")}</option>
+            <option value="monthly">{t("Every month")}</option>
+            <option value="custom">{t("Custom cron expression")}</option>
           </select>
         </label>
         {(frequency === "minutes" || frequency === "hours") && (
           <label>
-            Interval
+            {t("Interval")}
             <select name="interval">
               {(frequency === "minutes"
                 ? [5, 10, 15, 20, 30]
                 : [1, 2, 3, 4, 6, 8, 12]
               ).map((value) => (
                 <option key={value} value={value}>
-                  Every {value} {frequency}
+                  {frequency === "minutes" ? tn("Every minute|Every {count} minutes", value) : tn("Every hour|Every {count} hours", value)}
                 </option>
               ))}
             </select>
@@ -165,23 +168,15 @@ export function ScheduleForm({
           frequency === "weekly" ||
           frequency === "monthly") && (
           <label>
-            Time
+            {t("Time")}
             <input name="time" type="time" defaultValue="03:00" required />
           </label>
         )}
         {frequency === "weekly" && (
           <label>
-            Day of week
+            {t("Day of week")}
             <select name="weekday">
-              {[
-                "Sunday",
-                "Monday",
-                "Tuesday",
-                "Wednesday",
-                "Thursday",
-                "Friday",
-                "Saturday",
-              ].map((day, index) => (
+              {weekdays().map((day, index) => (
                 <option key={day} value={index}>
                   {day}
                 </option>
@@ -191,7 +186,7 @@ export function ScheduleForm({
         )}
         {frequency === "monthly" && (
           <label>
-            Day of month
+            {t("Day of month")}
             <select name="monthday">
               {Array.from({ length: 28 }, (_, index) => index + 1).map(
                 (day) => (
@@ -204,23 +199,23 @@ export function ScheduleForm({
         {frequency === "custom" && (
           <>
             <label>
-              Cron expression
+              {t("Cron expression")}
               <input
                 name="expression"
                 required
                 defaultValue={initial?.expression}
                 placeholder="0 3 * * *"
               />
-              <small>Use five cron fields, or @reboot.</small>
+              <small>{t("Use five cron fields, or @reboot.")}</small>
             </label>
             <label>
-              Description
-              <input name="label" maxLength={80} defaultValue={initial?.label} placeholder="Every day at 03:00" />
+              {t("Description")}
+              <input name="label" maxLength={80} defaultValue={initial?.label} placeholder={t("Every day at {time}", { time: "03:00" })} />
             </label>
           </>
         )}
         {error && <div className="alert">{error}</div>}
-        <Btn className="primary">{existing ? "Save schedule" : "Create schedule"}</Btn>
+        <Btn className="primary">{existing ? t("Save schedule") : t("Create schedule")}</Btn>
       </form>
     </Modal>
   );

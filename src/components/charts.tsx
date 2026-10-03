@@ -1,5 +1,6 @@
 "use client";
 import { memo, useCallback, useMemo, useRef, useState } from "react";
+import { locale, msg, t } from "@/lib/i18n";
 
 // Charts drawn as inline SVG. Colors come from the theme's validated chart
 // palette (--series-N), text uses text tokens, and every chart can also be
@@ -58,14 +59,22 @@ function niceTicks(max: number) {
   return ticks;
 }
 
-// Formatters are created once: building one for every label was most of the
-// cost of drawing a chart or filling its table.
-const clockTime = new Intl.DateTimeFormat([], { hour: "2-digit", minute: "2-digit" });
-const dayMonth = new Intl.DateTimeFormat([], { day: "2-digit", month: "2-digit" });
-const dateTime = new Intl.DateTimeFormat([], { dateStyle: "short", timeStyle: "short" });
-export function formatTime(at: number, spanMs: number) {
-  return (spanMs <= 36 * 3600000 ? clockTime : dayMonth).format(at);
+// Formatters are created once per language: building one for every label was
+// most of the cost of drawing a chart or filling its table.
+let formatters: { locale: string; clockTime: Intl.DateTimeFormat; dayMonth: Intl.DateTimeFormat; dateTime: Intl.DateTimeFormat } | null = null;
+function dates() {
+  if (formatters?.locale !== locale()) formatters = {
+    locale: locale(),
+    clockTime: new Intl.DateTimeFormat(locale(), { hour: "2-digit", minute: "2-digit" }),
+    dayMonth: new Intl.DateTimeFormat(locale(), { day: "2-digit", month: "2-digit" }),
+    dateTime: new Intl.DateTimeFormat(locale(), { dateStyle: "short", timeStyle: "short" }),
+  };
+  return formatters;
 }
+export function formatTime(at: number, spanMs: number) {
+  return (spanMs <= 36 * 3600000 ? dates().clockTime : dates().dayMonth).format(at);
+}
+const number = (value: number, digits: number) => value.toLocaleString(locale(), { minimumFractionDigits: digits, maximumFractionDigits: digits });
 
 // The key mirrors the mark: a short line for lines, a square for bars.
 function Legend({ series, shape = "line" }: { series: { id: string; label: string }[]; shape?: "line" | "square" }) {
@@ -97,7 +106,7 @@ export function ChartFrame({ title, note, table, children }: ChartFrameProps) {
           {note && <p>{note}</p>}
         </div>
         <button type="button" className="button" aria-pressed={showTable} onClick={() => setShowTable((value) => !value)}>
-          {showTable ? "Chart" : "Table"}
+          {showTable ? t("Chart") : t("Table")}
         </button>
       </div>
       {showTable ? (
@@ -123,14 +132,14 @@ type LineChartProps = {
 // Memoized, with its geometry computed once per data and width: moving the
 // pointer only moves the crosshair, and a refresh of the page around the chart
 // does not draw it again.
-export const LineChart = memo(function LineChart({ times, series, unit, yMax, digits = 1, empty = "No samples in this range yet." }: LineChartProps) {
+export const LineChart = memo(function LineChart({ times, series, unit, yMax, digits = 1, empty = t("No samples in this range yet.") }: LineChartProps) {
   const { ref, width } = useWidth();
   const [hovered, setHover] = useState<number | null>(null);
   // A refresh can leave fewer points than the one the pointer was on.
   const hover = hovered !== null && hovered < times.length ? hovered : null;
   const plotWidth = width - MARGIN.left - MARGIN.right;
   const start = times[0] ?? 0, span = Math.max(1, (times.at(-1) ?? 1) - start);
-  const format = (value: number | null) => (value === null ? "—" : `${value.toFixed(digits)} ${unit}`);
+  const format = (value: number | null) => (value === null ? "—" : `${number(value, digits)} ${unit}`);
   const xTicks = useMemo(() => {
     if (times.length < 2) return [];
     const count = Math.max(2, Math.min(6, Math.floor(plotWidth / 110)));
@@ -205,7 +214,7 @@ export const LineChart = memo(function LineChart({ times, series, unit, yMax, di
           width={width}
           height={PLOT_HEIGHT + MARGIN.top + MARGIN.bottom}
           role="img"
-          aria-label={`${series.map((item) => item.label).join(", ")} over time`}
+          aria-label={t("{series} over time", { series: series.map((item) => item.label).join(", ") })}
           tabIndex={0}
           onPointerMove={(event) => pick(event.clientX, event.clientY, event.currentTarget)}
           onPointerDown={(event) => pick(event.clientX, event.clientY, event.currentTarget)}
@@ -220,7 +229,7 @@ export const LineChart = memo(function LineChart({ times, series, unit, yMax, di
           {ticks.map((tick) => (
             <g key={tick}>
               <line className="chart-grid" x1={MARGIN.left} x2={MARGIN.left + plotWidth} y1={y(tick)} y2={y(tick)} />
-              <text className="chart-axis" x={MARGIN.left - 8} y={y(tick)} dy="0.32em" textAnchor="end">{tick.toLocaleString()}</text>
+              <text className="chart-axis" x={MARGIN.left - 8} y={y(tick)} dy="0.32em" textAnchor="end">{tick.toLocaleString(locale())}</text>
             </g>
           ))}
           {xTicks.map((at, index) => (
@@ -246,7 +255,7 @@ export const LineChart = memo(function LineChart({ times, series, unit, yMax, di
         ))}
         {hover !== null && (
           <div className="chart-tooltip" style={tooltipPlace(hoverX, width)}>
-            <small>{dateTime.format(times[hover])}</small>
+            <small>{dates().dateTime.format(times[hover])}</small>
             {series.map((item, index) => (
               <div key={item.id}><i style={{ background: seriesColor(index) }} /><b>{format(item.values[hover])}</b><span>{item.label}</span></div>
             ))}
@@ -265,7 +274,7 @@ type ColumnChartProps = {
   empty?: string;
 };
 // Stacked columns with a 2px surface gap between segments and rounded tops.
-export const ColumnChart = memo(function ColumnChart({ labels, series, unit, digits = 2, empty = "No data in this range yet." }: ColumnChartProps) {
+export const ColumnChart = memo(function ColumnChart({ labels, series, unit, digits = 2, empty = t("No data in this range yet.") }: ColumnChartProps) {
   const { ref, width } = useWidth();
   const [hover, setHover] = useState<number | null>(null);
   const plotWidth = width - MARGIN.left - MARGIN.right;
@@ -277,17 +286,17 @@ export const ColumnChart = memo(function ColumnChart({ labels, series, unit, dig
   const barWidth = Math.min(24, Math.max(4, band - 4));
   const y = (value: number) => MARGIN.top + PLOT_HEIGHT - (value / top) * PLOT_HEIGHT;
   const every = Math.ceil(labels.length / Math.max(2, Math.floor(plotWidth / 56)));
-  const format = (value: number) => `${value.toFixed(digits)} ${unit}`;
+  const format = (value: number) => `${number(value, digits)} ${unit}`;
   const hoverLeft = hover === null ? 0 : MARGIN.left + band * hover + band / 2;
   return (
     <div ref={ref} className="chart">
       <Legend series={series} shape="square" />
       <div className="chart-plot">
-        <svg width={width} height={PLOT_HEIGHT + MARGIN.top + MARGIN.bottom} role="img" aria-label={`${unit} per period`} onPointerLeave={() => setHover(null)}>
+        <svg width={width} height={PLOT_HEIGHT + MARGIN.top + MARGIN.bottom} role="img" aria-label={t("{unit} per period", { unit })} onPointerLeave={() => setHover(null)}>
           {ticks.map((tick) => (
             <g key={tick}>
               <line className="chart-grid" x1={MARGIN.left} x2={MARGIN.left + plotWidth} y1={y(tick)} y2={y(tick)} />
-              <text className="chart-axis" x={MARGIN.left - 8} y={y(tick)} dy="0.32em" textAnchor="end">{tick.toLocaleString()}</text>
+              <text className="chart-axis" x={MARGIN.left - 8} y={y(tick)} dy="0.32em" textAnchor="end">{tick.toLocaleString(locale())}</text>
             </g>
           ))}
           {labels.map((label, index) => {
@@ -330,7 +339,7 @@ export const ColumnChart = memo(function ColumnChart({ labels, series, unit, dig
         {hover !== null && (
           <div className="chart-tooltip" style={tooltipPlace(hoverLeft, width)}>
             <small>{labels[hover]}</small>
-            {series.length > 1 && <div><i /><b>{format(totals[hover])}</b><span>Total</span></div>}
+            {series.length > 1 && <div><i /><b>{format(totals[hover])}</b><span>{t("Total")}</span></div>}
             {series.map((item, index) => (
               <div key={item.id}><i style={{ background: seriesColor(index) }} /><b>{format(item.values[hover] || 0)}</b><span>{item.label}</span></div>
             ))}
@@ -342,12 +351,12 @@ export const ColumnChart = memo(function ColumnChart({ labels, series, unit, dig
 });
 
 export type Range = "24h" | "7d" | "30d";
-const RANGES = [["24h", "Last 24 hours"], ["7d", "Last 7 days"], ["30d", "Last 30 days"]] as const;
+const RANGES = [["24h", msg("Last 24 hours")], ["7d", msg("Last 7 days")], ["30d", msg("Last 30 days")]] as const;
 // One range selector above the charts it scopes.
 export function RangeFilter({ value, onChange }: { value: string; onChange: (value: Range) => void }) {
   return <div className="chart-filters">
-    <div className="container-filters" role="radiogroup" aria-label="Time range">
-      {RANGES.map(([id, label]) => <button key={id} type="button" role="radio" aria-checked={value === id} className={value === id ? "active" : ""} title={label} onClick={() => onChange(id)}>{label}</button>)}
+    <div className="container-filters" role="radiogroup" aria-label={t("Time range")}>
+      {RANGES.map(([id, label]) => <button key={id} type="button" role="radio" aria-checked={value === id} className={value === id ? "active" : ""} title={t(label)} onClick={() => onChange(id)}>{t(label)}</button>)}
     </div>
   </div>;
 }

@@ -58,6 +58,28 @@ test("the dashboard can be added to a home screen as an app", async ({ page, pla
   await anonymous.dispose();
 });
 
+test("the language is chosen per browser, and the server answers in it", async ({ page }) => {
+  await page.goto("/");
+  await open(page, "Settings");
+  await page.getByLabel("Language", { exact: true }).selectOption("ro");
+  await expect(heading(page, "Setări")).toBeVisible();
+  // Kept after a reload, and the server's messages follow it.
+  await page.reload();
+  await open(page, "Fișiere");
+  await expect(page.getByText("notes.txt")).toBeVisible();
+  await page.getByLabel("Calea folderului").fill("/etc");
+  await page.getByRole("button", { name: "Mergi", exact: true }).click();
+  await expect(page.getByText(/în afara locațiilor permise/)).toBeVisible();
+  // Arabic is written right to left.
+  await open(page, "Setări");
+  await page.getByLabel("Limbă", { exact: true }).selectOption("ar");
+  await expect(page.locator("html")).toHaveAttribute("dir", "rtl");
+  await expect(heading(page, "الإعدادات")).toBeVisible();
+  await page.getByLabel("اللغة", { exact: true }).selectOption("en");
+  await expect(page.locator("html")).toHaveAttribute("dir", "ltr");
+  await expect(heading(page, "Settings")).toBeVisible();
+});
+
 test("settings check what the server provides", async ({ page }) => {
   await page.goto("/");
   await open(page, "Settings");
@@ -471,7 +493,7 @@ test("Overview lists a failing script until it runs successfully again", async (
   await expect(modal(page).locator("pre")).toContainText("about to fail", { timeout: 15000 });
   await modal(page).getByRole("button", { name: "Close" }).click();
   await page.getByRole("button", { name: "Refresh", exact: true }).click();
-  await expect(row).toContainText("last run failed", { timeout: 20000 });
+  await expect(row).toContainText("last run: failed", { timeout: 20000 });
 
   await open(page, "Overview");
   const attention = page.locator(".panel", { hasText: "Attention needed" });
@@ -488,7 +510,7 @@ test("Overview lists a failing script until it runs successfully again", async (
   await expect(modal(page).locator("pre")).toContainText("fixed", { timeout: 15000 });
   await modal(page).getByRole("button", { name: "Close" }).click();
   await page.getByRole("button", { name: "Refresh", exact: true }).click();
-  await expect(row).toContainText("last run success", { timeout: 20000 });
+  await expect(row).toContainText("last run: success", { timeout: 20000 });
   await open(page, "Overview");
   await expect(failure).toHaveCount(0);
   await open(page, "History");

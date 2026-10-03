@@ -27,7 +27,14 @@ function loadModule(entry, globals, modules = () => undefined) {
     if (loaded.has(file)) return loaded.get(file).exports;
     const unit = { exports: {} };
     loaded.set(file, unit);
-    const requireFrom = (name) => modules(name) ?? (name.startsWith(".") ? load(path.resolve(path.dirname(file), name) + ".ts") : require(name));
+    const requireFrom = (name) => {
+      const answered = modules(name);
+      if (answered) return answered;
+      if (!name.startsWith(".")) return require(name);
+      const target = path.resolve(path.dirname(file), name);
+      // The translation catalogs are JSON.
+      return target.endsWith(".json") ? JSON.parse(readFileSync(target, "utf8")) : load(target + ".ts");
+    };
     vm.runInContext(`(function (exports, require, module) {${transpile(file)}\n})`, context)(unit.exports, requireFrom, unit);
     return unit.exports;
   };

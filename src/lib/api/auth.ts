@@ -29,6 +29,7 @@ import {
   ok,
   setAuthCookies,
 } from "./http";
+import { t } from "@/lib/server";
 
 type LoginAttempt = { failures: number; firstFailure: number; blockedUntil: number };
 const loginAttempts = new Map<string, LoginAttempt>();
@@ -65,7 +66,7 @@ function recordLoginFailure(key: string) {
 }
 function tooManyAttempts(seconds: number) {
   return fail(
-    `Too many sign-in attempts. Try again in ${Math.ceil(seconds / 60)} minute(s).`,
+    t("Too many sign-in attempts. Try again in {minutes} minute(s).", { minutes: Math.ceil(seconds / 60) }),
     429,
     { "Retry-After": String(seconds) },
   );
@@ -135,17 +136,17 @@ async function setupStatus() {
 async function setup({ body }: PublicContext) {
   const existing = read<Record<string, string>>("config", {});
   if (existing.password)
-    return fail("Initial setup has already been completed.", 409);
+    return fail(t("Initial setup has already been completed."), 409);
   const bootstrap = read<{ code?: string }>("setup-bootstrap", {});
   if (!bootstrap.code || !secureEqual(body.setupToken || "", bootstrap.code))
-    return fail("The setup token is incorrect.", 403);
+    return fail(t("The setup token is incorrect."), 403);
   const username = (body.username || "admin").trim();
   if (!/^[a-zA-Z0-9_.-]{1,40}$/.test(username))
-    return fail("Use a username containing only letters, numbers, dots, dashes or underscores.");
+    return fail(t("Use a username containing only letters, numbers, dots, dashes or underscores."));
   if ((body.password || "").length < 12)
-    return fail("The password must contain at least 12 characters.");
+    return fail(t("The password must contain at least 12 characters."));
   if (body.password !== body.confirmPassword)
-    return fail("The passwords do not match.");
+    return fail(t("The passwords do not match."));
 
   const previousServerSettings = serverSettings();
   let checks: PreflightCheck[] = [];
@@ -162,7 +163,7 @@ async function setup({ body }: PublicContext) {
     checks = (await preflight().catch(() => ({ checks: [] }))).checks;
   } catch (error) {
     updateServerSettings(previousServerSettings);
-    return fail(`Server connection could not be verified: ${error instanceof Error ? error.message : "unknown error"}`, 400);
+    return fail(t("Server connection could not be verified: {error}", { error: error instanceof Error ? error.message : t("unknown error") }), 400);
   }
   const salt = randomBytes(16).toString("hex");
   save("config", { username, salt, password: await hash(body.password, salt) });
@@ -171,7 +172,7 @@ async function setup({ body }: PublicContext) {
   const deviceDigest = digest(device);
   save("devices", {
     [deviceDigest]: {
-      name: (body.deviceName || "First browser").slice(0, 80),
+      name: (body.deviceName || t("First browser")).slice(0, 80),
       created: new Date().toISOString(),
     },
   });
@@ -203,7 +204,7 @@ async function login({ req, body }: PublicContext) {
     ((enroll.expires || 0) < Date.now() / 1000 ||
       !secureEqual(body.code || "", enroll.code || "invalid"))
   )
-    return rejected("New browser: enter an enrollment code generated in the dashboard.", 403);
+    return rejected(t("New browser: enter an enrollment code generated in the dashboard."), 403);
   const account = accounts().find((item) => item.username === body.username);
   // The hash is always computed, so the response time does not reveal the username.
   const passwordMatches = secureEqual(
@@ -211,11 +212,11 @@ async function login({ req, body }: PublicContext) {
     account?.password || "",
   );
   if (!account || !passwordMatches)
-    return rejected("Incorrect username or password", 401);
+    return rejected(t("Incorrect username or password"), 401);
   if (!enrolled) {
     device = token();
     known[digest(device)] = {
-      name: (body.deviceName || "Browser").slice(0, 80),
+      name: (body.deviceName || t("Browser")).slice(0, 80),
       created: new Date().toISOString(),
     };
     save("devices", known);
@@ -251,11 +252,11 @@ export const accountRoutes: Routes<Context> = {
         account.password || "",
       )
     )
-      return fail("The current password is incorrect.", 401);
+      return fail(t("The current password is incorrect."), 401);
     if ((body.newPassword || "").length < 12)
-      return fail("The new password must contain at least 12 characters.");
+      return fail(t("The new password must contain at least 12 characters."));
     if (body.newPassword !== body.confirmPassword)
-      return fail("The new passwords do not match.");
+      return fail(t("The new passwords do not match."));
     const salt = randomBytes(16).toString("hex");
     const password = await hash(body.newPassword, salt);
     if (account.owner) save("config", { ...read<Record<string, string>>("config", {}), salt, password });
@@ -273,14 +274,14 @@ export const accountRoutes: Routes<Context> = {
   "POST users/save": async ({ body, user }) => {
     const username = (body.username || "").trim();
     if (!USERNAME.test(username))
-      return fail("Use a username containing only letters, numbers, dots, dashes or underscores.");
+      return fail(t("Use a username containing only letters, numbers, dots, dashes or underscores."));
     const role: Role = body.role === "admin" ? "admin" : "viewer";
     const existing = accounts().find((item) => item.username === username);
-    if (existing?.owner) return fail("The owner account is changed under Change password.");
-    if (existing && username === user.name && role !== existing.role) return fail("You cannot change your own role.");
-    if (!existing && !body.password) return fail("Enter a password for the new account.");
+    if (existing?.owner) return fail(t("The owner account is changed under Change password."));
+    if (existing && username === user.name && role !== existing.role) return fail(t("You cannot change your own role."));
+    if (!existing && !body.password) return fail(t("Enter a password for the new account."));
     if (body.password && body.password.length < 12)
-      return fail("The password must contain at least 12 characters.");
+      return fail(t("The password must contain at least 12 characters."));
     const all = storedUsers();
     let credentials = existing ? { salt: existing.salt, password: existing.password } : { salt: "", password: "" };
     if (body.password) {
@@ -296,8 +297,8 @@ export const accountRoutes: Routes<Context> = {
   },
   "POST users/delete": ({ body, user }) => {
     const all = storedUsers();
-    if (!all[body.username]) return fail("Account not found.", 404);
-    if (body.username === user.name) return fail("You cannot delete your own account.");
+    if (!all[body.username]) return fail(t("Account not found."), 404);
+    if (body.username === user.name) return fail(t("You cannot delete your own account."));
     delete all[body.username];
     save("users", all);
     for (const [key, session] of sessions) if (session.user === body.username) sessions.delete(key);
@@ -308,7 +309,7 @@ export const accountRoutes: Routes<Context> = {
   "POST enrollment/create": ({ body }) => {
     const duration = Number(body.minutes || 15);
     if (![5, 15, 30].includes(duration))
-      return fail("Choose a valid code duration.");
+      return fail(t("Choose a valid code duration."));
     const code = randomBytes(12).toString("base64url");
     const expires = Math.floor(Date.now() / 1000) + duration * 60;
     save("enroll", { code, expires });
@@ -316,20 +317,20 @@ export const accountRoutes: Routes<Context> = {
     return NextResponse.json({ code, expires });
   },
   "POST device/rename": ({ body, devices: known }) => {
-    if (!known[body.id]) throw Error("Device not found");
+    if (!known[body.id]) throw Error(t("Device not found"));
     const name = String(body.name || "").trim().replace(/\s+/g, " ").slice(0, 80);
-    if (!name) throw Error("Enter a name");
+    if (!name) throw Error(t("Enter a name"));
     audit(`device renamed ${known[body.id].name} -> ${name}`);
     known[body.id] = { ...known[body.id], name };
     save("devices", known);
     return ok();
   },
   "POST device/revoke": ({ body, devices: known }) => {
-    if (!known[body.id]) throw Error("Device not found");
+    if (!known[body.id]) throw Error(t("Device not found"));
     // The only authorized browser is the one making this request: without it
     // nobody could create an access code, and no browser could sign in again.
     if (Object.keys(known).length === 1)
-      return fail("This is the only authorized browser. Authorize another one before revoking it.");
+      return fail(t("This is the only authorized browser. Authorize another one before revoking it."));
     const name = known[body.id].name;
     delete known[body.id];
     save("devices", known);

@@ -372,6 +372,28 @@ async function main() {
     await open(medium, "Containers");
     await picture(medium, "tablet-containers.png");
     await tablet.close();
+    // Other languages, among them one written right to left, at both widths.
+    for (const language of ["ro", "ar", "zh", "hi"]) {
+      for (const [name, options] of [["desktop", desktop], ["phone", { ...desktop, viewport: { width: 389, height: 780 }, isMobile: true, hasTouch: true }]]) {
+        const translated = await browser.newContext({ ...options, storageState: await context.storageState() });
+        await translated.addInitScript((value) => localStorage.setItem("lsc-language", value), language);
+        const shown = await translated.newPage();
+        await shown.goto("/");
+        await charts(shown);
+        await picture(shown, `language-${language}-${name}.png`);
+        if (name === "phone") {
+          await shown.locator(".menu-toggle").click();
+          await picture(shown, `language-${language}-phone-menu.png`);
+          await shown.locator("nav button").nth(2).click();
+          for (const folder of await shown.locator(".script-folder summary").all()) await folder.click();
+          await picture(shown, `language-${language}-phone-scripts.png`, { fullPage: true });
+        } else {
+          await shown.locator("nav button").last().click();
+          await picture(shown, `language-${language}-desktop-settings.png`);
+        }
+        await translated.close();
+      }
+    }
     // Opened from a phone's home screen: the page is drawn under the status bar
     // and above the home indicator, which Chromium stands in for with insets.
     const homeScreen = await browser.newContext({ ...desktop, viewport: { width: 390, height: 844 }, storageState: await context.storageState(), isMobile: true, hasTouch: true });

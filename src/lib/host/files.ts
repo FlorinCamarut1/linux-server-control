@@ -1,6 +1,7 @@
 // File browsing and editing on the server, confined to the allowed locations.
 import { spawn } from "node:child_process";
 import path from "node:path";
+import { msg, t } from "../i18n";
 import { audit } from "./store";
 import { allowedRoots, run, runInput, ssh } from "./ssh";
 export function isAllowedPath(value: string) {
@@ -15,30 +16,30 @@ export function isHiddenPath(value: string) {
 }
 function refuseHidden(requested: string, resolved: string, hidden: boolean) {
   if (!hidden && (isHiddenPath(resolved) || isHiddenPath(path.posix.normalize(requested))))
-    throw Error("Hidden files are shown only after Show hidden files");
+    throw Error(t("Hidden files are shown only after Show hidden files"));
 }
 export async function resolveAllowedDirectory(requested: string, hidden = false) {
   let directory = allowedRoots()[0];
   if (requested) {
     try { directory = (await run(["realpath", "-e", "--", requested])).trim(); }
-    catch { throw Error("Folder not found"); }
+    catch { throw Error(t("Folder not found")); }
   }
   if (!directory || !isAllowedPath(directory))
-    throw Error("This folder is outside the allowed locations");
+    throw Error(t("This folder is outside the allowed locations"));
   refuseHidden(requested || directory, directory, hidden);
   try { await run(["test", "-d", directory]); }
-  catch { throw Error("Choose a folder"); }
+  catch { throw Error(t("Choose a folder")); }
   return directory;
 }
 export async function resolveSelectedFile(requested: string, hidden = false) {
   let resolved: string;
   try { resolved = (await run(["realpath", "-e", "--", requested])).trim(); }
-  catch { throw Error("File not found"); }
+  catch { throw Error(t("File not found")); }
   if (!isAllowedPath(resolved))
-    throw Error("The selected file must be inside an allowed location");
+    throw Error(t("The selected file must be inside an allowed location"));
   refuseHidden(requested, resolved, hidden);
   try { await run(["test", "-f", resolved]); }
-  catch { throw Error("Choose a regular file"); }
+  catch { throw Error(t("Choose a regular file")); }
   return resolved;
 }
 const MAX_EDITABLE_FILE_BYTES = 512 * 1024;
@@ -46,18 +47,18 @@ export async function readEditableFile(requested: string, hidden = false) {
   const resolved = await resolveSelectedFile(requested, hidden);
   const size = Number((await run(["stat", "-c", "%s", resolved])).trim());
   if (!Number.isFinite(size) || size > MAX_EDITABLE_FILE_BYTES)
-    throw Error("Only text files up to 512 KB can be edited here");
+    throw Error(t("Only text files up to 512 KB can be edited here"));
   // An empty file has no content type yet; it opens so that it can be written.
   const mime = size ? (await run(["file", "--brief", "--mime-type", resolved])).trim() : "text/plain";
   if (!mime.startsWith("text/") && !mime.endsWith("json") && !mime.endsWith("xml"))
-    throw Error("This file is not a supported text file");
+    throw Error(t("This file is not a supported text file"));
   return { path: resolved, content: await run(["cat", resolved]) };
 }
 export async function saveEditableFile(requested: string, content: string, hidden = false) {
   const resolved = await resolveSelectedFile(requested, hidden);
   if (Buffer.byteLength(content, "utf8") > MAX_EDITABLE_FILE_BYTES)
-    throw Error("Only text files up to 512 KB can be saved here");
-  if (content.includes("\0")) throw Error("Binary content cannot be saved here");
+    throw Error(t("Only text files up to 512 KB can be saved here"));
+  if (content.includes("\0")) throw Error(t("Binary content cannot be saved here"));
   await runInput(["sh", "-c", 'cat > "$1"', "sh", resolved], content, 15000);
   forgetListings();
   audit("edited file " + resolved);
@@ -73,6 +74,15 @@ export type ScriptBrowserEntry = {
   path: string;
   type: "directory" | "script";
 };
+// The messages the Python file operation below raises, for translation.
+export const PYTHON_MESSAGES = [
+  msg("This path is outside the allowed locations"), msg("Allowed locations and their parents cannot be deleted"),
+  msg("Deleting symbolic links is not supported"), msg("File or folder not found"), msg("Enter a valid name"),
+  msg("Choose an allowed destination folder"), msg("A file or folder with this name already exists"),
+  msg("The selected file or folder cannot be changed"), msg("Symbolic links are not supported"),
+  msg("Choose a different allowed destination"), msg("A file or folder with this name already exists there"),
+  msg("A folder cannot be pasted inside itself"), msg("File operation failed"),
+];
 const fileOperation = String.raw`
 import json, os, sys, shutil, subprocess
 request = json.load(sys.stdin)
@@ -221,14 +231,17 @@ async function remoteFileOperation<T = Record<string, unknown>>(request: Record<
   return new Promise<T>((resolve, reject) => {
     const child = spawn(command, args, { stdio: ["pipe", "pipe", "pipe"] });
     let output = "", error = "";
-    const timeout = setTimeout(() => { child.kill(); reject(Error("File operation timed out")); }, 30000);
+    const timeout = setTimeout(() => { child.kill(); reject(Error(t("File operation timed out"))); }, 30000);
     child.stdout.on("data", (chunk) => { output += chunk; });
     child.stderr.on("data", (chunk) => { error += chunk; });
     child.on("error", (reason) => { clearTimeout(timeout); reject(reason); });
     child.on("close", (code) => {
       clearTimeout(timeout);
-      if (code !== 0) return reject(Error(error.trim().split("\n").pop() || "File operation failed"));
-      try { resolve(JSON.parse(output)); } catch { reject(Error("Invalid file response")); }
+      // Python reports "ValueError: <message>"; the messages are listed in PYTHON_MESSAGES.
+      // Newer Pythons may colour it; the colour codes are dropped.
+      const last = (error.replace(/\x1b\[[0-9;]*m/g, "").trim().split("\n").pop() || "").replace(/^\w+Error: /, "");
+      if (code !== 0) return reject(Error(t(last || "File operation failed")));
+      try { resolve(JSON.parse(output)); } catch { reject(Error(t("Invalid file response"))); }
     });
     child.stdin.on("error", () => {});
     child.stdin.end(JSON.stringify({ ...request, roots: allowedRoots() }));

@@ -15,6 +15,7 @@ It is intended for people comfortable administering their own server. It runs en
 - Set alert rules for temperature, CPU, RAM, disks and failed runs, and see on one page what needs attention.
 - Get alerts, failed runs, and power device changes on Discord, Slack, ntfy, or any webhook.
 - Add it to a phone's home screen, or install it on a computer, to open it as an app.
+- Use it in English, Romanian, Chinese, Hindi, Spanish, Arabic, French, Bengali, Portuguese, Russian or Urdu, chosen per device; notifications have a language of their own.
 - Choose a theme per device: Dark, Light, Nord, Dracula, Solarized, Gruvbox, Catppuccin, Tokyo Night, Rosé Pine, Black, Latte, or System.
 - Add accounts for other people: administrators, or read-only accounts that can look but not change.
 - Manage browser devices, password, server connection, storage paths, and dashboard-settings exports from **Settings**.

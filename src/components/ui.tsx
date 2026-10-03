@@ -3,6 +3,7 @@ import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from
 import { createPortal } from "react-dom";
 import { api } from "@/lib/client-api";
 import type { PreflightCheck, Run } from "@/lib/types";
+import { locale, msg, t } from "@/lib/i18n";
 import {
   Loader2,
   MoreHorizontal,
@@ -24,12 +25,17 @@ export function requestDialog(request: Omit<DialogRequest, "resolve">) {
     window.dispatchEvent(new CustomEvent("media-control-dialog", { detail: { ...request, resolve } })),
   );
 }
-export async function appConfirm(message: string, title = "Confirm action", confirmLabel = "Confirm", danger = false) {
+export async function appConfirm(message: string, title = t("Confirm action"), confirmLabel = t("Confirm"), danger = false) {
   return (await requestDialog({ kind: "confirm", title, message, confirmLabel, danger })) === true;
 }
-export async function appPrompt(message: string, defaultValue = "", title = "Enter a value", confirmLabel = "Continue") {
+export async function appPrompt(message: string, defaultValue = "", title = t("Enter a value"), confirmLabel = t("Continue")) {
   const result = await requestDialog({ kind: "prompt", title, message, confirmLabel, defaultValue });
   return typeof result === "string" ? result : null;
+}
+// A translated text with elements in it: rich(translated, { command: <code>…</code> }), where
+// the translated text holds {command}.
+export function rich(text: string, parts: Record<string, React.ReactNode>) {
+  return text.split(/\{(\w+)\}/).map((piece, index) => index % 2 ? <span key={index}>{parts[piece] ?? `{${piece}}`}</span> : piece);
 }
 export const Btn = ({
   className = "",
@@ -87,18 +93,19 @@ export function formatBytes(bytes: number) {
   if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
   const units = ["B", "KB", "MB", "GB", "TB", "PB"];
   const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
-  return `${(bytes / 1024 ** index).toFixed(index > 1 ? 1 : 0)} ${units[index]}`;
+  const digits = index > 1 ? 1 : 0;
+  return `${(bytes / 1024 ** index).toLocaleString(locale(), { minimumFractionDigits: digits, maximumFractionDigits: digits })} ${units[index]}`;
 }
 export function formatPercent(used: number, total: number) {
-  return total > 0 ? `${Math.round((used / total) * 100)}% used` : "Unavailable";
+  return total > 0 ? t("{percent}% used", { percent: Math.round((used / total) * 100) }) : t("Unavailable");
 }
 export function formatUptime(seconds: number) {
   const days = Math.floor(seconds / 86400);
   const hours = Math.floor((seconds % 86400) / 3600);
   const minutes = Math.floor((seconds % 3600) / 60);
-  if (days) return `${days}d ${hours}h`;
-  if (hours) return `${hours}h ${minutes}m`;
-  return `${minutes}m`;
+  if (days) return t("{days} d {hours} h", { days, hours });
+  if (hours) return t("{hours} h {minutes} min", { hours, minutes });
+  return t("{minutes} min", { minutes });
 }
 // navigator.clipboard only exists in secure contexts (HTTPS or localhost). The
 // dashboard is normally served over plain HTTP on the LAN, so fall back to
@@ -162,7 +169,7 @@ export function Modal({
       <section ref={panel} className="modal" role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1} onMouseDown={(e) => e.stopPropagation()}>
         <div className="panel-head">
           <h2 id={titleId}>{title}</h2>
-          <Btn onClick={close}>Close</Btn>
+          <Btn onClick={close}>{t("Close")}</Btn>
         </div>
         {children}
       </section>
@@ -297,7 +304,7 @@ export function DialogHost() {
       <div className="modal-body">
         <p>{request.message}</p>
         <div className="actions">
-          <Btn onClick={() => finish(false)}>Cancel</Btn>
+          <Btn onClick={() => finish(false)}>{t("Cancel")}</Btn>
           <Btn className={request.danger ? "danger" : "primary"} onClick={() => finish(true)}>{request.confirmLabel}</Btn>
         </div>
       </div>
@@ -309,32 +316,41 @@ export function PromptDialog({ request, finish }: { request: DialogRequest; fini
   return <Modal title={request.title} close={() => finish(null)}>
     <form onSubmit={(event) => { event.preventDefault(); if (value.trim()) finish(value); }}>
       <label>{request.message}<input autoFocus value={value} onChange={(event) => setValue(event.target.value)} /></label>
-      <div className="actions"><Btn type="button" onClick={() => finish(null)}>Cancel</Btn><Btn className="primary" disabled={!value.trim()}>{request.confirmLabel}</Btn></div>
+      <div className="actions"><Btn type="button" onClick={() => finish(null)}>{t("Cancel")}</Btn><Btn className="primary" disabled={!value.trim()}>{request.confirmLabel}</Btn></div>
     </form>
   </Modal>;
 }
 // How long a run took, in the largest units that matter.
 export function formatDuration(ms: number) {
   const seconds = ms / 1000;
-  if (seconds < 60) return `${seconds.toFixed(1)} s`;
+  if (seconds < 60) return t("{seconds} s", { seconds: seconds.toLocaleString(locale(), { minimumFractionDigits: 1, maximumFractionDigits: 1 }) });
   const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes} min ${Math.floor(seconds % 60)} s`;
-  return `${Math.floor(minutes / 60)} h ${minutes % 60} min`;
+  if (minutes < 60) return t("{minutes} min {seconds} s", { minutes, seconds: Math.floor(seconds % 60) });
+  return t("{hours} h {minutes} min", { hours: Math.floor(minutes / 60), minutes: minutes % 60 });
+}
+const RUN_STATUSES: Record<string, string> = { running: msg("running"), success: msg("success"), failed: msg("failed"), stopped: msg("stopped") };
+export function runStatusLabel(status: string) {
+  return RUN_STATUSES[status] ? t(RUN_STATUSES[status]) : status;
 }
 // A script run's status as a badge: running, success, failed (with its exit
 // code, or the time limit that stopped it) or stopped.
 export function RunBadge({ run }: { run: Pick<Run, "status" | "exitCode" | "timedOut"> }) {
   const tone = { success: "up", failed: "down", running: "root", stopped: "neutral" }[run.status];
-  const detail = run.status !== "failed" ? "" : run.timedOut ? " · time limit" : run.exitCode !== undefined ? ` · code ${run.exitCode}` : "";
-  return <span className={`badge ${tone}`}>{run.status}{detail}</span>;
+  const detail = run.status !== "failed" ? "" : run.timedOut ? ` · ${t("time limit")}` : run.exitCode !== undefined ? ` · ${t("code {code}", { code: run.exitCode })}` : "";
+  return <span className={`badge ${tone}`}>{runStatusLabel(run.status)}{detail}</span>;
 }
 // What became of a run, in words, for the log viewer.
 function describeRun(run: Run) {
-  const took = run.durationMs === undefined ? "" : ` after ${formatDuration(run.durationMs)}`;
-  if (run.status === "running") return `Running since ${new Date(run.startedAt).toLocaleTimeString()}`;
-  if (run.status === "success") return `Finished${took}`;
-  if (run.status === "stopped") return `Stopped${run.stoppedBy ? ` by ${run.stoppedBy}` : ""}${took}`;
-  return run.timedOut ? `Stopped by its time limit${took}` : `Failed with exit code ${run.exitCode ?? "unknown"}${took}`;
+  const duration = run.durationMs === undefined ? "" : formatDuration(run.durationMs);
+  if (run.status === "running") return t("Running since {time}", { time: new Date(run.startedAt).toLocaleTimeString(locale()) });
+  if (run.status === "success") return duration ? t("Finished after {duration}", { duration }) : t("Finished");
+  if (run.status === "stopped") {
+    if (run.stoppedBy) return duration ? t("Stopped by {name} after {duration}", { name: run.stoppedBy, duration }) : t("Stopped by {name}", { name: run.stoppedBy });
+    return duration ? t("Stopped after {duration}", { duration }) : t("Stopped");
+  }
+  if (run.timedOut) return duration ? t("Stopped by its time limit after {duration}", { duration }) : t("Stopped by its time limit");
+  const code = run.exitCode ?? t("unknown");
+  return duration ? t("Failed with exit code {code} after {duration}", { code, duration }) : t("Failed with exit code {code}", { code });
 }
 // A log that follows its source every 2 seconds. A script's log also shows its
 // run: whether it still runs, how it ended, and, with canStop, a way to stop
@@ -348,7 +364,7 @@ export function LiveLogViewer({
   close: () => void;
   canStop?: boolean;
 }) {
-  const [body, setBody] = useState("Loading logs…"),
+  const [body, setBody] = useState(() => t("Loading logs…")),
     [live, setLive] = useState(true),
     [loading, setLoading] = useState(true),
     [run, setRun] = useState<Run | null>(null),
@@ -366,10 +382,10 @@ export function LiveLogViewer({
   const refreshLogs = useCallback(async () => {
     try {
       const result = await api(logs.path, logs.request, true);
-      setBody(result.output || "No logs available.");
+      setBody(result.output || t("No logs available."));
       if (result.run) setRun(result.run);
     } catch (reason) {
-      setBody(reason instanceof Error ? reason.message : "Could not load logs");
+      setBody(reason instanceof Error ? reason.message : t("Could not load logs"));
     } finally {
       setLoading(false);
     }
@@ -397,14 +413,14 @@ export function LiveLogViewer({
     };
   }, [following, refreshLogs]);
   async function stopRun() {
-    if (!run || !await appConfirm(`Stop this run of ${run.scriptName}? The script and every process it started are ended, and the run is recorded as stopped.`, "Stop run", "Stop run", true)) return;
+    if (!run || !await appConfirm(t("Stop this run of {name}? The script and every process it started are ended, and the run is recorded as stopped.", { name: run.scriptName }), t("Stop run"), t("Stop run"), true)) return;
     setError("");
     setStopping(true);
     try {
       await api("script/stop", { runId: run.id });
       await refreshLogs();
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not stop the run");
+      setError(reason instanceof Error ? reason.message : t("Could not stop the run"));
       setStopping(false);
     }
   }
@@ -414,19 +430,19 @@ export function LiveLogViewer({
         <span className={following ? "live-status" : ""}>
           {loading && <Loader2 className="spin" size={14} />}
           {run && <RunBadge run={run} />}
-          {run ? describeRun(run) : following ? "Live updates every 2 seconds" : "Live updates paused"}
+          {run ? describeRun(run) : following ? t("Live updates every 2 seconds") : t("Live updates paused")}
         </span>
         <div className="actions">
           {!finished && (
             <Btn type="button" onClick={() => { if (!live) setLoading(true); setLive(!live); }}>
               {live ? <Pause size={15} /> : <Play size={15} />}
-              {live ? "Pause updates" : "Resume updates"}
+              {live ? t("Pause updates") : t("Resume updates")}
             </Btn>
           )}
           {canStop && run?.status === "running" && (
             <Btn type="button" className="danger" disabled={stopping} onClick={stopRun}>
               <Square size={15} />
-              {stopping ? "Stopping…" : "Stop run"}
+              {stopping ? t("Stopping…") : t("Stop run")}
             </Btn>
           )}
         </div>
@@ -447,7 +463,7 @@ export function AppLoading() {
     <div className="app-loading" role="status" aria-live="polite">
       <div>
         <Loader2 className="spin" size={22} />
-        <span>Working…</span>
+        <span>{t("Working…")}</span>
       </div>
     </div>
   );
@@ -460,17 +476,17 @@ export function LoadingScreen() {
           <img src="/icon.svg" alt="" />
         </span>
         <Loader2 className="spin" size={22} />
-        <p>Loading Linux Server Control…</p>
+        <p>{t("Loading Linux Server Control…")}</p>
       </div>
     </main>
   );
 }
 // The server requirement checks from setup and Settings, problems first.
 const CHECK_BADGES: Record<PreflightCheck["status"], [className: string, label: string]> = {
-  error: ["down", "Required"],
-  warning: ["down", "Missing"],
-  info: ["root", "Optional"],
-  ok: ["up", "OK"],
+  error: ["down", msg("Required")],
+  warning: ["down", msg("Missing")],
+  info: ["root", msg("Optional")],
+  ok: ["up", msg("OK")],
 };
 export function PreflightList({ checks }: { checks: PreflightCheck[] }) {
   const order = ["error", "warning", "info", "ok"];
@@ -478,7 +494,7 @@ export function PreflightList({ checks }: { checks: PreflightCheck[] }) {
     <ul className="preflight">
       {[...checks].sort((a, b) => order.indexOf(a.status) - order.indexOf(b.status)).map((check) => (
         <li key={check.id}>
-          <span className={`badge ${CHECK_BADGES[check.status][0]}`}>{CHECK_BADGES[check.status][1]}</span>
+          <span className={`badge ${CHECK_BADGES[check.status][0]}`}>{t(CHECK_BADGES[check.status][1])}</span>
           <div><b>{check.label}</b><small>{check.detail}</small></div>
         </li>
       ))}

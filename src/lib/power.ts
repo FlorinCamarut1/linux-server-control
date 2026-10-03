@@ -2,6 +2,7 @@ import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID }
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { audit, emitDashboardEvent, read, save, serverSettings } from "./server";
+import { msg, t } from "./i18n";
 
 // Smart plugs and energy meters. Each device model is a driver: the fields
 // its settings form needs, how to read the current power and, where the device
@@ -26,10 +27,10 @@ const TIMEOUT_MS = 8000;
 export function connectionError(error: unknown, target: string) {
   const failure = error as { code?: string; name?: string; cause?: { code?: string } };
   const code = failure?.cause?.code ?? failure?.code ?? failure?.name;
-  if (code === "ECONNREFUSED") return Error(`${target} refused the connection. Check the IP address; the device may have a new one.`);
-  if (code === "EHOSTUNREACH" || code === "ENETUNREACH") return Error(`${target} cannot be reached from the server. Check that it is on the same network.`);
-  if (code === "TimeoutError" || code === "ETIMEDOUT" || code === "UND_ERR_CONNECT_TIMEOUT") return Error(`${target} did not answer within ${TIMEOUT_MS / 1000} seconds. Check that it is powered and on the same network.`);
-  if (code === "ENOTFOUND" || code === "EAI_AGAIN") return Error(`The name ${target} could not be resolved.`);
+  if (code === "ECONNREFUSED") return Error(t("{target} refused the connection. Check the IP address; the device may have a new one.", { target }));
+  if (code === "EHOSTUNREACH" || code === "ENETUNREACH") return Error(t("{target} cannot be reached from the server. Check that it is on the same network.", { target }));
+  if (code === "TimeoutError" || code === "ETIMEDOUT" || code === "UND_ERR_CONNECT_TIMEOUT") return Error(t("{target} did not answer within {seconds} seconds. Check that it is powered and on the same network.", { target, seconds: TIMEOUT_MS / 1000 }));
+  if (code === "ENOTFOUND" || code === "EAI_AGAIN") return Error(t("The name {target} could not be resolved.", { target }));
   return Error((error as { message?: string })?.message || String(error));
 }
 // Each driver reads and checks the fields it needs from its device's JSON.
@@ -51,25 +52,25 @@ function request(url: string, init: { method?: string; headers?: Record<string, 
       res.on("error", (error) => reject(connectionError(error, target.host)));
       res.on("end", () => {
         const status = res.statusCode ?? 0;
-        if (status < 200 || status >= 300) return reject(Error(`The device answered HTTP ${status}`));
+        if (status < 200 || status >= 300) return reject(Error(t("The device answered HTTP {status}", { status })));
         const body = Buffer.concat(chunks);
         const cookie = (res.headers["set-cookie"]?.[0] ?? "").split(";")[0];
         resolve({ status, cookie, body, json: () => JSON.parse(body.toString("utf8")) });
       });
     });
-    req.on("timeout", () => req.destroy(Object.assign(Error("timed out"), { name: "TimeoutError" })));
+    req.on("timeout", () => req.destroy(Object.assign(Error(t("timed out")), { name: "TimeoutError" })));
     req.on("error", (error) => reject(connectionError(error, target.host)));
     req.end(init.body);
   });
 }
 const host = (value: string) => {
   const trimmed = value.trim().replace(/\/+$/, "");
-  if (!/^[\w.:[\]-]+$/.test(trimmed)) throw Error("Enter the device's IP address or host name");
+  if (!/^[\w.:[\]-]+$/.test(trimmed)) throw Error(t("Enter the device's IP address or host name"));
   return trimmed;
 };
 const watts = (value: unknown) => {
   const number = Number(value);
-  if (!Number.isFinite(number)) throw Error("The device did not report its power");
+  if (!Number.isFinite(number)) throw Error(t("The device did not report its power"));
   return Math.max(0, number);
 };
 
@@ -94,7 +95,7 @@ export class KlapSession {
     const reply = first.body;
     const remoteSeed = reply.subarray(0, 16);
     if (reply.length < 48 || !sha256(localSeed, remoteSeed, this.auth).equals(reply.subarray(16, 48)))
-      throw Error("The Tapo account email or password is not accepted by the plug");
+      throw Error(t("The Tapo account email or password is not accepted by the plug"));
     await request(`${this.base}/app/handshake2`, { method: "POST", headers: { Cookie: this.cookie }, body: sha256(remoteSeed, localSeed, this.auth) });
     const derive = (label: string) => sha256(Buffer.from(label), localSeed, remoteSeed, this.auth);
     this.key = derive("lsk").subarray(0, 16);
@@ -118,7 +119,7 @@ export class KlapSession {
     const decipher = createDecipheriv("aes-128-cbc", this.key, iv);
     const payload = response.body.subarray(32);
     const result = JSON.parse(Buffer.concat([decipher.update(payload), decipher.final()]).toString("utf8"));
-    if (result.error_code !== 0) throw Error(`The plug returned error ${result.error_code}`);
+    if (result.error_code !== 0) throw Error(t("The plug returned error {code}", { code: result.error_code }));
     return result.result;
   }
 }
@@ -129,7 +130,7 @@ async function tapoSession(config: Config) {
   } catch (error) {
     // Newer firmware closes the local API until it is allowed in the app.
     if (error instanceof Error && error.message.includes("refused the connection"))
-      throw Error(`${config.host.trim()} refused the connection. In the Tapo app, turn on Me > Third-Party Services > Third-Party Compatibility, then try again.`);
+      throw Error(t("{target} refused the connection. In the Tapo app, turn on Me > Third-Party Services > Third-Party Compatibility, then try again.", { target: config.host.trim() }));
     throw error;
   }
   return session;
@@ -137,11 +138,11 @@ async function tapoSession(config: Config) {
 const tapo: Driver = {
   id: "tapo",
   name: "TP-Link Tapo (P110, P115)",
-  description: "Read directly on the LAN with the Tapo account used in the Tapo app.",
+  description: msg("Read directly on the LAN with the Tapo account used in the Tapo app."),
   fields: [
-    { key: "host", label: "IP address", required: true, placeholder: "192.168.1.40" },
-    { key: "username", label: "Tapo account email", required: true },
-    { key: "password", label: "Tapo account password", secret: true, required: true },
+    { key: "host", label: msg("IP address"), required: true, placeholder: "192.168.1.40" },
+    { key: "username", label: msg("Tapo account email"), required: true },
+    { key: "password", label: msg("Tapo account password"), secret: true, required: true },
   ],
   async read(config) {
     const session = await tapoSession(config);
@@ -160,12 +161,12 @@ const shellyGen1Headers = (config: Config): Record<string, string> =>
 const shelly: Driver = {
   id: "shelly",
   name: "Shelly (Plug S, Plus/Pro plugs, PM)",
-  description: "Local HTTP API. Gen2+ devices need authentication turned off; Gen1 supports a user and password.",
+  description: msg("Local HTTP API. Gen2+ devices need authentication turned off; Gen1 supports a user and password."),
   fields: [
-    { key: "host", label: "IP address", required: true, placeholder: "192.168.1.50" },
-    { key: "channel", label: "Channel", placeholder: "0", help: "The relay or meter number, 0 for single plugs." },
-    { key: "username", label: "User (Gen1 only)" },
-    { key: "password", label: "Password (Gen1 only)", secret: true },
+    { key: "host", label: msg("IP address"), required: true, placeholder: "192.168.1.50" },
+    { key: "channel", label: msg("Channel"), placeholder: "0", help: msg("The relay or meter number, 0 for single plugs.") },
+    { key: "username", label: msg("User (Gen1 only)") },
+    { key: "password", label: msg("Password (Gen1 only)"), secret: true },
   ],
   async read(config) {
     const base = `http://${host(config.host)}`, channel = Number(config.channel || 0);
@@ -196,16 +197,16 @@ async function tasmotaCommand(config: Config, command: string) {
 const tasmota: Driver = {
   id: "tasmota",
   name: "Tasmota",
-  description: "Plugs flashed with Tasmota (Sonoff, Athom, Nous and others).",
+  description: msg("Plugs flashed with Tasmota (Sonoff, Athom, Nous and others)."),
   fields: [
-    { key: "host", label: "IP address", required: true, placeholder: "192.168.1.60" },
-    { key: "username", label: "Web user", help: "Only when a web password is set on the device." },
-    { key: "password", label: "Web password", secret: true },
+    { key: "host", label: msg("IP address"), required: true, placeholder: "192.168.1.60" },
+    { key: "username", label: msg("Web user"), help: msg("Only when a web password is set on the device.") },
+    { key: "password", label: msg("Web password"), secret: true },
   ],
   async read(config) {
     const status = await tasmotaCommand(config, "Status 8");
     const energy = status.StatusSNS?.ENERGY;
-    if (!energy) throw Error("This Tasmota device has no energy meter");
+    if (!energy) throw Error(t("This Tasmota device has no energy meter"));
     // The sensor status does not say whether the relay is on; ask for that too.
     const relay = await tasmotaCommand(config, "Power").catch(() => null);
     const state = relay?.POWER ?? relay?.POWER1;
@@ -218,22 +219,22 @@ const tasmota: Driver = {
 
 function homeAssistantUrl(config: Config) {
   const url = config.url.trim().replace(/\/+$/, "");
-  if (!/^https?:\/\/[^\s/]+/.test(url)) throw Error("Enter the Home Assistant URL, starting with http:// or https://");
+  if (!/^https?:\/\/[^\s/]+/.test(url)) throw Error(t("Enter the Home Assistant URL, starting with http:// or https://"));
   return url;
 }
 function entityId(id: string) {
-  if (!/^\w+\.\w+$/.test(id)) throw Error("Enter an entity ID such as sensor.plug_power");
+  if (!/^\w+\.\w+$/.test(id)) throw Error(t("Enter an entity ID such as sensor.plug_power"));
   return id;
 }
 const homeAssistant: Driver = {
   id: "homeassistant",
   name: "Home Assistant",
-  description: "Any power sensor in Home Assistant, read through its REST API with a long-lived access token.",
+  description: msg("Any power sensor in Home Assistant, read through its REST API with a long-lived access token."),
   fields: [
-    { key: "url", label: "Home Assistant URL", required: true, placeholder: "http://192.168.1.10:8123" },
-    { key: "token", label: "Long-lived access token", secret: true, required: true, help: "Create it in your Home Assistant profile, under Security." },
-    { key: "entity", label: "Power sensor entity", required: true, placeholder: "sensor.plug_power" },
-    { key: "switch", label: "Switch entity", placeholder: "switch.plug", help: "Optional, to show whether the plug is on and to switch it." },
+    { key: "url", label: msg("Home Assistant URL"), required: true, placeholder: "http://192.168.1.10:8123" },
+    { key: "token", label: msg("Long-lived access token"), secret: true, required: true, help: msg("Create it in your Home Assistant profile, under Security.") },
+    { key: "entity", label: msg("Power sensor entity"), required: true, placeholder: "sensor.plug_power" },
+    { key: "switch", label: msg("Switch entity"), placeholder: "switch.plug", help: msg("Optional, to show whether the plug is on and to switch it.") },
   ],
   async read(config) {
     const url = homeAssistantUrl(config);
@@ -279,9 +280,9 @@ export function publicDevices() {
 
 export async function savePowerDevice(input: Record<string, unknown>) {
   const driver = DRIVERS.find((item) => item.id === input.driver);
-  if (!driver) throw Error("Choose a device type");
+  if (!driver) throw Error(t("Choose a device type"));
   const name = String(input.name || "").trim().slice(0, 60);
-  if (!name) throw Error("Enter a name");
+  if (!name) throw Error(t("Enter a name"));
   const all = powerDevices();
   const id = typeof input.id === "string" && all.some((device) => device.id === input.id) ? input.id : randomUUID();
   const previous = all.find((device) => device.id === id);
@@ -290,7 +291,7 @@ export async function savePowerDevice(input: Record<string, unknown>) {
     let value = String(input[field.key] ?? "").trim().slice(0, 500);
     // A secret left blank or unchanged keeps the stored one.
     if (field.secret && (!value || value === "••••••••")) value = previous?.driver === driver.id ? previous.config[field.key] || "" : "";
-    if (field.required && !value) throw Error(`Enter ${field.label.toLowerCase()}`);
+    if (field.required && !value) throw Error(t("Enter “{field}”", { field: t(field.label) }));
     config[field.key] = value;
   }
   const device: PowerDevice = { id, name, driver: driver.id, enabled: input.enabled !== false && input.enabled !== "false", config };
@@ -308,9 +309,9 @@ export async function savePowerDevice(input: Record<string, unknown>) {
 // is turned off; the page asks before doing that.
 export async function switchPowerDevice(id: string, on: boolean) {
   const device = powerDevices().find((item) => item.id === id);
-  if (!device) throw Error("Device not found");
+  if (!device) throw Error(t("Device not found"));
   const driver = DRIVERS.find((item) => item.id === device.driver);
-  if (!driver?.switch || driver.switchable?.(device.config) === false) throw Error("This device cannot be switched from the dashboard");
+  if (!driver?.switch || driver.switchable?.(device.config) === false) throw Error(t("This device cannot be switched from the dashboard"));
   await driver.switch(device.config, on);
   audit(`power device ${device.name} switched ${on ? "on" : "off"}`);
   try {
@@ -324,7 +325,7 @@ export async function switchPowerDevice(id: string, on: boolean) {
 export function deletePowerDevice(id: string) {
   const all = powerDevices();
   const device = all.find((item) => item.id === id);
-  if (!device) throw Error("Device not found");
+  if (!device) throw Error(t("Device not found"));
   save("power-devices", all.filter((item) => item.id !== id));
   const state = powerState();
   delete state[id];
@@ -334,7 +335,7 @@ export function deletePowerDevice(id: string) {
 
 export function savePowerSettings(input: Record<string, unknown>) {
   const pricePerKwh = Number(input.pricePerKwh);
-  if (!Number.isFinite(pricePerKwh) || pricePerKwh < 0 || pricePerKwh > 1000) throw Error("Enter a price per kWh");
+  if (!Number.isFinite(pricePerKwh) || pricePerKwh < 0 || pricePerKwh > 1000) throw Error(t("Enter a price per kWh"));
   const currency = String(input.currency || "lei").trim().slice(0, 8) || "lei";
   save("power-settings", { pricePerKwh, currency });
 }
@@ -370,7 +371,7 @@ export async function samplePower() {
   const results = await Promise.all(devices.map(async (device) => {
     const driver = DRIVERS.find((item) => item.id === device.driver);
     try {
-      if (!driver) throw Error("Unknown device type");
+      if (!driver) throw Error(t("Unknown device type"));
       return { device, reading: await driver.read(device.config) };
     } catch (error) {
       return { device, error: error instanceof Error ? error.message : String(error) };
@@ -381,10 +382,10 @@ export async function samplePower() {
     // Announce changes only: a device that was failing and reads again, or the reverse.
     const wasFailing = Boolean(states[result.device.id]?.error);
     if (result.reading) {
-      if (wasFailing) emitDashboardEvent({ type: "power-online", severity: "success", title: `${result.device.name} is responding again`, message: `Current power ${Math.round(result.reading.powerW)} W.` });
+      if (wasFailing) emitDashboardEvent(() => ({ type: "power-online", severity: "success", title: t("{name} is responding again", { name: result.device.name }), message: t("Current power {watts} W.", { watts: Math.round(result.reading.powerW) }) }));
       recordReading(result.device.id, result.reading, now, states);
     } else {
-      if (!wasFailing) emitDashboardEvent({ type: "power-offline", severity: "warning", title: `${result.device.name} stopped responding`, message: result.error ?? "The device could not be read." });
+      if (!wasFailing) emitDashboardEvent(() => ({ type: "power-offline", severity: "warning", title: t("{name} stopped responding", { name: result.device.name }), message: result.error ?? t("The device could not be read.") }));
       states[result.device.id] = { ...(states[result.device.id] ?? { recent: [], hourly: [] }), error: result.error, errorAt: now };
       save("power", states, false);
     }

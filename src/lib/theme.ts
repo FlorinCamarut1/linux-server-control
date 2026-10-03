@@ -1,8 +1,10 @@
+import { msg } from "./i18n";
+
 // Themes are chosen per browser and stored locally, so a phone and a desktop
 // can use different ones. "system" follows the device's light or dark setting.
 export const THEMES = [
-  { id: "dark", name: "Dark", colors: ["#10151c", "#7dd3a7", "#f1f5f9"] },
-  { id: "light", name: "Light", colors: ["#ffffff", "#157a4f", "#111827"] },
+  { id: "dark", name: msg("Dark"), colors: ["#10151c", "#7dd3a7", "#f1f5f9"] },
+  { id: "light", name: msg("Light"), colors: ["#ffffff", "#157a4f", "#111827"] },
   { id: "nord", name: "Nord", colors: ["#2e3440", "#88c0d0", "#eceff4"] },
   { id: "dracula", name: "Dracula", colors: ["#282a36", "#bd93f9", "#f8f8f2"] },
   { id: "solarized", name: "Solarized", colors: ["#002b36", "#2aa198", "#fdf6e3"] },
@@ -10,9 +12,9 @@ export const THEMES = [
   { id: "catppuccin", name: "Catppuccin", colors: ["#1e1e2e", "#cba6f7", "#cdd6f4"] },
   { id: "tokyo-night", name: "Tokyo Night", colors: ["#1a1b26", "#7aa2f7", "#c0caf5"] },
   { id: "rose-pine", name: "Rosé Pine", colors: ["#1f1d2e", "#ebbcba", "#e0def4"] },
-  { id: "black", name: "Black", colors: ["#000000", "#7dd3a7", "#f1f5f9"] },
+  { id: "black", name: msg("Black"), colors: ["#000000", "#7dd3a7", "#f1f5f9"] },
   { id: "latte", name: "Latte", colors: ["#eff1f5", "#8839ef", "#4c4f69"] },
-  { id: "system", name: "System", colors: ["#10151c", "#ffffff", "#7dd3a7"] },
+  { id: "system", name: msg("System"), colors: ["#10151c", "#ffffff", "#7dd3a7"] },
 ] as const;
 export type ThemeId = (typeof THEMES)[number]["id"];
 const KEY = "lsc-theme";

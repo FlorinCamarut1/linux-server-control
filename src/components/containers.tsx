@@ -2,6 +2,7 @@
 import { useState } from "react";
 import { api } from "@/lib/client-api";
 import { Btn } from "@/components/ui";
+import { msg, t } from "@/lib/i18n";
 import type { ContainerLink } from "@/lib/container-links";
 import type { C } from "@/lib/types";
 import {
@@ -39,10 +40,10 @@ export function ContainerRow({
       className="container-row"
       onToggle={(event) => {
         if (!event.currentTarget.open || size !== null) return;
-        setSize("Loading…");
+        setSize(t("Loading…"));
         api("container/size", { name: c.Names }, true)
           .then((result) => setSize(result.size || "—"))
-          .catch(() => setSize("Unavailable"));
+          .catch(() => setSize(t("Unavailable")));
       }}
     >
       <summary>
@@ -51,12 +52,12 @@ export function ContainerRow({
         </div>
         <div className="service-main">
           <b>{c.Names}</b>
-          <span>{c.Image}</span>
+          <span className="path">{c.Image}</span>
         </div>
         <div className="service-links">
           {links.slice(0, 2).map((link) => (
             // Opening a link must not also toggle the row.
-            <a key={link.url} className="link-chip" href={link.url} target="_blank" rel="noopener noreferrer" title={`Open ${link.url}`} onClick={(event) => event.stopPropagation()}>
+            <a key={link.url} className="link-chip" href={link.url} target="_blank" rel="noopener noreferrer" title={t("Open {target}", { target: link.url })} onClick={(event) => event.stopPropagation()}>
               <ExternalLink size={13} />
               {link.label}
             </a>
@@ -65,7 +66,7 @@ export function ContainerRow({
         </div>
         <span className={`badge ${up ? "up" : "down"}`}>
           <Circle size={8} fill="currentColor" />
-          {up ? "Up" : "Down"}
+          {up ? t("Up") : t("Down")}
         </span>
         <div className="uptime">{c.Status}</div>
         <ChevronDown className="chevron" size={18} />
@@ -73,15 +74,15 @@ export function ContainerRow({
       <div className="details">
         <dl>
           {[
-            ["Container ID", c.ID],
-            ["Created", c.CreatedAt],
-            ["Networks", c.Networks],
-            ["Ports", c.Ports || "No published ports"],
-            ["Mounts", c.Mounts],
-            ["Size", size ?? c.Size],
+            [msg("Container ID"), c.ID],
+            [msg("Created"), c.CreatedAt],
+            [msg("Networks"), c.Networks],
+            [msg("Ports"), c.Ports || t("No published ports")],
+            [msg("Mounts"), c.Mounts],
+            [msg("Size"), size ?? c.Size],
           ].map(([a, b]) => (
             <div key={a}>
-              <dt>{a}</dt>
+              <dt>{t(String(a))}</dt>
               <dd>{b || "—"}</dd>
             </div>
           ))}
@@ -90,7 +91,7 @@ export function ContainerRow({
           {links.map((link) => (
             <a key={link.url} className="button" href={link.url} target="_blank" rel="noopener noreferrer" title={link.url}>
               <ExternalLink size={15} />
-              Open {link.label}
+              {t("Open {target}", { target: link.label })}
             </a>
           ))}
           <Btn
@@ -99,7 +100,7 @@ export function ContainerRow({
             }
           >
             <Terminal size={15} />
-            Logs
+            {t("Logs")}
           </Btn>
           {readOnly ? null : up ? (
             <>
@@ -117,7 +118,7 @@ export function ContainerRow({
                 ) : (
                   <RotateCcw size={15} />
                 )}
-                Restart
+                {t("Restart")}
               </Btn>
               <Btn
                 className="danger"
@@ -130,7 +131,7 @@ export function ContainerRow({
                 }
               >
                 <Square size={15} />
-                Stop
+                {t("Stop")}
               </Btn>
             </>
           ) : (
@@ -145,7 +146,7 @@ export function ContainerRow({
               }
             >
               <Play size={15} />
-              Start
+              {t("Start")}
             </Btn>
           )}
         </div>

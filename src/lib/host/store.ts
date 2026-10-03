@@ -4,6 +4,8 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomBytes, scrypt, timingSafeEqual } from "node:crypto";
 import { appendFileSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { type Language, isLanguage, msg } from "../i18n";
+import { inLanguage, setBackgroundLanguage } from "./language";
 export const DATA = process.env.DATA_DIR || "/app/data";
 // `next build` also loads this module, on machines where DATA_DIR may not be
 // creatable; a missing folder then surfaces on the first write instead.
@@ -51,13 +53,13 @@ export function persistSessions() {
 // because Next.js loads this module separately for the API routes and for the
 // background monitor; both must reach the same listeners.
 export const EVENT_TYPES = {
-  alert: "Alert triggered or back to normal",
-  "script-failed": "Script run failed",
-  "cron-failed": "Scheduled run failed",
-  "script-succeeded": "Run succeeded, for scripts set to announce it",
-  "power-offline": "Power device stopped responding",
-  "power-online": "Power device responding again",
-} as const;
+  alert: msg("Alert triggered or back to normal"),
+  "script-failed": msg("Script run failed"),
+  "cron-failed": msg("Scheduled run failed"),
+  "script-succeeded": msg("Run succeeded, for scripts set to announce it"),
+  "power-offline": msg("Power device stopped responding"),
+  "power-online": msg("Power device responding again"),
+};
 export type EventType = keyof typeof EVENT_TYPES;
 export type DashboardEvent = { type: EventType; title: string; message: string; severity: "info" | "warning" | "critical" | "success" };
 type EventListener = (event: DashboardEvent) => void;
@@ -65,7 +67,16 @@ const eventBus = globalThis as { lscEventListeners?: EventListener[] };
 export function onDashboardEvent(listener: EventListener) {
   (eventBus.lscEventListeners ??= []).push(listener);
 }
-export function emitDashboardEvent(event: DashboardEvent) {
+// The language of notifications, chosen in Settings → Notifications; also the
+// language of anything else the server writes outside a request.
+export function notificationLanguage(): Language {
+  const chosen = read<{ language?: string }>("notification-settings", {}).language;
+  return isLanguage(chosen) ? chosen : "en";
+}
+setBackgroundLanguage(notificationLanguage);
+// The event is written in the notification language, whoever caused it.
+export function emitDashboardEvent(build: () => DashboardEvent) {
+  const event = inLanguage(notificationLanguage(), build);
   for (const listener of eventBus.lscEventListeners ?? []) {
     try { listener(event); } catch (error) { console.error("Event listener failed:", error); }
   }

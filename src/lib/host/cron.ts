@@ -6,22 +6,23 @@ import path from "node:path";
 import { DATA, audit, emitDashboardEvent, save } from "./store";
 import { CommandError, ROOT_CRON_HELPER, ROOT_SCRIPT_HELPER, run, runInput, serverSettings, shell } from "./ssh";
 import { type CronRun, RECORD_ID, type Schedule, type Script, cronRuns, oneLine, parseArguments, schedules, scripts } from "./records";
+import { t } from "../i18n";
 // Shared by the schedule form and configuration restore, so both enforce the
 // same rules, in particular that root schedules may only run approved scripts.
 export function normalizeSchedule(input: Record<string, unknown>, knownScripts: Script[], rootCronAvailable: boolean): Schedule {
   const id = typeof input.id === "string" && RECORD_ID.test(input.id) ? input.id : randomBytes(16).toString("hex");
   const script = knownScripts.find((item) => item.id === input.scriptId);
   const command = typeof input.command === "string" ? input.command.trim() : "";
-  if (!script && !command) throw Error("Select an existing script");
+  if (!script && !command) throw Error(t("Select an existing script"));
   if (command.length > 2000 || /[\r\n\0]/.test(command))
-    throw Error("The command must be one line shorter than 2,000 characters");
+    throw Error(t("The command must be one line shorter than 2,000 characters"));
   const expression = typeof input.expression === "string" ? input.expression.trim() : "";
   validCron(expression);
   const runAs = input.runAs === "root" ? "root" : "user";
   if (runAs === "root" && command)
-    throw Error("Root schedules must use an approved script; custom root commands are disabled");
+    throw Error(t("Root schedules must use an approved script; custom root commands are disabled"));
   if (runAs === "root" && !rootCronAvailable)
-    throw Error("Root schedules have not been enabled on this server: they need both the root cron helper and the root script helper");
+    throw Error(t("Root schedules have not been enabled on this server: they need both the root cron helper and the root script helper"));
   // A script's arguments for this schedule, such as one of its run options; a
   // custom command carries its own.
   const args = script && typeof input.arguments === "string" ? input.arguments.trim() : "";
@@ -30,7 +31,7 @@ export function normalizeSchedule(input: Record<string, unknown>, knownScripts: 
     id,
     scriptId: script?.id || "",
     expression,
-    label: oneLine(input.label, 80) || "Schedule",
+    label: oneLine(input.label, 80) || t("Schedule"),
     enabled: input.enabled !== false && input.enabled !== "false",
     runAs,
     ...(command ? { command } : {}),
@@ -118,7 +119,7 @@ export async function rootScriptStatus() {
   }
 }
 export function validCron(x: string) {
-  if (!x) throw Error("Choose when the schedule should run");
+  if (!x) throw Error(t("Choose when the schedule should run"));
   if (x === "@reboot") return;
   const f = x.split(/\s+/);
   if (
@@ -127,7 +128,7 @@ export function validCron(x: string) {
       (v) => !/^(\*|\d+(-\d+)?)(\/\d+)?(,(\*|\d+(-\d+)?)(\/\d+)?)*$/.test(v),
     )
   )
-    throw Error("Invalid cron expression");
+    throw Error(t("Invalid cron expression"));
 }
 const CRON_MARKER = "# media-dashboard:";
 // Each account's schedules log to their own file: a log that root created
@@ -145,9 +146,9 @@ const MAX_CRON_BACKUPS = 20;
 // (a folder owned by root would lock that user's schedules out of it); the
 // dashboard creates it again each time it reads the logs.
 export function cronLine(schedule: Schedule, command: string, logFile: string, createFolder = true) {
-  if (!/^[\w-]{1,64}$/.test(schedule.id)) throw Error("Invalid schedule identifier");
+  if (!/^[\w-]{1,64}$/.test(schedule.id)) throw Error(t("Invalid schedule identifier"));
   validCron(schedule.expression);
-  if (/[\r\n]/.test(command)) throw Error("The command must be one line");
+  if (/[\r\n]/.test(command)) throw Error(t("The command must be one line"));
   // The markers make scheduled work observable without granting cron any additional privileges.
   const log = shell([logFile]);
   const folder = createFolder ? `mkdir -p ${shell([path.posix.dirname(logFile)])} 2>/dev/null; ` : "";
@@ -225,7 +226,7 @@ export async function collectCronRuns(log?: string | null) {
   const output = log === undefined ? await readScheduleLog() : log;
   if (output === null) return cronRuns();
   const labels = new Map(schedules().map((item) => [item.id, item.label]));
-  const label = (id: string) => labels.get(id) || "Schedule";
+  const label = (id: string) => labels.get(id) || t("Schedule");
   const active = new Map<string, CronRun>(); const parsed: CronRun[] = [];
   for (const line of output.split("\n")) {
     const start = /^MEDIA_DASHBOARD_START\s+(\S+)\s+(.+)$/.exec(line);
@@ -254,9 +255,11 @@ export async function collectCronRuns(log?: string | null) {
         const script = scripts().find((item) => item.id === schedule?.scriptId);
         const name = script?.name || schedule?.command || run.label;
         if (run.status === "failed")
-          emitDashboardEvent({ type: "cron-failed", severity: "critical", title: `Scheduled run failed: ${name}`, message: `${run.label}, started ${run.startedAt}, exit code ${run.exitCode ?? "unknown"}${run.exitCode === 124 && script?.timeLimitMinutes ? `: it took longer than its time limit of ${script.timeLimitMinutes} minutes` : ""}.` });
+          emitDashboardEvent(() => ({ type: "cron-failed", severity: "critical", title: t("Scheduled run failed: {name}", { name }), message: run.exitCode === 124 && script?.timeLimitMinutes
+            ? t("{label}, started {start}, exit code {code}: it took longer than its time limit of {minutes} minutes.", { label: run.label, start: run.startedAt, code: 124, minutes: script.timeLimitMinutes })
+            : t("{label}, started {start}, exit code {code}.", { label: run.label, start: run.startedAt, code: run.exitCode ?? t("unknown") }) }));
         else if (run.status === "success" && script?.notifySuccess)
-          emitDashboardEvent({ type: "script-succeeded", severity: "success", title: `Scheduled run finished: ${name}`, message: `${run.label}, started ${run.startedAt}, ended ${run.completedAt}.` });
+          emitDashboardEvent(() => ({ type: "script-succeeded", severity: "success", title: t("Scheduled run finished: {name}", { name }), message: t("{label}, started {start}, ended {end}.", { label: run.label, start: run.startedAt, end: run.completedAt ?? "" }) }));
       }
     save("cron-runs", all);
   }

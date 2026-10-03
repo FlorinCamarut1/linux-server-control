@@ -1,6 +1,7 @@
 // The records the dashboard stores (scripts, folders, schedules, runs, alerts)
 // and their types. Reading them needs no host access.
 import { read } from "./store";
+import { t } from "../i18n";
 export type Script = {
   id: string;
   name: string;
@@ -107,7 +108,7 @@ export function cronRuns() { return read<CronRun[]>("cron-runs", []); }
 export const RECORD_ID = /^[\w-]{1,64}$/;
 export const oneLine = (value: unknown, max: number) => {
   const text = typeof value === "string" ? value.trim() : "";
-  if (/[\r\n\0]/.test(text)) throw Error("Text values must be a single line");
+  if (/[\r\n\0]/.test(text)) throw Error(t("Text values must be a single line"));
   return text.slice(0, max);
 };
 export function scripts() {
@@ -134,7 +135,7 @@ export function schedules(): Schedule[] {
       id: `legacy-${script.id}`,
       scriptId: script.id,
       expression: script.cron,
-      label: "Imported schedule",
+      label: t("Imported schedule"),
       enabled: true,
       runAs: "user",
     }));
@@ -143,7 +144,7 @@ export function schedules(): Schedule[] {
 // backslash escapes one character. Used for run options and schedules.
 export function parseArguments(value: string) {
   if (value.length > 2000 || /[\r\n]/.test(value))
-    throw Error("Arguments must be a single line shorter than 2,000 characters");
+    throw Error(t("Arguments must be a single line shorter than 2,000 characters"));
   const args: string[] = [];
   let current = "", quote = "", escaped = false;
   for (const char of value) {
@@ -157,9 +158,9 @@ export function parseArguments(value: string) {
       if (current) { args.push(current); current = ""; }
     } else current += char;
   }
-  if (escaped || quote) throw Error("Arguments contain an unfinished quote or escape");
+  if (escaped || quote) throw Error(t("Arguments contain an unfinished quote or escape"));
   if (current) args.push(current);
   if (args.length > 30 || args.some((arg) => arg.length > 500))
-    throw Error("Too many or overly long arguments");
+    throw Error(t("Too many or overly long arguments"));
   return args;
 }

@@ -52,6 +52,7 @@ import {
   testServerConnection,
   updateServerSettings,
   verifySudoPassword,
+  notificationLanguage,
 } from "@/lib/server";
 import { DRIVERS, deletePowerDevice, powerHistory, publicDevices, savePowerDevice, savePowerSettings, powerSettings, switchPowerDevice } from "@/lib/power";
 import { CHANNEL_TYPES, deleteChannel, publicChannels, saveChannel, testChannel } from "@/lib/notify";
@@ -59,6 +60,7 @@ import { EVENT_TYPES } from "@/lib/server";
 import { accountRoutes } from "./auth";
 import { demoState } from "./demo";
 import { type Body, type Context, type Routes, ok } from "./http";
+import { isLanguage, t } from "@/lib/server";
 
 // Dashboard records stored in DATA_DIR; reading them needs no SSH.
 function records({ devices, user, session }: Context) {
@@ -92,7 +94,7 @@ async function state(context: Context) {
   try {
     snapshot = await hostSnapshot();
   } catch {
-    return NextResponse.json({ error: "Server unavailable. Check the SSH connection in Settings and reconnect.", code: "HOST_UNAVAILABLE" }, { status: 503 });
+    return NextResponse.json({ error: t("Server unavailable. Check the SSH connection in Settings and reconnect."), code: "HOST_UNAVAILABLE" }, { status: 503 });
   }
   recordMetricSample(snapshot.stats);
   const alerts = evaluateAlerts(snapshot);
@@ -128,14 +130,14 @@ async function history({ req, session }: Context) {
 
 function findScript(body: Body) {
   const script = scripts().find((item) => item.id === body.id);
-  if (!script) throw Error("Script not found");
+  if (!script) throw Error(t("Script not found"));
   return script;
 }
 
 async function changeSchedule(body: Body, change: "delete" | "toggle") {
   let all = schedules();
   const current = all.find((item) => item.id === body.id);
-  if (!current) throw Error("Schedule not found");
+  if (!current) throw Error(t("Schedule not found"));
   all =
     change === "delete"
       ? all.filter((item) => item.id !== body.id)
@@ -176,7 +178,7 @@ const hostRoutes: Routes<Context> = {
       !["start", "stop", "restart", "logs"].includes(body.action) ||
       !CONTAINER_NAME.test(body.name || "")
     )
-      throw Error("Invalid action");
+      throw Error(t("Invalid action"));
     const output =
       body.action === "logs"
         ? await containerLogs(body.name)
@@ -214,7 +216,7 @@ const fileRoutes: Routes<Context> = {
     const now = Date.now(), failures = sudoFailures.get(user.name);
     if (failures && now - failures.since > SUDO_WINDOW_MS) sudoFailures.delete(user.name);
     else if (failures && failures.count >= SUDO_ATTEMPTS)
-      throw Error(`Too many wrong sudo passwords. Try again in ${Math.ceil((failures.since + SUDO_WINDOW_MS - now) / 60000)} minute(s).`);
+      throw Error(t("Too many wrong sudo passwords. Try again in {minutes} minute(s).", { minutes: Math.ceil((failures.since + SUDO_WINDOW_MS - now) / 60000) }));
     try {
       await verifySudoPassword(String(body.password || ""));
     } catch (error) {
@@ -244,7 +246,7 @@ const fileRoutes: Routes<Context> = {
     const { body } = context;
     const action = body.action;
     if (!["delete", "copy", "move", "rename"].includes(action))
-      throw Error("Invalid file operation");
+      throw Error(t("Invalid file operation"));
     return NextResponse.json(
       await changeFile(
         action as "delete" | "copy" | "move" | "rename",
@@ -282,12 +284,12 @@ const scriptRoutes: Routes<Context> = {
     if (!script.runOptions?.length) return ok({ run: await runScript(script) });
     const option = Number(body.option);
     if (!Number.isInteger(option) || option < 0 || option >= script.runOptions.length)
-      throw Error("Choose a valid run option");
+      throw Error(t("Choose a valid run option"));
     const selected = script.runOptions[option];
     if (selected.needsFile && !body.file)
-      throw Error("Choose a file before running this option");
+      throw Error(t("Choose a file before running this option"));
     const value = selected.input ? String(body.value ?? "").trim() : "";
-    if (selected.input && !value) throw Error(`Enter ${selected.input.toLowerCase()} before running this option`);
+    if (selected.input && !value) throw Error(t("Enter “{field}” before running this option", { field: selected.input }));
     return ok({ run: await runScript(script, selected.value, selected.needsFile ? body.file : "", value) });
   },
   // The end of a run's log (the script's latest run without runId) and the
@@ -297,7 +299,7 @@ const scriptRoutes: Routes<Context> = {
     const runRecord = body.runId
       ? scriptRuns().find((item) => item.id === body.runId && item.scriptId === script.id)
       : scriptRuns().find((item) => item.scriptId === script.id);
-    const output = (runRecord?.logPath ? readRunLogEnd(runRecord.logPath) : null) ?? "No dashboard run log is available yet.";
+    const output = (runRecord?.logPath ? readRunLogEnd(runRecord.logPath) : null) ?? t("No dashboard run log is available yet.");
     return NextResponse.json({ output, run: runRecord ? publicRun(runRecord) : null });
   },
   "POST script/stop": async ({ body, user }) => {
@@ -336,7 +338,7 @@ const historyRoutes: Routes<Context> = {
   "GET history/runs": history,
   "GET history/metrics": ({ req }) => {
     const range = req.nextUrl.searchParams.get("range") || "24h";
-    if (!(range in HISTORY_RANGES)) throw Error("Choose 24h, 7d or 30d");
+    if (!(range in HISTORY_RANGES)) throw Error(t("Choose 24h, 7d or 30d"));
     return NextResponse.json(metricHistory(range as HistoryRange));
   },
   "POST alerts/save": ({ body }) => {
@@ -356,7 +358,10 @@ const historyRoutes: Routes<Context> = {
 };
 
 const powerRoutes: Routes<Context> = {
-  "GET power/drivers": () => NextResponse.json({ drivers: DRIVERS.map(({ id, name, description, fields }) => ({ id, name, description, fields })) }),
+  "GET power/drivers": () => NextResponse.json({ drivers: DRIVERS.map(({ id, name, description, fields }) => ({
+    id, name, description: t(description),
+    fields: fields.map((field) => ({ ...field, label: t(field.label), ...(field.help ? { help: t(field.help) } : {}) })),
+  })) }),
   "GET power/devices": () => NextResponse.json({ devices: publicDevices(), settings: powerSettings() }),
   "POST power/device/save": async ({ body }) => ok({ reading: await savePowerDevice(body) }),
   "POST power/device/delete": ({ body }) => {
@@ -370,13 +375,24 @@ const powerRoutes: Routes<Context> = {
   },
   "GET power/history": ({ req }) => {
     const range = req.nextUrl.searchParams.get("range") || "24h";
-    if (range !== "24h" && range !== "7d" && range !== "30d") throw Error("Choose 24h, 7d or 30d");
+    if (range !== "24h" && range !== "7d" && range !== "30d") throw Error(t("Choose 24h, 7d or 30d"));
     return NextResponse.json(powerHistory(range));
   },
 };
 
 const notificationRoutes: Routes<Context> = {
-  "GET notifications": () => NextResponse.json({ channels: publicChannels(), types: CHANNEL_TYPES, events: EVENT_TYPES }),
+  "GET notifications": () => NextResponse.json({
+    channels: publicChannels(),
+    types: CHANNEL_TYPES.map((type) => ({ ...type, name: t(type.name), help: t(type.help) })),
+    events: Object.fromEntries(Object.entries(EVENT_TYPES).map(([id, label]) => [id, t(label)])),
+    language: notificationLanguage(),
+  }),
+  "POST notifications/language": ({ body }) => {
+    if (!isLanguage(body.language)) throw Error(t("Choose a language"));
+    save("notification-settings", { language: body.language });
+    audit(`notification language ${body.language}`);
+    return ok();
+  },
   "POST notifications/save": ({ body }) => {
     saveChannel(body);
     return ok();

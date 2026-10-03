@@ -5,6 +5,7 @@ import { audit, emitDashboardEvent, read, save } from "./store";
 import { ROOT_CRON_HELPER, ROOT_SCRIPT_HELPER, run, runAsync, serverSettings, testServerConnection } from "./ssh";
 import { type AlertRule, type MetricSample, RECORD_ID, alertRules, oneLine, scriptRuns } from "./records";
 import { collectCronRuns, readScheduleLog, rootHelperStatus, trimScheduleLog } from "./cron";
+import { locale, msg, t } from "../i18n";
 export function metricSamples() {
   return read<MetricSample[]>("metrics", []);
 }
@@ -52,20 +53,20 @@ export function monitoredPaths() {
 }
 export async function addMonitoredPath(input: string) {
   const requested = cleanStoragePath(input);
-  if (!requested.startsWith("/") || /[\r\n\0]/.test(requested)) throw Error("Enter an absolute storage path");
+  if (!requested.startsWith("/") || /[\r\n\0]/.test(requested)) throw Error(t("Enter an absolute storage path"));
   let resolved: string;
   try {
     resolved = (await run(["realpath", "-e", "--", requested])).trim();
     await run(["test", "-d", resolved]);
   } catch {
-    throw Error("This storage path does not exist or is not a folder");
+    throw Error(t("This storage path does not exist or is not a folder"));
   }
   const all = monitoredPaths(); if (!all.includes(resolved)) save("monitored-paths", [...all, resolved]);
   audit("monitor storage path " + resolved); return resolved;
 }
 export function removeMonitoredPath(input: string) {
   const all = monitoredPaths().filter((item) => item !== input);
-  if (!all.length) throw Error("Keep at least one monitored storage path");
+  if (!all.length) throw Error(t("Keep at least one monitored storage path"));
   save("monitored-paths", all); audit("stop monitoring storage path " + input);
 }
 // One sample per interval, regardless of how many browsers are polling, so the
@@ -84,7 +85,7 @@ export function recordMetricSample(stats: SystemStats) {
 // Failed-run alerts count recent failures only; counting the whole history kept
 // an alert firing forever once the threshold had been reached.
 export const FAILED_RUN_WINDOW_MS = 24 * 60 * 60 * 1000;
-const ALERT_LABELS: Record<AlertRule["metric"], string> = { temperature: "CPU temperature", cpu: "CPU use", ram: "RAM use", disk: "System disk use", storage: "Storage use", failedScripts: "Failed script runs in the last 24 hours", stoppedContainers: "Stopped containers" };
+const ALERT_LABELS: Record<AlertRule["metric"], string> = { temperature: msg("CPU temperature"), cpu: msg("CPU use"), ram: msg("RAM use"), disk: msg("System disk use"), storage: msg("Storage use"), failedScripts: msg("Failed script runs in the last 24 hours"), stoppedContainers: msg("Stopped containers") };
 const ALERT_UNITS: Record<AlertRule["metric"], string> = { temperature: " °C", cpu: "%", ram: "%", disk: "%", storage: "%", failedScripts: "", stoppedContainers: "" };
 export function evaluateAlerts(snapshot: { stats: SystemStats; containers: { State: string }[] }) {
   const since = Date.now() - FAILED_RUN_WINDOW_MS;
@@ -107,19 +108,20 @@ export function evaluateAlerts(snapshot: { stats: SystemStats; containers: { Sta
   const updated = alertRules().map((rule) => {
     const cool = rule.cooldownMinutes * 60000;
     const value = values[rule.metric], above = value >= rule.threshold, unit = ALERT_UNITS[rule.metric];
-    const label = rule.metric === "storage" && fullest ? `${ALERT_LABELS.storage} of ${fullest.path}` : ALERT_LABELS[rule.metric];
+    // Written in the notification language, when the event is built.
+    const label = () => rule.metric === "storage" && fullest ? t("Storage use of {path}", { path: fullest.path }) : t(ALERT_LABELS[rule.metric]);
     const shown = Math.round(value * 10) / 10;
     if (rule.enabled && above && (!rule.lastTriggeredAt || now - rule.lastTriggeredAt >= cool)) {
       const next = { ...rule, lastTriggeredAt: now, active: true };
       triggered.push(next); audit(`alert triggered ${rule.name}: ${value}`);
-      emitDashboardEvent({ type: "alert", severity: "warning", title: `Alert: ${rule.name}`, message: `${label} is ${shown}${unit}, at or above the threshold of ${rule.threshold}${unit}.` });
+      emitDashboardEvent(() => ({ type: "alert", severity: "warning", title: t("Alert: {name}", { name: rule.name }), message: t("{label} is {value}, at or above the threshold of {threshold}.", { label: label(), value: `${shown.toLocaleString(locale())}${unit}`, threshold: `${rule.threshold.toLocaleString(locale())}${unit}` }) }));
       changed = true;
       return next;
     }
     if (rule.active && (!rule.enabled || !above)) {
       if (rule.enabled) {
         audit(`alert resolved ${rule.name}: ${value}`);
-        emitDashboardEvent({ type: "alert", severity: "success", title: `Back to normal: ${rule.name}`, message: `${label} is ${shown}${unit}, below the threshold of ${rule.threshold}${unit} again.` });
+        emitDashboardEvent(() => ({ type: "alert", severity: "success", title: t("Back to normal: {name}", { name: rule.name }), message: t("{label} is {value}, below the threshold of {threshold} again.", { label: label(), value: `${shown.toLocaleString(locale())}${unit}`, threshold: `${rule.threshold.toLocaleString(locale())}${unit}` }) }));
       }
       changed = true;
       return { ...rule, active: false };
@@ -132,10 +134,10 @@ export function evaluateAlerts(snapshot: { stats: SystemStats; containers: { Sta
 const ALERT_METRICS: AlertRule["metric"][] = ["temperature", "cpu", "ram", "disk", "storage", "failedScripts", "stoppedContainers"];
 export function normalizeAlert(input: Record<string, unknown>): AlertRule {
   const metric = input.metric as AlertRule["metric"];
-  if (!ALERT_METRICS.includes(metric)) throw Error("Invalid alert metric");
+  if (!ALERT_METRICS.includes(metric)) throw Error(t("Invalid alert metric"));
   const threshold = Number(input.threshold), cooldownMinutes = Number(input.cooldownMinutes);
   if (!Number.isFinite(threshold) || threshold < 0 || !Number.isFinite(cooldownMinutes) || cooldownMinutes < 1 || cooldownMinutes > 10080)
-    throw Error("Invalid alert values");
+    throw Error(t("Invalid alert values"));
   const lastTriggeredAt = Number(input.lastTriggeredAt);
   return {
     id: typeof input.id === "string" && RECORD_ID.test(input.id) ? input.id : randomBytes(16).toString("hex"),
@@ -153,13 +155,13 @@ export function saveAlert(input: Record<string, unknown>) {
 }
 // What the dashboard needs on the server, and which feature each tool serves.
 const REQUIRED_TOOLS: [tool: string, level: "error" | "warning", purpose: string][] = [
-  ["bash", "error", "Health statistics and scripts need it; the dashboard cannot load without it."],
-  ["free", "error", "RAM statistics need it (package procps); the dashboard cannot load without it."],
-  ["df", "error", "Disk statistics need it; the dashboard cannot load without it."],
-  ["python3", "warning", "The Files page and the script picker need it."],
-  ["file", "warning", "The file editor needs it to recognise text files."],
-  ["crontab", "warning", "Schedules need it (package cron or cronie)."],
-  ["docker", "warning", "The Containers page needs it."],
+  ["bash", "error", msg("Health statistics and scripts need it; the dashboard cannot load without it.")],
+  ["free", "error", msg("RAM statistics need it (package procps); the dashboard cannot load without it.")],
+  ["df", "error", msg("Disk statistics need it; the dashboard cannot load without it.")],
+  ["python3", "warning", msg("The Files page and the script picker need it.")],
+  ["file", "warning", msg("The file editor needs it to recognise text files.")],
+  ["crontab", "warning", msg("Schedules need it (package cron or cronie).")],
+  ["docker", "warning", msg("The Containers page needs it.")],
 ];
 const PREFLIGHT_SCRIPT = [
   'for tool in bash free df python3 file crontab docker; do if command -v "$tool" >/dev/null 2>&1; then echo "tool:$tool=ok"; else echo "tool:$tool=missing"; fi; done',
@@ -183,34 +185,34 @@ export async function preflight(): Promise<{ host: string; checks: PreflightChec
     const at = line.indexOf("=");
     return [line.slice(0, at), line.slice(at + 1)] as [string, string];
   }));
-  const checks: PreflightCheck[] = [{ id: "ssh", label: "SSH connection", status: "ok", detail: `Connected to ${host}.` }];
+  const checks: PreflightCheck[] = [{ id: "ssh", label: t("SSH connection"), status: "ok", detail: t("Connected to {host}.", { host }) }];
   for (const [tool, level, purpose] of REQUIRED_TOOLS) {
     const found = values.get(`tool:${tool}`) === "ok";
-    checks.push({ id: `tool:${tool}`, label: tool, status: found ? "ok" : level, detail: found ? "Installed." : `Not installed. ${purpose}` });
+    checks.push({ id: `tool:${tool}`, label: tool, status: found ? "ok" : level, detail: found ? t("Installed.") : `${t("Not installed.")} ${t(purpose)}` });
   }
   if (values.get("tool:docker") === "ok") {
     const docker = values.get("docker") || "";
-    checks.push({ id: "docker", label: "Docker access", status: docker === "ok" ? "ok" : "warning", detail: docker === "ok" ? "The SSH user may use Docker." : dockerProblem(docker) });
+    checks.push({ id: "docker", label: t("Docker access"), status: docker === "ok" ? "ok" : "warning", detail: docker === "ok" ? t("The SSH user may use Docker.") : dockerProblem(docker) });
   }
   const gnu = values.get("gnu") === "ok";
-  checks.push({ id: "gnu", label: "GNU core utilities", status: gnu ? "ok" : "warning", detail: gnu ? "realpath, df and du support the options used." : "realpath -e, df -B1 or du -b is not supported (BusyBox?). Storage cards, file checks and folder sizes need GNU coreutils." });
+  checks.push({ id: "gnu", label: t("GNU core utilities"), status: gnu ? "ok" : "warning", detail: gnu ? t("realpath, df and du support the options used.") : t("realpath -e, df -B1 or du -b is not supported (BusyBox?). Storage cards, file checks and folder sizes need GNU coreutils.") });
   const logs = values.get("logs") === "ok";
-  checks.push({ id: "logs", label: "Remote logs folder", status: logs ? "ok" : "warning", detail: logs ? `${settings.remoteLogs} is writable.` : `${settings.remoteLogs} cannot be created or written by the SSH user. Schedules log their runs there.` });
+  checks.push({ id: "logs", label: t("Remote logs folder"), status: logs ? "ok" : "warning", detail: logs ? t("{path} is writable.", { path: settings.remoteLogs }) : t("{path} cannot be created or written by the SSH user. Schedules log their runs there.", { path: settings.remoteLogs }) });
   for (const folder of settings.allowedPaths) {
     const found = values.get(`path:${folder}`) === "ok";
-    checks.push({ id: `path:${folder}`, label: `Allowed path ${folder}`, status: found ? "ok" : "warning", detail: found ? "The folder exists." : "This folder does not exist on the server." });
+    checks.push({ id: `path:${folder}`, label: t("Allowed path {path}", { path: folder }), status: found ? "ok" : "warning", detail: found ? t("The folder exists.") : t("This folder does not exist on the server.") });
   }
   const rootRun = values.get("rootrun") === "ok" || values.get("rootrun") === "old", rootCron = values.get("rootcron") === "ok";
-  const outdated = values.get("rootrun") === "old" ? " The root script helper is an older version that cannot stop a running root script or enforce a time limit; run install-root-script-access.sh again to update it." : "";
-  checks.push({ id: "root", label: "Root helpers", status: "info", detail: (rootRun && rootCron ? "Root scripts and root schedules are enabled." : rootRun ? "Root scripts are enabled; root schedules are not." : rootCron ? "Only the root cron helper is installed; root schedules also need the root script helper." : "Not installed. Scripts and schedules run as the SSH user.") + outdated });
+  const outdated = values.get("rootrun") === "old" ? ` ${t("The root script helper is an older version that cannot stop a running root script or enforce a time limit; run install-root-script-access.sh again to update it.")}` : "";
+  checks.push({ id: "root", label: t("Root helpers"), status: "info", detail: (rootRun && rootCron ? t("Root scripts and root schedules are enabled.") : rootRun ? t("Root scripts are enabled; root schedules are not.") : rootCron ? t("Only the root cron helper is installed; root schedules also need the root script helper.") : t("Not installed. Scripts and schedules run as the SSH user.")) + outdated });
   return { host, checks };
 }
 // Turns Docker's error into what the administrator has to do about it.
 export function dockerProblem(detail: string) {
-  if (/permission denied/i.test(detail)) return "The SSH user is not allowed to use Docker. Add it to the docker group and sign in again on the server.";
-  if (/not found|no such file/i.test(detail) && !/docker\.sock|daemon/i.test(detail)) return "Docker is not installed on the server.";
-  if (/cannot connect|daemon/i.test(detail)) return "The Docker daemon is not running on the server.";
-  return detail || "Docker did not answer.";
+  if (/permission denied/i.test(detail)) return t("The SSH user is not allowed to use Docker. Add it to the docker group and sign in again on the server.");
+  if (/not found|no such file/i.test(detail) && !/docker\.sock|daemon/i.test(detail)) return t("Docker is not installed on the server.");
+  if (/cannot connect|daemon/i.test(detail)) return t("The Docker daemon is not running on the server.");
+  return detail || t("Docker did not answer.");
 }
 export type SystemStats = {
   temperatureC: number | null;
@@ -346,14 +348,14 @@ export const CONTAINER_NAME = /^\w[\w.-]*$/;
 // alone, which is what the caller shows.
 const CONTAINER_LOGS_SCRIPT = 'if out=$(docker logs --tail 300 --timestamps "$1" 2>&1); then printf "%s\\n" "$out"; else printf "%s\\n" "$out" >&2; exit 1; fi';
 export async function containerLogs(name: string) {
-  if (!CONTAINER_NAME.test(name)) throw Error("Invalid container name");
+  if (!CONTAINER_NAME.test(name)) throw Error(t("Invalid container name"));
   const output = await run(["sh", "-c", CONTAINER_LOGS_SCRIPT, "sh", name]);
   return output.trim() ? output : "";
 }
 // Container sizes are expensive for Docker to compute, so they are only read
 // when a container's details are opened.
 export async function containerSize(name: string) {
-  if (!CONTAINER_NAME.test(name)) throw Error("Invalid container name");
+  if (!CONTAINER_NAME.test(name)) throw Error(t("Invalid container name"));
   return (await run(["docker", "ps", "-a", "--size", "--filter", `name=^/${name}$`, "--format", "{{.Size}}"])).trim();
 }
 // Samples metrics, evaluates alerts and records cron runs even while no browser
