@@ -7,6 +7,7 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 # The helper sits next to this installer, in a clone or in a copy of the folder.
+# shellcheck disable=SC1007 # an empty CDPATH for this cd only
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 dashboard_ssh_user=${1:-${SUDO_USER:-}}
 case "$dashboard_ssh_user" in

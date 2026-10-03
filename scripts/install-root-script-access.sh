@@ -17,6 +17,7 @@ esac
 [ "$#" -gt 0 ] || { echo "Provide at least one allowed script directory."; exit 64; }
 
 # The helper sits next to this installer, in a clone or in a copy of the folder.
+# shellcheck disable=SC1007 # an empty CDPATH for this cd only
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 install -m 0755 "$script_dir/media-dashboard-root-run" /usr/local/sbin/media-dashboard-root-run
 install -d -m 0755 /etc/media-dashboard
