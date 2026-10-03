@@ -44,7 +44,7 @@ docker compose pull
 docker compose up -d
 ```
 
-`latest` is checked every time Compose starts the dashboard. Set `VERSION` in `.env` to a release number, such as `0.3.0`, to stay on that release.
+`latest` is checked every time Compose starts the dashboard. Set `VERSION` in `.env` to a release number, such as `0.4.0`, to stay on that release.
 
 ## Security
 

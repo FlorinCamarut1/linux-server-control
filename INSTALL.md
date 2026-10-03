@@ -136,7 +136,7 @@ nano .env
 | `SCRIPT_ROOT` | Where the script picker opens. Your home folder is fine. |
 | `MONITORED_PATHS` | Disks or mounts to show as storage cards, for example `/mnt/media`. Use `/` if you have none. |
 | `REMOTE_LOGS` | Where schedules write their log. The default is fine. |
-| `VERSION` | `latest`, or a release number such as `0.3.0` to stay on that release. |
+| `VERSION` | `latest`, or a release number such as `0.4.0` to stay on that release. |
 
 Two rules for `ALLOWED_PATHS`: everyone who can sign in can change every file in these folders, so keep them narrow; and never use `/`, all of `/home`, `.ssh`, or this installation's `data` and `ssh` folders.
 
