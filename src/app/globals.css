@@ -112,7 +112,7 @@
   --line: #3f4757;
   --line-soft: #383f4d;
   --line-strong: #4c566a;
-  --muted: #a3adc0;
+  --muted: #b4bccb;
   --text: #eceff4;
   --text-soft: #d8dee9;
   --accent: #88c0d0;
@@ -223,7 +223,7 @@
   --line: #403b38;
   --line-soft: #383432;
   --line-strong: #665c54;
-  --muted: #a89984;
+  --muted: #bdae93;
   --text: #ebdbb2;
   --text-soft: #d5c4a1;
   --accent: #fabd2f;
@@ -334,7 +334,7 @@
   --line: #312e47;
   --line-soft: #2a2740;
   --line-strong: #524f67;
-  --muted: #908caa;
+  --muted: #a19db9;
   --text: #e0def4;
   --text-soft: #c9c6e0;
   --accent: #ebbcba;
@@ -393,13 +393,13 @@
   --accent-ink: #ffffff;
   --accent-soft: #e6daf9;
   --accent-line: #c4a3f3;
-  --success-text: #2f7a1f;
+  --success-text: #256317;
   --danger: #d20f39;
   --danger-text: #b50d32;
   --danger-soft: #f8dfe4;
   --danger-line: #eaa3b2;
   --violet-soft: #f6dcec;
-  --violet-text: #b0368f;
+  --violet-text: #962c79;
   --overlay: rgba(76,79,105,.45);
   --shadow: rgba(76,79,105,.2);
   --series-1: #2a78d6;
@@ -642,6 +642,13 @@ nav button.active {
   background: var(--accent);
   box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 14%, transparent);
 }
+.server i {
+  flex: 0 0 auto;
+}
+.server > div {
+  flex: 1;
+  min-width: 0;
+}
 .server b,
 .server small {
   display: block;
@@ -649,9 +656,50 @@ nav button.active {
 .server small {
   color: var(--muted);
   margin-top: 4px;
-  max-width: 155px;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Log out sits here, away from the page's Refresh button. */
+.server-logout {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: var(--control-h);
+  height: var(--control-h);
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface2);
+  color: var(--muted);
+  cursor: pointer;
+}
+.server-logout:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+/* The top bar of a phone names the page instead of the dashboard. */
+.brand-page {
+  display: none;
+}
+/* Shown only when reached with the keyboard. */
+.skip-link {
+  position: fixed;
+  z-index: 80;
+  top: calc(8px + env(safe-area-inset-top));
+  inset-inline-start: 8px;
+  padding: 8px 16px;
+  border: 1px solid var(--accent-line);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text);
+  transform: translateY(-200%);
+}
+.skip-link:focus {
+  transform: none;
+}
+main:focus {
+  outline: none;
 }
 main {
   padding: calc(32px + env(safe-area-inset-top)) calc(40px + env(safe-area-inset-right)) calc(32px + env(safe-area-inset-bottom)) 40px;
@@ -702,6 +750,9 @@ header p,
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+}
+.actions > label.button {
+  margin-bottom: 0;
 }
 .button {
   border: 1px solid var(--line);
@@ -803,7 +854,25 @@ header p,
   width: 20px;
 }
 .metric > div {
+  flex: 1;
   min-width: 0;
+}
+.metric-bar {
+  display: block;
+  height: 4px;
+  margin-top: 8px;
+  overflow: hidden;
+  border-radius: var(--radius-full);
+  background: var(--hover-strong);
+}
+.metric-bar i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+}
+.metric-bar.high i {
+  background: var(--danger);
 }
 .metric small,
 .metric strong {
@@ -1180,7 +1249,7 @@ header p,
 .container-row summary {
   list-style: none;
   display: grid;
-  grid-template-columns: var(--icon-box) minmax(180px, 1fr) auto 92px minmax(172px, 280px) 20px;
+  grid-template-columns: var(--icon-box) minmax(0, 1fr) auto 92px minmax(0, 240px) 20px;
   align-items: center;
   gap: 12px;
   padding: var(--panel-row-y) var(--panel-space-x);
@@ -1217,6 +1286,25 @@ header p,
   color: var(--muted);
   font-size: var(--text-sm);
   margin-top: 4px;
+}
+.service-main .service-status {
+  display: none;
+}
+.containers-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--section-gap);
+}
+/* On a phone, held either way, the list comes before the server's health,
+   which Overview also shows. */
+@media (max-width: 800px), (max-height: 500px) {
+  .containers-page > .panel {
+    order: -1;
+  }
+}
+/* A search field above a long list. */
+.list-search input {
+  margin: 0;
 }
 .service-links {
   display: flex;
@@ -1300,18 +1388,21 @@ a.button {
   padding: 4px var(--panel-space-x) 20px calc(var(--panel-space-x) + var(--icon-box) + 12px);
   background: var(--sunken);
 }
+.details > .actions {
+  margin-top: 12px;
+}
 .details dl {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 16px;
-  margin: 12px 0 20px;
+  margin: 20px 0 0;
 }
 .details dl div {
   min-width: 0;
 }
 .details dt {
   color: var(--muted);
-  font-size: var(--text-xs);
+  font-size: var(--text-sm);
   text-transform: uppercase;
   letter-spacing: 0.06em;
   margin-bottom: 4px;
@@ -1320,6 +1411,7 @@ a.button {
   margin: 0;
   font-size: var(--text-md);
   overflow-wrap: anywhere;
+  text-align: start;
 }
 .script-row,
 .device-row,
@@ -1356,9 +1448,8 @@ a.button {
 .script-folder summary span {
   min-width: 0;
 }
-.script-folder summary b,
-.script-folder summary small {
-  display: inline-block;
+.script-folder summary span {
+  overflow-wrap: anywhere;
 }
 .script-folder summary b {
   color: var(--text);
@@ -1377,6 +1468,14 @@ a.button {
 .grow {
   flex: 1;
   min-width: 0;
+}
+.row-side {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
 }
 /* A long path or command has no spaces to wrap at. */
 .grow b,
@@ -1402,6 +1501,82 @@ a.button {
   border: 0;
   background: none;
   color: inherit;
+}
+.page-alert {
+  align-items: center;
+  gap: 12px;
+  padding-block: 4px;
+}
+.page-alert > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.alert-close,
+.toast-close {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: var(--control-h);
+  height: var(--control-h);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.alert-close:hover,
+.toast-close:hover {
+  background: color-mix(in srgb, currentColor 12%, transparent);
+}
+.panel > .alert {
+  margin: 16px var(--panel-space-x);
+}
+/* What happened after an action, at the bottom of the screen, above any bar there. */
+.toasts {
+  position: fixed;
+  z-index: 70;
+  inset-inline: 0;
+  bottom: calc(16px + env(safe-area-inset-bottom) + var(--bottom-bar, 0px));
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  padding: 0 16px;
+  pointer-events: none;
+}
+.toast {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: min(560px, 100%);
+  padding-block: 4px;
+  padding-inline: 16px 4px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface2);
+  color: var(--text);
+  box-shadow: 0 12px 30px var(--shadow);
+  pointer-events: auto;
+}
+.toast > svg {
+  flex: 0 0 auto;
+}
+.toast > span {
+  flex: 1;
+  min-width: 0;
+  padding-block: 8px;
+  overflow-wrap: anywhere;
+}
+.toast.success > svg {
+  color: var(--success-text);
+}
+.toast.error {
+  border-color: var(--danger-line);
+  background: var(--danger-soft);
+  color: var(--danger-text);
+}
+body:has(.clipboard-bar) {
+  --bottom-bar: 72px;
 }
 .success {
   padding: 12px 16px;
@@ -1461,6 +1636,7 @@ a.button {
   margin: 0;
   padding: var(--panel-space-x);
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
   overflow: auto;
   font: var(--text-md)/1.6 ui-monospace,
     Consolas,
@@ -1514,6 +1690,31 @@ a.button {
 }
 .modal .panel-head {
   padding: 16px var(--modal-space);
+}
+.modal > .panel-head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--surface);
+}
+.modal .modal-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  margin: 16px calc(-1 * var(--modal-space)) calc(-1 * var(--modal-space));
+  padding: 12px var(--modal-space);
+  border-top: 1px solid var(--line);
+  background: var(--surface);
+}
+/* A message names a file or folder by its whole path, which has no spaces to wrap at. */
+.modal-body p,
+.modal label,
+.modal h2 {
+  overflow-wrap: anywhere;
 }
 .modal pre {
   padding: var(--modal-space);
@@ -1630,28 +1831,30 @@ select:focus {
   padding: 12px 12px;
   border-bottom: 1px solid var(--line);
 }
+.file-browser-head > div {
+  min-width: 0;
+}
 .file-browser-head b,
 .file-browser-head small {
   display: block;
 }
 .file-browser-head small {
-  max-width: 330px;
-  overflow: hidden;
   color: var(--muted);
   font: var(--text-sm)/1.4 ui-monospace, Consolas, monospace;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 .file-browser-roots {
   width: auto;
   min-width: 110px;
-  margin: 0 auto 0 0;
+  margin: 0;
+  margin-inline-end: auto;
   height: var(--control-h-sm);
   padding: 0 28px 0 8px;
   font-size: var(--text-sm);
 }
 .file-explorer-roots {
   width: auto;
+  max-width: 240px;
   margin: 0;
   height: var(--control-h);
   padding: 0 28px 0 8px;
@@ -1697,8 +1900,8 @@ select:focus {
   flex: 0 0 auto;
 }
 .file-explorer-tools {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 180px auto auto;
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 12px;
   padding: 12px 20px;
@@ -1708,8 +1911,18 @@ select:focus {
 .file-explorer-tools select {
   margin: 0;
 }
+.file-explorer-tools input[type="search"] {
+  flex: 1 1 140px;
+  width: auto;
+  min-width: 0;
+}
+.file-explorer-tools select {
+  flex: 0 1 180px;
+  width: auto;
+  min-width: 0;
+}
 .file-explorer-tools small {
-  white-space: nowrap;
+  flex: 1 1 auto;
 }
 .file-hidden-toggle {
   display: inline-flex;
@@ -1721,18 +1934,123 @@ select:focus {
   cursor: pointer;
 }
 .file-explorer-tools .file-hidden-toggle input {
-  width: auto;
+  width: 16px;
   accent-color: var(--accent);
 }
+.file-explorer-nav {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 20px;
+  border-bottom: 1px solid var(--line);
+  scroll-margin-top: 16px;
+}
+.file-explorer-nav:empty {
+  display: none;
+}
 .file-explorer-up {
+  flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  margin: 12px 20px 0;
+  min-height: var(--control-h);
+  padding-block: 0;
+  padding-inline: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface2);
+  color: var(--text);
+  cursor: pointer;
+}
+.file-explorer-up:hover {
+  background: var(--hover);
+}
+.file-crumbs {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  overflow-x: auto;
+  white-space: nowrap;
+  scrollbar-width: none;
+}
+.file-crumbs::-webkit-scrollbar {
+  display: none;
+}
+.file-crumbs span {
+  display: inline-flex;
+  align-items: center;
+  color: var(--muted);
+}
+.file-crumbs button {
+  min-height: var(--control-h);
+  padding: 0 4px;
   border: 0;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--accent);
   cursor: pointer;
+}
+.file-crumbs button:hover {
+  background: var(--hover);
+}
+.file-crumbs b {
+  padding: 0 4px;
+}
+[dir="rtl"] .file-crumbs svg,
+[dir="rtl"] .file-explorer-up svg,
+[dir="rtl"] .file-pager svg {
+  transform: scaleX(-1);
+}
+.file-pager {
+  justify-content: space-between;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--line);
+}
+.file-explorer-grid + .file-pager {
+  border-top: 1px solid var(--line);
+  border-bottom: 0;
+}
+.file-explorer-error {
+  margin: 16px 20px;
+}
+/* What was copied or cut, and where to paste it, along the bottom of the screen. */
+.clipboard-bar {
+  position: fixed;
+  z-index: 35;
+  bottom: 0;
+  inset-inline-end: 0;
+  inset-inline-start: calc(var(--sidebar-w) + env(safe-area-inset-left));
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 64px;
+  padding: 12px calc(20px + env(safe-area-inset-right)) calc(12px + env(safe-area-inset-bottom)) 20px;
+  border-top: 1px solid var(--line-strong);
+  background: var(--surface2);
+  box-shadow: 0 -8px 24px var(--shadow);
+}
+.clipboard-bar > svg {
+  flex: 0 0 auto;
+  color: var(--accent);
+}
+.clipboard-bar > span {
+  display: -webkit-box;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow-wrap: anywhere;
+}
+.clipboard-bar .button {
+  flex: 0 0 auto;
+}
+.clipboard-bar .button:last-child {
+  width: var(--control-h);
+  padding: 0;
+}
+body:has(.clipboard-bar) main {
+  padding-bottom: calc(96px + env(safe-area-inset-bottom));
 }
 .file-explorer-grid {
   display: grid;
@@ -1844,13 +2162,22 @@ select:focus {
 .file-explorer-grid.list .file-explorer-card:last-child {
   border-bottom: 0;
 }
+/* A row: the icon beside the whole name, with its size and date under it. */
 .file-explorer-grid.list .file-explorer-open {
   display: grid;
-  grid-template-columns: 36px minmax(0, 1fr) auto;
+  grid-template-columns: 36px minmax(0, 1fr);
   flex: 1;
   align-items: center;
-  gap: 8px;
-  padding: 12px 68px 12px 20px;
+  gap: 2px 8px;
+  padding-block: 12px;
+  padding-inline: 20px 68px;
+}
+.file-explorer-grid.list .file-explorer-open > svg {
+  grid-row: 1 / span 2;
+}
+.file-explorer-grid.list .file-name,
+.file-explorer-grid.list .file-meta {
+  grid-column: 2;
 }
 .file-explorer-grid.list .file-explorer-open svg {
   width: 20px;
@@ -1875,22 +2202,61 @@ select:focus {
   text-align: start;
   cursor: pointer;
 }
-.file-explorer-open:hover span {
+.file-explorer-open:hover .file-name {
   color: var(--accent);
 }
 .file-explorer-open svg {
   color: var(--accent);
   fill: color-mix(in srgb, var(--accent) 10%, transparent);
 }
-.file-explorer-open span,
-.file-explorer-open small {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+/* The whole name, however long: its end, such as S01E05.mkv, is often what
+   tells two files apart. A card shows three lines; its details show all. */
+.file-explorer-open .file-name,
+.file-explorer-open .file-meta {
+  align-self: stretch;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
-.file-explorer-open small {
+.file-explorer-grid:not(.list) .file-name {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+.file-explorer-open .file-meta {
   color: var(--muted);
   font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+}
+.file-details-name {
+  color: var(--text);
+  font-size: var(--text-lg);
+  font-weight: 600;
+  line-height: 1.4;
+}
+.notice {
+  padding: 12px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--sunken);
+  color: var(--text-soft);
+  font-size: var(--text-md);
+}
+.file-details dl {
+  display: grid;
+  gap: 12px;
+}
+.file-details dt {
+  margin-bottom: 4px;
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+.file-details dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.file-details dd code {
+  font: var(--text-md)/1.5 ui-monospace, Consolas, monospace;
 }
 .file-editor {
   padding: var(--modal-space);
@@ -1922,8 +2288,9 @@ select:focus {
 .file-editor .actions {
   margin-top: 12px;
 }
+/* Shorter on a short screen, so the dialog around it still shows its buttons. */
 .file-browser-list {
-  max-height: 255px;
+  max-height: min(320px, max(160px, 40dvh));
   overflow: auto;
 }
 .file-browser-row {
@@ -1950,14 +2317,15 @@ select:focus {
   background: var(--accent-soft);
   box-shadow: inset 3px 0 0 var(--accent);
 }
+[dir="rtl"] .file-browser-row[aria-pressed="true"] {
+  box-shadow: inset -3px 0 0 var(--accent);
+}
 .file-browser-row svg {
   color: var(--accent);
 }
 .file-browser-row span {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 .file-browser-row small,
 .file-browser-empty {
@@ -1980,11 +2348,33 @@ select:focus {
 }
 .file-browser-footer small {
   min-width: 0;
-  overflow: hidden;
   color: var(--muted);
   font: var(--text-sm)/1.4 ui-monospace, Consolas, monospace;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+}
+/* Links to the sections of the Settings page. */
+.section-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.section-links button {
+  min-height: var(--control-h-sm);
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-full);
+  background: var(--surface);
+  color: var(--text-soft);
+  font-size: var(--text-md);
+  cursor: pointer;
+}
+.section-links button:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.settings-section,
+.history-toolbar {
+  scroll-margin-top: 16px;
 }
 .option-toggle {
   display: flex;
@@ -2196,15 +2586,6 @@ label > textarea:disabled {
 .reconnect-sign-out {
   margin-top: 12px;
 }
-/* Browsers on phones zoom in on fields with text smaller than 16px. */
-@media (pointer: coarse) {
-  input:not([type="checkbox"]):not([type="radio"]),
-  select,
-  textarea,
-  .file-editor textarea {
-    font-size: 16px;
-  }
-}
 .spin {
   animation: spin 1s linear infinite;
 }
@@ -2216,6 +2597,60 @@ label > textarea:disabled {
 @media (max-width: 1200px) {
   .metrics {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  /* The status column gives way to a line under the container's name. */
+  .container-row summary {
+    grid-template-columns: var(--icon-box) minmax(0, 1fr) auto 92px 20px;
+  }
+  .container-row .uptime {
+    display: none;
+  }
+  .service-main .service-status {
+    display: block;
+  }
+}
+/* Between a phone and a wide screen (a phone held sideways, a tablet, half a
+   laptop screen) the side bar shows only the icons, leaving the page room. */
+@media (min-width: 801px) and (max-width: 1100px) {
+  :root {
+    --sidebar-w: 72px;
+  }
+  aside {
+    padding: calc(16px + env(safe-area-inset-top)) 12px calc(16px + env(safe-area-inset-bottom)) calc(12px + env(safe-area-inset-left));
+  }
+  .brand {
+    justify-content: center;
+    padding: 0 0 20px;
+  }
+  .brand b {
+    display: none;
+  }
+  nav button {
+    justify-content: center;
+    min-height: 44px;
+    padding: 0;
+  }
+  .nav-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .server {
+    flex-direction: column;
+    gap: 12px;
+    margin-top: auto;
+    padding: 12px 0 0;
+    border: 0;
+    background: transparent;
+  }
+  .server > div {
+    display: none;
+  }
+  main {
+    padding-inline: 24px calc(24px + env(safe-area-inset-right));
   }
 }
 @media (max-width: 800px) {
@@ -2242,6 +2677,18 @@ label > textarea:disabled {
   }
   .brand {
     padding: 0;
+  }
+  .brand-name {
+    display: none;
+  }
+  .brand-page {
+    display: block;
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    font-size: var(--text-lg);
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .menu-toggle {
     display: grid;
@@ -2323,12 +2770,27 @@ label > textarea:disabled {
     white-space: nowrap;
   }
   .container-row summary {
-    grid-template-columns: var(--icon-box) 1fr 80px 20px;
+    grid-template-columns: var(--icon-box) minmax(0, 1fr) 80px 20px;
   }
   /* On narrow screens the links are shown in the opened details instead. */
   .uptime,
   .service-links {
     display: none;
+  }
+  /* Names and images wrap instead of being cut. */
+  .service-main b,
+  .service-main span {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  .clipboard-bar {
+    inset-inline-start: 0;
+  }
+  /* Scrolled to, a section stops below the top bar. */
+  .settings-section,
+  .history-toolbar,
+  .file-explorer-nav {
+    scroll-margin-top: 72px;
   }
   .details {
     padding-inline-start: 20px;
@@ -2413,7 +2875,6 @@ label > textarea:disabled {
     padding: var(--panel-row-y) var(--panel-space-x);
   }
   .badge {
-    font-size: var(--text-xs);
     padding: 4px 8px;
   }
   .details {
@@ -2434,6 +2895,36 @@ label > textarea:disabled {
   .device-row {
     gap: 12px;
     padding: var(--panel-row-y) var(--panel-space-x);
+  }
+  /* A row's badges and buttons go to a line of their own under its text, so
+     that the text keeps the width; the "⋯" button stays at the top. */
+  .schedule-row,
+  .device-row {
+    flex-wrap: wrap;
+  }
+  .schedule-row > .menu-trigger,
+  .device-row > .menu-trigger,
+  .device-row > .menu-spacer {
+    order: 1;
+  }
+  .schedule-row > .row-side,
+  .device-row > .row-side {
+    order: 2;
+    flex-basis: 100%;
+    justify-content: flex-start;
+  }
+  .schedule-row:has(> .service-icon) > .row-side,
+  .device-row:has(> .service-icon) > .row-side {
+    padding-inline-start: calc(var(--icon-box) + 12px);
+  }
+  .row-side .button {
+    flex: 1;
+  }
+  /* Long range names wrap instead of being cut. */
+  .chart-filters .container-filters button {
+    padding: 4px 8px;
+    line-height: 1.2;
+    white-space: normal;
   }
   .history-fields {
     grid-template-columns: 1fr;
@@ -2486,6 +2977,16 @@ label > textarea:disabled {
   .modal .panel-head h2 {
     font-size: var(--text-lg);
   }
+  .modal .modal-actions .button {
+    flex: 1;
+  }
+  .file-details-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .file-details-actions .button.primary {
+    grid-column: 1 / -1;
+  }
   .path-input,
   .file-browser-head,
   .file-browser-footer,
@@ -2499,22 +3000,34 @@ label > textarea:disabled {
   }
   .file-explorer-roots {
     width: 100%;
+    max-width: none;
+  }
+  /* The tools of Files take as little height as they can, so that the first
+     files are on the first screen: no panel note, one row of buttons without
+     icons, search and sort side by side, and no note on folder sizes. */
+  .panel-head:has(.file-explorer-actions) > div > p,
+  .file-explorer-tools small {
+    display: none;
+  }
+  .file-explorer-actions .button svg {
+    display: none;
+  }
+  .file-explorer-tools select {
+    flex-basis: 150px;
   }
   .file-explorer-path,
-  .file-explorer-grid {
-    padding-left: 12px;
-    padding-right: 12px;
+  .file-explorer-grid,
+  .file-explorer-tools,
+  .file-explorer-nav,
+  .file-pager {
+    padding-inline: 12px;
   }
-  .file-explorer-tools {
-    grid-template-columns: 1fr;
-    padding-left: 12px;
-    padding-right: 12px;
+  .file-explorer-error {
+    margin-inline: 12px;
   }
-  .file-explorer-tools small {
-    white-space: normal;
-  }
-  .file-explorer-up {
-    margin-inline-start: 12px;
+  .clipboard-bar {
+    gap: 8px;
+    padding-inline: calc(12px + env(safe-area-inset-left)) calc(12px + env(safe-area-inset-right));
   }
   .file-explorer-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2529,10 +3042,7 @@ label > textarea:disabled {
   }
   .file-explorer-grid.list .file-explorer-open {
     grid-template-columns: 28px minmax(0, 1fr);
-    padding: 12px 56px 12px 12px;
-  }
-  .file-explorer-grid.list .file-explorer-open small {
-    display: none;
+    padding-inline: 12px 64px;
   }
   .file-explorer-open {
     padding: 12px 12px 12px;
@@ -2557,5 +3067,45 @@ label > textarea:disabled {
   .modal pre {
     max-height: 48vh;
     font-size: var(--text-sm);
+  }
+}
+/* Touch screens: controls a finger can hit (44px), and fields with 16px text,
+   under which phones zoom in when one is focused. Last, so that it overrides
+   the sizes set above. */
+@media (pointer: coarse) {
+  :root {
+    --control-h: 44px;
+    --control-h-sm: 40px;
+  }
+  .menu-items button {
+    min-height: 44px;
+  }
+  .file-hidden-toggle,
+  .option-file-toggle,
+  .event-choices label {
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+  }
+  input[type="checkbox"],
+  input[type="radio"],
+  .file-explorer-tools .file-hidden-toggle input {
+    width: 20px;
+    height: 20px;
+  }
+  .file-explorer-menu .menu-trigger {
+    width: var(--control-h);
+    height: var(--control-h);
+  }
+  input:not([type="checkbox"]):not([type="radio"]),
+  select,
+  textarea,
+  label > textarea,
+  .file-editor textarea,
+  .file-explorer-path input,
+  .file-explorer-roots,
+  .file-browser-roots,
+  .run-option-fields input {
+    font-size: 16px;
   }
 }

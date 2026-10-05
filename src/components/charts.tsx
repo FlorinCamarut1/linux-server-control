@@ -1,5 +1,5 @@
 "use client";
-import { memo, useCallback, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { locale, msg, t } from "@/lib/i18n";
 
 // Charts drawn as inline SVG. Colors come from the theme's validated chart
@@ -74,6 +74,37 @@ function dates() {
 export function formatTime(at: number, spanMs: number) {
   return (spanMs <= 36 * 3600000 ? dates().clockTime : dates().dayMonth).format(at);
 }
+// Axis labels: clock times over a day, with the date where the day changes, so
+// that the two ends of the last 24 hours do not read as the same time.
+function axisLabels(ticks: number[], spanMs: number) {
+  const day = (at: number) => new Date(at).toDateString();
+  return ticks.map((at, index) => {
+    const time = formatTime(at, spanMs);
+    if (spanMs > 36 * 3600000 || day(at) === day(ticks[index ? index - 1 : ticks.length - 1])) return time;
+    return `${dates().dayMonth.format(at)} ${time}`;
+  });
+}
+// A finger leaves the chart when it is lifted, so a value picked by touch stays
+// shown until the next press outside the chart; the mouse leaving hides it.
+function useStickyHover(clear: () => void) {
+  const chart = useRef<HTMLDivElement | null>(null);
+  const touched = useRef(false);
+  useEffect(() => {
+    const press = (event: PointerEvent) => {
+      if (touched.current && !chart.current?.contains(event.target as Node)) {
+        touched.current = false;
+        clear();
+      }
+    };
+    document.addEventListener("pointerdown", press);
+    return () => document.removeEventListener("pointerdown", press);
+  }, [clear]);
+  return {
+    chart,
+    touchDown: (event: React.PointerEvent) => { touched.current = event.pointerType !== "mouse"; },
+    pointerLeave: (event: React.PointerEvent) => { if (event.pointerType === "mouse") clear(); },
+  };
+}
 const number = (value: number, digits: number) => value.toLocaleString(locale(), { minimumFractionDigits: digits, maximumFractionDigits: digits });
 
 // The key mirrors the mark: a short line for lines, a square for bars.
@@ -135,6 +166,7 @@ type LineChartProps = {
 export const LineChart = memo(function LineChart({ times, series, unit, yMax, digits = 1, empty = t("No samples in this range yet.") }: LineChartProps) {
   const { ref, width } = useWidth();
   const [hovered, setHover] = useState<number | null>(null);
+  const { chart, touchDown, pointerLeave } = useStickyHover(useCallback(() => setHover(null), []));
   // A refresh can leave fewer points than the one the pointer was on.
   const hover = hovered !== null && hovered < times.length ? hovered : null;
   const plotWidth = width - MARGIN.left - MARGIN.right;
@@ -142,9 +174,11 @@ export const LineChart = memo(function LineChart({ times, series, unit, yMax, di
   const format = (value: number | null) => (value === null ? "—" : `${number(value, digits)} ${unit}`);
   const xTicks = useMemo(() => {
     if (times.length < 2) return [];
-    const count = Math.max(2, Math.min(6, Math.floor(plotWidth / 110)));
+    // Labels that carry a date need more room.
+    const count = Math.max(2, Math.min(6, Math.floor(plotWidth / 130)));
     return Array.from({ length: count }, (_, index) => start + (span * index) / (count - 1));
   }, [times.length, plotWidth, start, span]);
+  const xLabels = useMemo(() => axisLabels(xTicks, span), [xTicks, span]);
   const drawn = useMemo(() => {
     let max = yMax ?? 0, any = false;
     for (const item of series) for (const value of item.values) if (value !== null) { any = true; if (value > max) max = value; }
@@ -209,7 +243,7 @@ export const LineChart = memo(function LineChart({ times, series, unit, yMax, di
   return (
     <div ref={ref} className="chart">
       <Legend series={series} />
-      <div className="chart-plot">
+      <div className="chart-plot" ref={chart}>
         <svg
           width={width}
           height={PLOT_HEIGHT + MARGIN.top + MARGIN.bottom}
@@ -217,8 +251,8 @@ export const LineChart = memo(function LineChart({ times, series, unit, yMax, di
           aria-label={t("{series} over time", { series: series.map((item) => item.label).join(", ") })}
           tabIndex={0}
           onPointerMove={(event) => pick(event.clientX, event.clientY, event.currentTarget)}
-          onPointerDown={(event) => pick(event.clientX, event.clientY, event.currentTarget)}
-          onPointerLeave={() => setHover(null)}
+          onPointerDown={(event) => { touchDown(event); pick(event.clientX, event.clientY, event.currentTarget); }}
+          onPointerLeave={pointerLeave}
           onBlur={() => setHover(null)}
           onKeyDown={(event) => {
             if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
@@ -233,7 +267,7 @@ export const LineChart = memo(function LineChart({ times, series, unit, yMax, di
             </g>
           ))}
           {xTicks.map((at, index) => (
-            <text key={at} className="chart-axis" x={x(at)} y={MARGIN.top + PLOT_HEIGHT + 18} textAnchor={index === 0 ? "start" : index === xTicks.length - 1 ? "end" : "middle"}>{formatTime(at, span)}</text>
+            <text key={at} className="chart-axis" x={x(at)} y={MARGIN.top + PLOT_HEIGHT + 18} textAnchor={index === 0 ? "start" : index === xTicks.length - 1 ? "end" : "middle"}>{xLabels[index]}</text>
           ))}
           {area && <path d={area} fill={seriesColor(0)} opacity={0.1} />}
           {paths.map((d, index) => <path key={series[index].id} d={d} fill="none" stroke={seriesColor(index)} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />)}
@@ -277,6 +311,7 @@ type ColumnChartProps = {
 export const ColumnChart = memo(function ColumnChart({ labels, series, unit, digits = 2, empty = t("No data in this range yet.") }: ColumnChartProps) {
   const { ref, width } = useWidth();
   const [hover, setHover] = useState<number | null>(null);
+  const { chart, touchDown, pointerLeave } = useStickyHover(useCallback(() => setHover(null), []));
   const plotWidth = width - MARGIN.left - MARGIN.right;
   const totals = labels.map((_, index) => series.reduce((sum, item) => sum + (item.values[index] || 0), 0));
   if (!totals.some((total) => total > 0)) return <div ref={ref} className="chart-empty">{empty}</div>;
@@ -288,11 +323,33 @@ export const ColumnChart = memo(function ColumnChart({ labels, series, unit, dig
   const every = Math.ceil(labels.length / Math.max(2, Math.floor(plotWidth / 56)));
   const format = (value: number) => `${number(value, digits)} ${unit}`;
   const hoverLeft = hover === null ? 0 : MARGIN.left + band * hover + band / 2;
+  // The column under the pointer, however narrow the columns are: a phone
+  // shows 24 hours in columns a few pixels wide.
+  const pick = (clientX: number, element: SVGSVGElement) => {
+    const at = clientX - element.getBoundingClientRect().left - MARGIN.left;
+    setHover(Math.max(0, Math.min(labels.length - 1, Math.floor(at / band))));
+  };
   return (
     <div ref={ref} className="chart">
       <Legend series={series} shape="square" />
-      <div className="chart-plot">
-        <svg width={width} height={PLOT_HEIGHT + MARGIN.top + MARGIN.bottom} role="img" aria-label={t("{unit} per period", { unit })} onPointerLeave={() => setHover(null)}>
+      <div className="chart-plot" ref={chart}>
+        {/* One stop for the keyboard; the arrow keys move between the columns. */}
+        <svg
+          width={width}
+          height={PLOT_HEIGHT + MARGIN.top + MARGIN.bottom}
+          role="img"
+          aria-label={t("{unit} per period", { unit })}
+          tabIndex={0}
+          onPointerMove={(event) => pick(event.clientX, event.currentTarget)}
+          onPointerDown={(event) => { touchDown(event); pick(event.clientX, event.currentTarget); }}
+          onPointerLeave={pointerLeave}
+          onBlur={() => setHover(null)}
+          onKeyDown={(event) => {
+            if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+            event.preventDefault();
+            setHover((current) => Math.max(0, Math.min(labels.length - 1, (current ?? labels.length - 1) + (event.key === "ArrowLeft" ? -1 : 1))));
+          }}
+        >
           {ticks.map((tick) => (
             <g key={tick}>
               <line className="chart-grid" x1={MARGIN.left} x2={MARGIN.left + plotWidth} y1={y(tick)} y2={y(tick)} />
@@ -319,18 +376,6 @@ export const ColumnChart = memo(function ColumnChart({ labels, series, unit, dig
             return (
               <g key={label}>
                 {segments}
-                <rect
-                  x={MARGIN.left + band * index}
-                  y={MARGIN.top}
-                  width={band}
-                  height={PLOT_HEIGHT}
-                  fill="transparent"
-                  tabIndex={0}
-                  aria-label={`${label}: ${format(totals[index])}`}
-                  onPointerEnter={() => setHover(index)}
-                  onFocus={() => setHover(index)}
-                  onBlur={() => setHover(null)}
-                />
                 {index % every === 0 && <text className="chart-axis" x={MARGIN.left + band * index + band / 2} y={MARGIN.top + PLOT_HEIGHT + 18} textAnchor="middle">{label}</text>}
               </g>
             );

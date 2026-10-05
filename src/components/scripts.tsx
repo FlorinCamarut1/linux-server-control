@@ -2,7 +2,7 @@
 import { useRef, useState } from "react";
 import { api } from "@/lib/client-api";
 import { FileBrowser, DirectoryBrowser, ScriptBrowser } from "@/components/files";
-import { appConfirm, Btn, Modal, rich } from "@/components/ui";
+import { appConfirm, Btn, Modal, ModalActions, rich } from "@/components/ui";
 import { t } from "@/lib/i18n";
 import type { RunOption, S } from "@/lib/types";
 import {
@@ -40,7 +40,7 @@ export function ScriptForm({
     setRunOptions(runOptions.map((item, i) => (i === index ? { ...item, ...patch } : item)));
   const variables = Object.entries(initial?.variables ?? {}).map(([name, value]) => `${name}=${value}`).join("\n");
   return (
-    <Modal title={initial ? t("Edit script") : t("Add script")} close={close}>
+    <Modal title={initial ? t("Edit script") : t("Add script")} close={close} guard>
       <form
         onSubmit={async (e) => {
           e.preventDefault();
@@ -216,7 +216,7 @@ export function ScriptForm({
           </section>
         )}
         {err && <div className="alert">{err}</div>}
-        <Btn className="primary">{t("Save")}</Btn>
+        <ModalActions cancel={close}><Btn className="primary">{t("Save")}</Btn></ModalActions>
       </form>
     </Modal>
   );
@@ -304,7 +304,7 @@ export function CustomScriptForm({
           <small>{t("The script runs as the dashboard SSH user. It is saved as an executable file inside the selected allowed folder.")}</small>
         </label>
         {error && <div className="alert">{error}</div>}
-        <Btn className="primary">{t("Create script")}</Btn>
+        <ModalActions cancel={closeForm}><Btn className="primary">{t("Create script")}</Btn></ModalActions>
       </form>
     </Modal>
   );
@@ -383,7 +383,7 @@ export function RunScriptForm({
           </section>
         )}
         {error && <div className="alert">{error}</div>}
-        <Btn className="primary" disabled={(!!option?.needsFile && !selectedFile) || (!!option?.input && !value.trim())}>{t("Run script")}</Btn>
+        <ModalActions cancel={close}><Btn className="primary" disabled={(!!option?.needsFile && !selectedFile) || (!!option?.input && !value.trim())}>{t("Run script")}</Btn></ModalActions>
       </form>
     </Modal>
   );
@@ -391,7 +391,7 @@ export function RunScriptForm({
 export function FolderForm({ close, done }: { close: () => void; done: () => void }) {
   const [error, setError] = useState("");
   return (
-    <Modal title={t("New folder")} close={close}>
+    <Modal title={t("New folder")} close={close} guard>
       <form
         onSubmit={async (event) => {
           event.preventDefault();
@@ -411,7 +411,7 @@ export function FolderForm({ close, done }: { close: () => void; done: () => voi
           <input name="name" autoFocus required maxLength={60} />
         </label>
         {error && <div className="alert">{error}</div>}
-        <Btn className="primary">{t("Create folder")}</Btn>
+        <ModalActions cancel={close}><Btn className="primary">{t("Create folder")}</Btn></ModalActions>
       </form>
     </Modal>
   );

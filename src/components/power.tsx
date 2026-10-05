@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Gauge, Pencil, Plug, Plus, Power, Trash2, Wallet, Zap } from "lucide-react";
 import { api } from "@/lib/client-api";
 import { ChartFrame, ColumnChart, LineChart, RangeFilter, formatTime, type Range } from "@/components/charts";
-import { appConfirm, Btn, Metric, Modal, Panel, RowMenu } from "@/components/ui";
+import { appConfirm, Btn, Metric, Modal, ModalActions, Panel, RowMenu } from "@/components/ui";
 import { language, locale, t } from "@/lib/i18n";
 
 type Field = { key: string; label: string; secret?: boolean; required?: boolean; placeholder?: string; help?: string };
@@ -155,11 +155,13 @@ export function PowerPage({ range: controlled, compact = false, readOnly = false
             <b>{device.name}</b>
             <small>{driver?.name ?? device.driver}{status?.error ? ` · ${status.error}` : status?.at ? ` · ${t("last reading {time}", { time: new Date(status.at).toLocaleTimeString(locale(), { hour: "2-digit", minute: "2-digit" }) })}` : ""}</small>
           </div>
-          {switching === device.id ? <span className="badge root">{t("Switching…")}</span>
-            : !device.enabled ? <span className="badge root">{t("Paused")}</span>
-            : status?.error ? <span className="badge down">{t("Unreachable")}</span>
-            : fresh && status?.powerW !== null ? <span className="badge up">{formatWatts(status!.powerW!)}{status?.on === false ? ` · ${t("off")}` : ""}</span>
-            : <span className="badge root">{t("Waiting")}</span>}
+          <div className="row-side">
+            {switching === device.id ? <span className="badge root">{t("Switching…")}</span>
+              : !device.enabled ? <span className="badge neutral">{t("Paused")}</span>
+              : status?.error ? <span className="badge down">{t("Unreachable")}</span>
+              : fresh && status?.powerW !== null ? <span className="badge up">{formatWatts(status!.powerW!)}{status?.on === false ? ` · ${t("off")}` : ""}</span>
+              : <span className="badge root">{t("Waiting")}</span>}
+          </div>
           {!readOnly && <RowMenu label={t("Actions for {name}", { name: device.name })} disabled={switching === device.id} items={[
             // Only offered while the relay's state is known, so the item says what it will do.
             device.canSwitch && device.enabled && typeof status?.on === "boolean" && !status.error && {
@@ -209,7 +211,7 @@ function DeviceForm({ device, drivers, close, saved }: { device: Device | null; 
   const [driverId, setDriverId] = useState(device?.driver ?? drivers[0]?.id ?? "tapo");
   const [error, setError] = useState(""), [saving, setSaving] = useState(false);
   const driver = drivers.find((item) => item.id === driverId);
-  return <Modal title={device ? t("Edit {name}", { name: device.name }) : t("Add device")} close={close}>
+  return <Modal title={device ? t("Edit {name}", { name: device.name }) : t("Add device")} close={close} guard>
     <form onSubmit={async (event) => {
       event.preventDefault(); setError(""); setSaving(true);
       const values = Object.fromEntries(new FormData(event.currentTarget));
@@ -232,8 +234,8 @@ function DeviceForm({ device, drivers, close, saved }: { device: Device | null; 
       ))}
       <label><input name="enabled" type="checkbox" value="true" defaultChecked={device?.enabled !== false} /> {t("Record this device")}</label>
       {error && <div className="alert">{error}</div>}
-      <Btn className="primary" disabled={saving}>{saving ? t("Saving…") : device ? t("Save device") : t("Add device")}</Btn>
       <small className="form-note">{t("A recorded device is read once before saving, to check the connection and credentials.")}</small>
+      <ModalActions cancel={close}><Btn className="primary" disabled={saving}>{saving ? t("Saving…") : device ? t("Save device") : t("Add device")}</Btn></ModalActions>
     </form>
   </Modal>;
 }

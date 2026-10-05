@@ -1,24 +1,37 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "@/lib/client-api";
-import { appConfirm, appPrompt, Btn, Panel, formatBytes, Modal, RowMenu, rich } from "@/components/ui";
-import { t } from "@/lib/i18n";
+import { appConfirm, appPrompt, Btn, copyText, Panel, formatBytes, Modal, ModalActions, notify, PAGE_REFRESH, RowMenu, rich } from "@/components/ui";
+import { locale, t } from "@/lib/i18n";
 import type { ScriptBrowserData, FileBrowserData } from "@/lib/types";
 import {
   ClipboardPaste,
   ChevronLeft,
+  ChevronRight,
   Copy,
   Eye,
   FileTerminal,
   FilePenLine,
   Folder,
+  FolderOpen,
+  Info,
   LayoutGrid,
   LayoutList,
   Loader2,
-  RefreshCw,
   Scissors,
   Trash2,
+  X,
 } from "lucide-react";
+type Entry = FileBrowserData["entries"][number];
+// The server opens text files up to this size in the editor.
+const MAX_EDITABLE_BYTES = 512 * 1024;
+const editable = (entry: Entry) => entry.type === "file" && (entry.size === null || entry.size <= MAX_EDITABLE_BYTES);
+const FILES_PAGE = 100;
+function formatModified(modified?: number) {
+  return modified ? new Date(modified * 1000).toLocaleString(locale(), { dateStyle: "short", timeStyle: "short" }) : "";
+}
+// A file picker scrolls into view when it opens below the field that opened it.
+const reveal = (node: HTMLElement | null) => node?.scrollIntoView({ block: "nearest" });
 export function useDirectory<T>(endpoint: string, directory: string, includeSizes = false, options: Record<string, unknown> = {}) {
   const optionsKey = JSON.stringify(options);
   const [data, setData] = useState<T | null>(null);
@@ -98,6 +111,8 @@ export function FileExplorer() {
   const [directory, setDirectory] = useState(""),
     [view, setView] = useState<"grid" | "list">("list"),
     [editor, setEditor] = useState<{ path: string; content: string } | null>(null),
+    // An entry's full name, path, size and date, and why it did not open.
+    [details, setDetails] = useState<{ entry: Entry; note?: string } | null>(null),
     [opening, setOpening] = useState(""),
     [search, setSearch] = useState(""), [sort, setSort] = useState("name"), [offset, setOffset] = useState(0),
     // Hidden files (.ssh, .config) are listed only after the sudo password.
@@ -107,7 +122,14 @@ export function FileExplorer() {
       action: "copy" | "move";
       name: string;
     } | null>(null);
-  const { data, error, setError, loading, sizesLoading, load } = useDirectory<FileBrowserData & { total?: number; offset?: number; limit?: number }>("file/browse", directory, true, { search, sort, offset, limit: 100, hidden: showHidden });
+  const { data, error, loading, sizesLoading, load } = useDirectory<FileBrowserData & { total?: number; offset?: number; limit?: number }>("file/browse", directory, true, { search, sort, offset, limit: FILES_PAGE, hidden: showHidden });
+  const listTop = useRef<HTMLDivElement>(null);
+  // The page's Refresh button reads the folder again too.
+  useEffect(() => {
+    const refresh = () => void load();
+    window.addEventListener(PAGE_REFRESH, refresh);
+    return () => window.removeEventListener(PAGE_REFRESH, refresh);
+  }, [load]);
   // After 15 minutes the server stops showing them; the switch follows.
   if (showHidden && data?.hiddenRequested && !data.hidden) {
     setShowHidden(false);
@@ -124,6 +146,11 @@ export function FileExplorer() {
     setOffset(0);
     setDirectory(path);
   }
+  function turnPage(next: number) {
+    setOffset(next);
+    listTop.current?.scrollIntoView({ block: "start" });
+  }
+  // A failed change is reported at the bottom of the screen; the folder stays listed.
   async function operate(
     action: "delete" | "copy" | "move" | "rename",
     source: string,
@@ -135,31 +162,36 @@ export function FileExplorer() {
       await api("file/operation", { action, source, destination, name, hidden: showHidden });
       if (action === "move" || action === "delete") setClipboard(null);
       await load();
+      return true;
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : t("Could not change file"));
+      notify(reason instanceof Error ? reason.message : t("Could not change file"));
+      return false;
     } finally { setOpening(""); }
   }
-  async function removeEntry(entry: FileBrowserData["entries"][number]) {
+  async function removeEntry(entry: Entry) {
     const description = entry.type === "directory"
       ? t("Delete folder {path} and ALL its contents? This permanently deletes files from the server.", { path: entry.path })
       : t("Delete file {path}? This cannot be undone.", { path: entry.path });
     if (await appConfirm(description, entry.type === "directory" ? t("Delete folder") : t("Delete file"), t("Delete"), true)) await operate("delete", entry.path);
   }
-  async function renameEntry(entry: FileBrowserData["entries"][number]) {
+  async function renameEntry(entry: Entry) {
     const name = (await appPrompt(t("Rename {name} to:", { name: entry.name }), entry.name, t("Rename item"), t("Rename")))?.trim();
     if (name && name !== entry.name) await operate("rename", entry.path, "", name);
   }
   async function paste() {
     if (!clipboard || !data) return;
-    await operate(clipboard.action, clipboard.path, data.path);
+    if (await operate(clipboard.action, clipboard.path, data.path)) notify(t("Pasted {name}", { name: clipboard.name }), "success");
   }
-  async function openFile(path: string) {
+  // Folders open; text files open in the editor; anything else, and a file the
+  // server will not edit, shows its details instead.
+  async function openEntry(entry: Entry) {
+    if (entry.type === "directory") return navigate(entry.path);
+    if (!editable(entry)) return setDetails({ entry, note: t("Only text files up to 512 KB can be edited here") });
     try {
-      setOpening(path);
-      const result = await api("file/read", { path, hidden: showHidden });
-      setEditor(result);
+      setOpening(entry.path);
+      setEditor(await api("file/read", { path: entry.path, hidden: showHidden }));
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : t("Could not open file"));
+      setDetails({ entry, note: reason instanceof Error ? reason.message : t("Could not open file") });
     } finally {
       setOpening("");
     }
@@ -169,19 +201,37 @@ export function FileExplorer() {
     const name = (kind === "folder" ? await appPrompt(t("Enter the new folder name:"), "", t("New folder"), t("Create folder")) : await appPrompt(t("Enter the new file name:"), "", t("New file"), t("Create file")))?.trim();
     if (!name) return;
     try { setOpening(name); await api("file/create", { path: data.path, name, kind, hidden: showHidden }); await load(); }
-    catch (reason) { setError(reason instanceof Error ? reason.message : t("Could not create item")); }
+    catch (reason) { notify(reason instanceof Error ? reason.message : t("Could not create item")); }
     finally { setOpening(""); }
   }
+  const copyEntry = (entry: Entry) => setClipboard({ path: entry.path, action: "copy", name: entry.name });
+  const cutEntry = (entry: Entry) => setClipboard({ path: entry.path, action: "move", name: entry.name });
+  // The current folder as links, from its allowed location down.
+  const root = currentLocation(data, directory);
+  const crumbs = data && root && (data.path === root || data.path.startsWith(root + "/"))
+    ? [root, ...data.path.slice(root.length).split("/").filter(Boolean)].map((name, index, names) => ({
+      name,
+      path: index ? [root, ...names.slice(1, index + 1)].join("/") : root,
+    }))
+    : [];
+  const total = data?.total ?? 0;
+  const pager = !loading && !error && total > FILES_PAGE && (
+    <div className="actions file-pager">
+      <Btn disabled={!offset} onClick={() => turnPage(Math.max(0, offset - FILES_PAGE))}><ChevronLeft size={16} />{t("Previous")}</Btn>
+      <small>{t("{from}–{to} of {total}", { from: offset + 1, to: Math.min(offset + FILES_PAGE, total), total })}</small>
+      <Btn disabled={offset + FILES_PAGE >= total} onClick={() => turnPage(offset + FILES_PAGE)}>{t("Next")}<ChevronRight size={16} /></Btn>
+    </div>
+  );
   return (
     <>
       <Panel
         title={t("File explorer")}
         note={t("Browse and edit files inside the allowed folders")}
         extra={
-          <div className="actions">
+          <div className="actions file-explorer-actions">
             {(data?.roots.length || 0) > 1 && (
-              <select className="file-explorer-roots" aria-label={t("Location")} value={currentLocation(data, directory)} onChange={(event) => navigate(event.target.value)}>
-                {data?.roots.map((root) => <option key={root} value={root}>{root}</option>)}
+              <select className="file-explorer-roots" dir="ltr" aria-label={t("Location")} value={root} onChange={(event) => navigate(event.target.value)}>
+                {data?.roots.map((item) => <option key={item} value={item}>{item}</option>)}
               </select>
             )}
             <div className="file-view-toggle" aria-label={t("File view")}>
@@ -206,12 +256,8 @@ export function FileExplorer() {
                 <LayoutList size={16} />
               </button>
             </div>
-            <Btn disabled={!clipboard || !!opening || !data} onClick={paste} title={clipboard ? t("Paste {name}", { name: clipboard.name }) : t("Copy or cut a file first")}>
-              <ClipboardPaste size={16} />{t("Paste")}
-            </Btn>
             <Btn disabled={!data || !!opening} onClick={() => create("folder")}><Folder size={16} />{t("New folder")}</Btn>
             <Btn disabled={!data || !!opening} onClick={() => create("file")}><FileTerminal size={16} />{t("New file")}</Btn>
-            <Btn onClick={load}><RefreshCw size={16} />{t("Refresh")}</Btn>
           </div>
         }
       >
@@ -226,6 +272,8 @@ export function FileExplorer() {
           <input
             aria-label={t("Folder path")}
             key={data?.path}
+            // The end of a long path, the current folder, is what is in view.
+            ref={(input) => { if (input) input.scrollLeft = input.scrollWidth; }}
             name="path"
             defaultValue={data?.path || ""}
             placeholder={t("/home/folder or /mnt/folder")}
@@ -234,8 +282,12 @@ export function FileExplorer() {
           <Btn disabled={loading}>{t("Go")}</Btn>
         </form>
         <div className="file-explorer-tools">
-          <input aria-label={t("Search files")} value={search} onChange={(event) => { setSearch(event.target.value); setOffset(0); }} placeholder={t("Search this folder")} />
-          <select aria-label={t("Sort files")} value={sort} onChange={(event) => { setSort(event.target.value); setOffset(0); }}><option value="name">{t("Sort by name")}</option><option value="size">{t("Sort by size")}</option></select>
+          <input type="search" aria-label={t("Search files")} value={search} onChange={(event) => { setSearch(event.target.value); setOffset(0); }} placeholder={t("Search this folder")} />
+          <select aria-label={t("Sort files")} value={sort} onChange={(event) => { setSort(event.target.value); setOffset(0); }}>
+            <option value="name">{t("Sort by name")}</option>
+            <option value="size">{t("Sort by size")}</option>
+            <option value="date">{t("Sort by date")}</option>
+          </select>
           <label className="file-hidden-toggle">
             <input type="checkbox" checked={showHidden} onChange={(event) => void toggleHidden(event.target.checked)} />
             {t("Show hidden files")}
@@ -243,13 +295,23 @@ export function FileExplorer() {
           <small>{t("Folder sizes are calculated on demand.")}</small>
         </div>
         {hiddenNote && <div className="alert">{hiddenNote}</div>}
-        {data?.parent && (
-          <button type="button" className="file-explorer-up" onClick={() => navigate(data.parent!)}>
-            <ChevronLeft size={16} /> {t("Up one folder")}
-          </button>
-        )}
+        <div className="file-explorer-nav" ref={listTop}>
+          {data?.parent && (
+            <button type="button" className="file-explorer-up" aria-label={t("Up one folder")} onClick={() => navigate(data.parent!)}>
+              <ChevronLeft size={18} /> {t("Up")}
+            </button>
+          )}
+          {crumbs.length > 0 && (
+            <nav className="file-crumbs" aria-label={t("Current folder")} key={data?.path} ref={(element) => { if (element) element.scrollLeft = element.scrollWidth * (document.dir === "rtl" ? -1 : 1); }}>
+              {crumbs.map((crumb, index) => index === crumbs.length - 1
+                ? <b key={crumb.path} aria-current="location" dir="auto">{crumb.name}</b>
+                : <span key={crumb.path}><button type="button" dir="auto" onClick={() => navigate(crumb.path)}>{crumb.name}</button><ChevronRight size={14} aria-hidden="true" /></span>)}
+            </nav>
+          )}
+        </div>
+        {pager}
         {loading && !error && <div className="empty-state"><Loader2 className="spin" /><b>{t("Loading files…")}</b></div>}
-        {error && <div className="alert">{error}</div>}
+        {error && <div className="alert file-explorer-error">{error}</div>}
         {!loading && !error && data?.entries.length ? (
           <div className={`file-explorer-grid ${view}`}>
           {data.entries.map((entry) => (
@@ -257,14 +319,16 @@ export function FileExplorer() {
             <button
               type="button"
               className="file-explorer-open"
-              onClick={() => entry.type === "directory" ? navigate(entry.path) : openFile(entry.path)}
+              aria-busy={opening === entry.path}
+              onClick={() => void openEntry(entry)}
             >
-              {entry.type === "directory" ? <Folder size={34} /> : <FileTerminal size={30} />}
-              <span title={entry.name}>{entry.name}</span>
-              <small>
+              {opening === entry.path ? <Loader2 className="spin" size={20} /> : entry.type === "directory" ? <Folder size={34} /> : <FileTerminal size={30} />}
+              <span className="file-name" dir="auto" title={entry.name}>{entry.name}</span>
+              <small className="file-meta">
                 {entry.size === null
                   ? (sizesLoading ? t("Calculating size…") : t("Size unavailable"))
-                  : entry.type === "directory" ? t("Folder uses: {size}", { size: formatBytes(entry.size) }) : t("File size: {size}", { size: formatBytes(entry.size) })}
+                  : formatBytes(entry.size)}
+                {entry.modified ? <> · <time dateTime={new Date(entry.modified * 1000).toISOString()}>{formatModified(entry.modified)}</time></> : null}
               </small>
             </button>
             <div className="file-explorer-menu">
@@ -272,9 +336,10 @@ export function FileExplorer() {
                 label={t("Actions for {name}", { name: entry.name })}
                 disabled={!!opening}
                 items={[
-                  entry.type === "file" && { label: t("Edit"), icon: <FilePenLine size={15} />, onSelect: () => openFile(entry.path) },
-                  { label: t("Copy"), icon: <Copy size={15} />, onSelect: () => setClipboard({ path: entry.path, action: "copy", name: entry.name }) },
-                  { label: t("Cut"), icon: <Scissors size={15} />, onSelect: () => setClipboard({ path: entry.path, action: "move", name: entry.name }) },
+                  { label: t("Details"), icon: <Info size={15} />, onSelect: () => setDetails({ entry }) },
+                  editable(entry) && { label: t("Edit"), icon: <FilePenLine size={15} />, onSelect: () => void openEntry(entry) },
+                  { label: t("Copy"), icon: <Copy size={15} />, onSelect: () => copyEntry(entry) },
+                  { label: t("Cut"), icon: <Scissors size={15} />, onSelect: () => cutEntry(entry) },
                   { label: t("Rename"), icon: <FilePenLine size={15} />, onSelect: () => renameEntry(entry) },
                   { label: t("Delete"), icon: <Trash2 size={15} />, danger: true, onSelect: () => removeEntry(entry) },
                 ]}
@@ -284,9 +349,33 @@ export function FileExplorer() {
           ))}
           </div>
         ) : null}
-        {!loading && !error && data && !data.entries.length && <div className="empty-state"><Folder size={22} /><b>{t("This folder is empty")}</b></div>}
-        {!loading && !error && (data?.total || 0) > (data?.limit || 100) && <div className="actions"><Btn disabled={!offset} onClick={() => setOffset(Math.max(0, offset - 100))}>{t("Previous")}</Btn><small>{t("{from}–{to} of {total}", { from: offset + 1, to: Math.min(offset + 100, data!.total!), total: data!.total! })}</small><Btn disabled={offset + 100 >= data!.total!} onClick={() => setOffset(offset + 100)}>{t("Next")}</Btn></div>}
+        {!loading && !error && data && !data.entries.length && <div className="empty-state"><Folder size={22} /><b>{search ? t("Nothing matches “{search}”", { search }) : t("This folder is empty")}</b></div>}
+        {pager}
       </Panel>
+      {clipboard && (
+        <div className="clipboard-bar" role="status">
+          {clipboard.action === "copy" ? <Copy size={18} /> : <Scissors size={18} />}
+          <span><b>{clipboard.action === "copy" ? t("Copied") : t("Cut")}</b> <span dir="auto">{clipboard.name}</span></span>
+          <Btn className="primary" disabled={!data || !!opening} onClick={paste}><ClipboardPaste size={16} />{t("Paste here")}</Btn>
+          <Btn aria-label={t("Cancel")} title={t("Cancel")} onClick={() => setClipboard(null)}><X size={16} /></Btn>
+        </div>
+      )}
+      {details && (
+        <FileDetails
+          entry={details.entry}
+          note={details.note}
+          close={() => setDetails(null)}
+          act={(action) => {
+            const { entry } = details;
+            setDetails(null);
+            if (action === "open") void openEntry(entry);
+            if (action === "copy") copyEntry(entry);
+            if (action === "cut") cutEntry(entry);
+            if (action === "rename") void renameEntry(entry);
+            if (action === "delete") void removeEntry(entry);
+          }}
+        />
+      )}
       {askingSudo && (
         <SudoPassword
           close={() => setAskingSudo(false)}
@@ -309,6 +398,34 @@ export function FileExplorer() {
         />
       )}
     </>
+  );
+}
+// Everything about one file or folder, readable however long its name: the
+// full name and path, size and date, and what can be done with it.
+function FileDetails({ entry, note, close, act }: { entry: Entry; note?: string; close: () => void; act: (action: "open" | "copy" | "cut" | "rename" | "delete") => void }) {
+  const folder = entry.type === "directory";
+  return (
+    <Modal title={folder ? t("Folder details") : t("File details")} close={close}>
+      <div className="modal-body file-details">
+        <p className="file-details-name" dir="auto">{entry.name}</p>
+        {note && <div className="notice">{note}</div>}
+        <dl>
+          <div><dt>{t("Location")}</dt><dd><code>{entry.path}</code></dd></div>
+          <div><dt>{t("Size")}</dt><dd>{entry.size === null ? t("Size unavailable") : formatBytes(entry.size)}</dd></div>
+          {entry.modified ? <div><dt>{t("Modified")}</dt><dd>{formatModified(entry.modified)}</dd></div> : null}
+        </dl>
+        <div className="actions file-details-actions">
+          {(folder || editable(entry)) && !note && (
+            <Btn className="primary" onClick={() => act("open")}>{folder ? <FolderOpen size={16} /> : <FilePenLine size={16} />}{folder ? t("Open") : t("Edit")}</Btn>
+          )}
+          <Btn onClick={async () => { if (await copyText(entry.path)) notify(t("Path copied"), "success"); }}><Copy size={16} />{t("Copy path")}</Btn>
+          <Btn onClick={() => act("copy")}><Copy size={16} />{t("Copy")}</Btn>
+          <Btn onClick={() => act("cut")}><Scissors size={16} />{t("Cut")}</Btn>
+          <Btn onClick={() => act("rename")}><FilePenLine size={16} />{t("Rename")}</Btn>
+          <Btn className="danger" onClick={() => act("delete")}><Trash2 size={16} />{t("Delete")}</Btn>
+        </div>
+      </div>
+    </Modal>
   );
 }
 // Asks for the SSH user's sudo password, which the server checks, before
@@ -337,11 +454,11 @@ function SudoPassword({ close, shown }: { close: () => void; shown: () => void }
           <input type="password" autoComplete="off" autoFocus value={password} onChange={(event) => setPassword(event.target.value)} />
         </label>
         {error && <div className="alert">{error}</div>}
-        <div className="actions">
+        <ModalActions cancel={close}>
           <Btn className="primary" disabled={checking || !password}>
             {checking ? <Loader2 className="spin" size={15} /> : <Eye size={15} />} {t("Show hidden files")}
           </Btn>
-        </div>
+        </ModalActions>
       </form>
     </Modal>
   );
@@ -407,11 +524,11 @@ export function FileBrowser({ choose }: { choose: (path: string) => void }) {
   const [directory, setDirectory] = useState("");
   const { data, error, loading } = useDirectory<FileBrowserData>("file/browse", directory, false, PICKER_PAGE);
   return (
-    <section className="file-browser" aria-label={t("File browser")}>
+    <section className="file-browser" ref={reveal} aria-label={t("File browser")}>
       <div className="file-browser-head">
         <div><b>{t("Choose a file")}</b><small className="path">{data?.path || t("Loading folder…")}</small></div>
         {(data?.roots.length || 0) > 1 && (
-          <select className="file-browser-roots" aria-label={t("Location")} value={currentLocation(data, directory)} onChange={(event) => setDirectory(event.target.value)}>
+          <select className="file-browser-roots" dir="ltr" aria-label={t("Location")} value={currentLocation(data, directory)} onChange={(event) => setDirectory(event.target.value)}>
             {data?.roots.map((root) => <option key={root} value={root}>{root}</option>)}
           </select>
         )}
@@ -423,7 +540,7 @@ export function FileBrowser({ choose }: { choose: (path: string) => void }) {
         {!loading && !error && data?.entries.map((entry) => (
           <button key={entry.path} type="button" className="file-browser-row" onClick={() => entry.type === "directory" ? setDirectory(entry.path) : choose(entry.path)}>
             {entry.type === "directory" ? <Folder size={17} /> : <FileTerminal size={17} />}
-            <span>{entry.name}</span><small>{entry.type === "directory" ? t("Folder") : t("File")}</small>
+            <span dir="auto">{entry.name}</span><small>{entry.type === "directory" ? t("Folder") : t("File")}</small>
           </button>
         ))}
         {!loading && !error && data && !data.entries.length && <div className="file-browser-empty">{t("No folders or files here.")}</div>}
@@ -436,11 +553,11 @@ export function DirectoryBrowser({ choose }: { choose: (path: string) => void })
   const [directory, setDirectory] = useState("");
   const { data, error, loading } = useDirectory<FileBrowserData>("file/browse", directory, false, PICKER_PAGE);
   return (
-    <section className="file-browser" aria-label={t("Folder browser")}>
+    <section className="file-browser" ref={reveal} aria-label={t("Folder browser")}>
       <div className="file-browser-head">
         <div><b>{t("Choose a folder")}</b><small className="path">{data?.path || t("Loading folder…")}</small></div>
         {(data?.roots.length || 0) > 1 && (
-          <select className="file-browser-roots" aria-label={t("Location")} value={currentLocation(data, directory)} onChange={(event) => setDirectory(event.target.value)}>
+          <select className="file-browser-roots" dir="ltr" aria-label={t("Location")} value={currentLocation(data, directory)} onChange={(event) => setDirectory(event.target.value)}>
             {data?.roots.map((root) => <option key={root} value={root}>{root}</option>)}
           </select>
         )}
@@ -451,7 +568,7 @@ export function DirectoryBrowser({ choose }: { choose: (path: string) => void })
         {error && <div className="file-browser-empty">{error}</div>}
         {!loading && !error && data?.entries.filter((entry) => entry.type === "directory").map((entry) => (
           <button key={entry.path} type="button" className="file-browser-row" onClick={() => setDirectory(entry.path)}>
-            <Folder size={17} /><span>{entry.name}</span><small>{t("Folder")}</small>
+            <Folder size={17} /><span dir="auto">{entry.name}</span><small>{t("Folder")}</small>
           </button>
         ))}
         {!loading && !error && <PickerOverflow data={data} />}
@@ -473,14 +590,14 @@ export function ScriptBrowser({ choose }: { choose: (path: string) => void }) {
     setSelected(null);
   }
   return (
-    <section className="file-browser" aria-label={t("Script file browser")}>
+    <section className="file-browser" ref={reveal} aria-label={t("Script file browser")}>
       <div className="file-browser-head">
         <div>
           <b>{t("Choose a script")}</b>
           <small className="path">{data?.path || t("Loading folder…")}</small>
         </div>
         {(data?.roots.length || 0) > 1 && (
-          <select className="file-browser-roots" aria-label={t("Location")} value={currentLocation(data, directory)} onChange={(event) => setDirectory(event.target.value)}>
+          <select className="file-browser-roots" dir="ltr" aria-label={t("Location")} value={currentLocation(data, directory)} onChange={(event) => setDirectory(event.target.value)}>
             {data?.roots.map((root) => <option key={root} value={root}>{root}</option>)}
           </select>
         )}
@@ -515,7 +632,7 @@ export function ScriptBrowser({ choose }: { choose: (path: string) => void }) {
             }}
           >
             {entry.type === "directory" ? <Folder size={17} /> : <FileTerminal size={17} />}
-            <span>{entry.name}</span>
+            <span dir="auto">{entry.name}</span>
             <small>{entry.type === "directory" ? t("Folder") : t("Shell script")}</small>
           </button>
         ))}

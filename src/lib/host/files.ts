@@ -209,13 +209,16 @@ else:
                 kind = "script" if request["scripts"] else "file"
             else:
                 continue
-            size = sizes.get(os.path.realpath(item.path)) if kind == "directory" else item.stat(follow_symlinks=False).st_size
-            entries.append({"name": item.name, "path": item.path, "type": kind, "size": size})
+            status = item.stat(follow_symlinks=False)
+            size = sizes.get(os.path.realpath(item.path)) if kind == "directory" else status.st_size
+            entries.append({"name": item.name, "path": item.path, "type": kind, "size": size, "modified": int(status.st_mtime)})
     query = str(request.get("search") or "").lower()
     if query:
         entries = [item for item in entries if query in item["name"].lower()]
     if ordering == "size":
         entries.sort(key=lambda item: (item.get("size") is None, -(item.get("size") or 0), item["name"].lower()))
+    elif ordering == "date":
+        entries.sort(key=lambda item: (-item["modified"], item["name"].lower()))
     else:
         entries.sort(key=lambda item: (item["type"] != "directory", item["name"].lower()))
     offset = max(0, int(request.get("offset") or 0))

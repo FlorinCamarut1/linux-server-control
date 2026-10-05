@@ -10,7 +10,7 @@ import { Overview, HistoryPanel, AlertForm, describeAlert } from "@/components/m
 import { ScheduleForm } from "@/components/schedules";
 import { ScriptForm, CustomScriptForm, RunScriptForm, FolderForm } from "@/components/scripts";
 import { AppearancePanel, NotificationsPanel, PasswordForm, DevicePanel, ServerSettings, ConfigurationPanel, StorageManager, UsersPanel } from "@/components/settings";
-import { appConfirm, appPrompt, Btn, copyText, Panel, Metric, formatBytes, formatPercent, formatUptime, Modal, DialogHost, LiveLogViewer, AppLoading, LoadingScreen, RowMenu, runStatusLabel } from "@/components/ui";
+import { appConfirm, appPrompt, Btn, copyText, Panel, Metric, formatBytes, formatPercent, formatUptime, Modal, DialogHost, LiveLogViewer, AppLoading, LoadingScreen, notify, PAGE_REFRESH, RowMenu, runStatusLabel, ToastHost } from "@/components/ui";
 import { applyTheme, savedTheme } from "@/lib/theme";
 import { LANGUAGE_CHANGED, applyLanguage, savedLanguage } from "@/lib/language";
 import { locale, msg, t, tn } from "@/lib/i18n";
@@ -27,6 +27,7 @@ import {
   FolderOpen,
   Gauge,
   HardDrive,
+  History,
   KeyRound,
   LayoutGrid,
   Loader2,
@@ -48,10 +49,34 @@ const nav = [
   ["files", FolderOpen, msg("Files")],
   ["cron", Clock3, msg("Schedules")],
   ["power", Zap, msg("Power")],
-  ["history", Clock3, msg("History")],
+  ["history", History, msg("History")],
   ["alerts", Thermometer, msg("Alerts")],
   ["settings", KeyRound, msg("Settings")],
 ] as const;
+// The page shown is in the address (#files), so that it survives a reload and
+// the Back button goes to the page before instead of leaving the dashboard.
+const pageInAddress = () => {
+  const id = window.location.hash.slice(1);
+  return nav.some(([page]) => page === id) ? id : "overview";
+};
+// The sections of the Settings page, for the links at its top.
+const SETTINGS_SECTIONS = [
+  ["settings-appearance", msg("Appearance")],
+  ["settings-notifications", msg("Notifications")],
+  ["settings-server", msg("Server connection")],
+  ["settings-storage", msg("Storage monitoring")],
+  ["settings-browsers", msg("Authorized browsers")],
+  ["settings-accounts", msg("Accounts")],
+  ["settings-password", msg("Change password")],
+  ["settings-backup", msg("Dashboard settings backup")],
+] as const;
+// Lists longer than this get a search field.
+const SEARCHABLE = 6;
+const matches = (query: string, ...texts: (string | undefined)[]) => {
+  const words = query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
+  const text = texts.filter(Boolean).join(" ").toLocaleLowerCase();
+  return words.every((word) => text.includes(word));
+};
 // The folder of scripts that have none; shown translated, stored as is.
 const UNFILED = "Unfiled";
 function stateScope(tab: string) {
@@ -89,7 +114,14 @@ export default function Home() {
     // The last failure was the server not answering (the reconnect screen).
     [hostDown, setHostDown] = useState(false),
     // On narrow screens the pages are listed in a menu opened from the top bar.
-    [menuOpen, setMenuOpen] = useState(false);
+    [menuOpen, setMenuOpen] = useState(false),
+    // The search fields of the longer lists.
+    [containerSearch, setContainerSearch] = useState(""),
+    [scriptSearch, setScriptSearch] = useState(""),
+    [scheduleSearch, setScheduleSearch] = useState(""),
+    [alertSearch, setAlertSearch] = useState(""),
+    // The run history opens on scheduled runs when Overview sends a failed schedule there.
+    [historyKind, setHistoryKind] = useState<"scripts" | "cron">("scripts");
   const accessCode = useRef<HTMLElement>(null);
   const menuToggle = useRef<HTMLButtonElement>(null);
   useEffect(() => {
@@ -161,12 +193,51 @@ export default function Home() {
   // The saved theme is applied before the first paint by the script in the
   // document head; this also gives the phone's browser bar the theme's color.
   useEffect(() => applyTheme(savedTheme()), []);
+  // Opens the page in the address, and follows Back and Forward between pages.
+  useEffect(() => {
+    const follow = (event?: PopStateEvent) => {
+      const id = pageInAddress();
+      if (id === tabRef.current) return;
+      setTab(id);
+      tabRef.current = id;
+      if (!event) return;
+      window.scrollTo(0, 0);
+      void refresh(true);
+    };
+    follow();
+    window.addEventListener("popstate", follow);
+    return () => window.removeEventListener("popstate", follow);
+  }, [refresh]);
+  // Opens a page: the history gets an entry, the page opens at its top, and
+  // from the menu the focus returns to its button.
+  function go(id: string) {
+    if (id !== tabRef.current) window.history.pushState(null, "", `#${id}`);
+    setTab(id);
+    tabRef.current = id;
+    window.scrollTo(0, 0);
+    if (menuOpen) {
+      setMenuOpen(false);
+      menuToggle.current?.focus({ preventScroll: true });
+    }
+    void refresh(true);
+  }
   // The open menu takes the focus to the current page, closes on Escape, which
   // gives the focus back to its button, and closes when the screen widens.
   useEffect(() => {
     if (!menuOpen) return;
     document.querySelector<HTMLButtonElement>("nav button.active")?.focus({ preventScroll: true });
     const key = (event: KeyboardEvent) => {
+      if (event.key === "Tab") {
+        // The focus stays in the open menu and its top bar.
+        const items = [...document.querySelectorAll<HTMLElement>("aside button")].filter((item) => item.offsetParent !== null);
+        const first = items[0], last = items[items.length - 1], active = document.activeElement;
+        const outside = !items.includes(active as HTMLElement);
+        if (first && (event.shiftKey ? outside || active === first : outside || active === last)) {
+          event.preventDefault();
+          (event.shiftKey ? last : first).focus();
+        }
+        return;
+      }
       if (event.key !== "Escape") return;
       setMenuOpen(false);
       menuToggle.current?.focus();
@@ -189,16 +260,14 @@ export default function Home() {
   const visibleStorage = state?.stats.storage.slice(storagePage * storagePerPage, (storagePage + 1) * storagePerPage) || [];
   const storagePages = Math.max(1, Math.ceil((state?.stats.storage.length || 0) / storagePerPage));
   const visibleContainers = useMemo(() => {
-    if (!state || containerFilter === "all") return state?.containers || [];
-    return state.containers.filter((container) =>
-      containerFilter === "running"
-        ? container.State === "running"
-        : container.State !== "running",
-    );
-  }, [containerFilter, state]);
+    return (state?.containers || []).filter((container) =>
+      (containerFilter === "all" || (containerFilter === "running") === (container.State === "running"))
+      && matches(containerSearch, container.Names, container.Image));
+  }, [containerFilter, containerSearch, state]);
   const scriptFolders = useMemo(() => {
     const groups = new Map<string, S[]>();
     for (const script of state?.scripts || []) {
+      if (!matches(scriptSearch, script.name, script.path, script.folder)) continue;
       const folder = script.folder || UNFILED;
       const scripts = groups.get(folder);
       if (scripts) scripts.push(script);
@@ -209,7 +278,7 @@ export default function Home() {
       if (b === UNFILED) return -1;
       return a.localeCompare(b);
     });
-  }, [state]);
+  }, [scriptSearch, state]);
   // Looked up once per refresh instead of once per script row on every render.
   const scriptStatus = useMemo(() => {
     const status = new Map<string, { schedule?: Schedule; lastRun?: Run }>();
@@ -222,13 +291,16 @@ export default function Home() {
     const hostname = typeof window === "undefined" ? "" : window.location.hostname;
     return new Map((state?.containers || []).map((c) => [c.ID, containerLinks(c, state!.containers, hostname)]));
   }, [state]);
-  async function action(key: string, path: string, body: unknown) {
+  // done: what to say when it worked. A failure is said at the bottom of the
+  // screen, where it is seen however far down the page the action was.
+  async function action(key: string, path: string, body: unknown, done?: string) {
     try {
       setBusy(key);
       await api(path, body);
+      if (done) notify(done, "success");
       await refresh();
     } catch (e) {
-      setErr(e instanceof Error ? e.message : t("Error"));
+      notify(e instanceof Error ? e.message : t("Error"));
     } finally {
       setBusy("");
     }
@@ -244,7 +316,7 @@ export default function Home() {
       });
       await refresh();
     } catch (reason) {
-      setErr(reason instanceof Error ? reason.message : t("Could not start script"));
+      notify(reason instanceof Error ? reason.message : t("Could not start script"));
     } finally {
       setBusy("");
     }
@@ -267,15 +339,21 @@ export default function Home() {
     return <Login error={err} done={refresh} loading={pendingRequests > 0} />;
   // Read-only accounts see the pages without the controls; the API refuses the rest.
   const readOnly = state.user?.role === "viewer";
+  // Files is not among a read-only account's pages, even from the address.
+  const page = readOnly && tab === "files" ? "overview" : tab;
+  const pageName = t(nav.find(([id]) => id === page)?.[2] ?? "");
   return (
     <div className={`shell${menuOpen ? " menu-open" : ""}`}>
       {pendingRequests > 0 && <AppLoading />}
+      <button type="button" className="skip-link" onClick={() => document.getElementById("main")?.focus()}>{t("Skip to content")}</button>
       <aside>
         <div className="brand">
           <span>
             <img src="/icon.svg" alt="" />
           </span>
-          <b>Linux Server Control</b>
+          <b className="brand-name">Linux Server Control</b>
+          {/* On a phone the top bar names the page, whose title scrolls away. */}
+          <b className="brand-page" aria-hidden="true">{pageName}</b>
           <button
             ref={menuToggle}
             type="button"
@@ -293,65 +371,62 @@ export default function Home() {
             {nav.filter(([id]) => !readOnly || id !== "files").map(([id, Icon, label]) => (
               <button
                 key={id}
-                className={tab === id ? "active" : ""}
-                aria-current={tab === id ? "page" : undefined}
+                className={page === id ? "active" : ""}
+                aria-current={page === id ? "page" : undefined}
+                // Named when the side bar shows only the icons.
+                title={t(label)}
                 onClick={() => {
-                  setTab(id);
-                  tabRef.current = id;
-                  // A page opens at its top; from the menu, the focus returns to its button.
-                  window.scrollTo(0, 0);
-                  if (menuOpen) {
-                    setMenuOpen(false);
-                    menuToggle.current?.focus({ preventScroll: true });
-                  }
-                  void refresh(true);
+                  if (id === "history") setHistoryKind("scripts");
+                  go(id);
                 }}
               >
                 <Icon size={18} />
-                {t(label)}
+                <span className="nav-label">{t(label)}</span>
               </button>
             ))}
           </nav>
           <div className="server">
-            <i />
+            <i title={t("Server connected")} />
             <div>
               <b>{t("Server connected")}</b>
               <small>{state.host}</small>
             </div>
+            <button type="button" className="server-logout" aria-label={t("Log out")} title={t("Log out")} onClick={signOut}>
+              <LogOut size={16} />
+            </button>
           </div>
         </div>
       </aside>
       {menuOpen && <div className="menu-backdrop" onClick={() => setMenuOpen(false)} />}
-      <main>
+      <main id="main" tabIndex={-1}>
         <header>
           <div>
-            <h1>
-              {t(nav.find(([id]) => id === tab)?.[2] ?? "")}
-            </h1>
+            <h1>{pageName}</h1>
             <p>{t("Updated {time}", { time: state.time })}{state.user ? ` · ${state.user.name}${readOnly ? ` (${t("read-only")})` : ""}` : ""}</p>
           </div>
           <div className="actions">
-            <Btn onClick={() => refresh()}>
+            <Btn onClick={() => { void refresh(); window.dispatchEvent(new Event(PAGE_REFRESH)); }}>
               <RefreshCw size={16} />
               <span className="button-label">{t("Refresh")}</span>
-            </Btn>
-            <Btn aria-label={t("Log out")} onClick={signOut}>
-              <LogOut size={16} />
             </Btn>
           </div>
         </header>
         {err && (
-          <div className="alert">
-            {err}
-            <button onClick={() => setErr("")}>×</button>
+          <div className="alert page-alert" role="alert">
+            <span>{err}</span>
+            <button type="button" className="alert-close" aria-label={t("Dismiss")} onClick={() => setErr("")}><X size={18} /></button>
           </div>
         )}
-        {state.containerError && (tab === "overview" || tab === "containers") && (
+        {state.containerError && (page === "overview" || page === "containers") && (
           <div className="alert">{t("Containers cannot be read: {error}", { error: state.containerError })}</div>
         )}
-        {tab === "overview" && <Overview state={state} active={active} stopped={stopped} openLogs={openLogs} />}
-        {tab === "containers" && (
-          <>
+        {page === "overview" && <Overview state={state} active={active} stopped={stopped} openLogs={openLogs} show={(target) => {
+          if (target === "stopped") setContainerFilter("stopped");
+          if (target === "cron") setHistoryKind("cron");
+          go(target === "stopped" ? "containers" : target === "cron" ? "history" : target);
+        }} />}
+        {page === "containers" && (
+          <div className="containers-page">
             <section className="metrics">
               <Metric
                 label={t("Temperature")}
@@ -362,12 +437,14 @@ export default function Home() {
                 label={t("RAM")}
                 value={`${formatBytes(state.stats.memoryUsedBytes)} / ${formatBytes(state.stats.memoryTotalBytes)}`}
                 note={formatPercent(state.stats.memoryUsedBytes, state.stats.memoryTotalBytes)}
+                percent={state.stats.memoryTotalBytes > 0 ? (state.stats.memoryUsedBytes / state.stats.memoryTotalBytes) * 100 : null}
                 icon={<Gauge />}
               />
               <Metric
                 label={t("System disk")}
                 value={t("{size} free", { size: formatBytes(state.stats.diskTotalBytes - state.stats.diskUsedBytes) })}
                 note={t("{percent}% used · {size} total", { percent: state.stats.diskUsedPercent, size: formatBytes(state.stats.diskTotalBytes) })}
+                percent={state.stats.diskUsedPercent}
                 icon={<HardDrive />}
               />
               {visibleStorage.map((drive) => (
@@ -380,6 +457,7 @@ export default function Home() {
                   note={drive.usedBytes === null || drive.totalBytes === null
                     ? t("Check MONITORED_PATHS")
                     : t("{percent}% used · {size} total", { percent: drive.usedPercent ?? 0, size: formatBytes(drive.totalBytes) })}
+                  percent={drive.usedPercent}
                   icon={<HardDrive />}
                 />
               ))}
@@ -398,7 +476,8 @@ export default function Home() {
               />
             </section>
             {!readOnly && <div className="actions"><Btn onClick={() => setStorageManager(true)}><HardDrive size={16} />{t("Manage storage paths")}</Btn></div>}
-            {state.stats.storage.length > storagePerPage && <div className="actions"><Btn disabled={storagePage === 0} onClick={() => setStoragePage((page) => page - 1)}>{t("Previous storage")}</Btn><small>{t("Storage {page} of {pages}", { page: storagePage + 1, pages: storagePages })}</small><Btn disabled={storagePage + 1 >= storagePages} onClick={() => setStoragePage((page) => page + 1)}>{t("Next storage")}</Btn></div>}
+            {state.stats.storage.length > storagePerPage && <div className="actions"><Btn disabled={storagePage === 0} onClick={() => setStoragePage((current) => current - 1)}>{t("Previous storage")}</Btn><small>{t("Storage {page} of {pages}", { page: storagePage + 1, pages: storagePages })}</small><Btn disabled={storagePage + 1 >= storagePages} onClick={() => setStoragePage((current) => current + 1)}>{t("Next storage")}</Btn></div>}
+            {/* On a phone the list comes first, above the server's health. */}
             <Panel
               title={t("All containers")}
               note={t("Live Docker status and controls")}
@@ -422,6 +501,11 @@ export default function Home() {
                 </div>
               }
             >
+              {state.containers.length >= SEARCHABLE && (
+                <div className="panel-toolbar list-search">
+                  <input type="search" aria-label={t("Search containers")} placeholder={t("Search by name or image")} value={containerSearch} onChange={(event) => setContainerSearch(event.target.value)} />
+                </div>
+              )}
               {visibleContainers.map((c) => (
                 <ContainerRow
                   key={c.ID}
@@ -436,20 +520,20 @@ export default function Home() {
               {!visibleContainers.length && (
                 <div className="empty-state">
                   <Container size={22} />
-                  <b>{containerFilter === "all" ? t("No containers") : containerFilter === "running" ? t("No running containers") : t("No stopped containers")}</b>
+                  <b>{containerSearch ? t("Nothing matches “{search}”", { search: containerSearch }) : containerFilter === "all" ? t("No containers") : containerFilter === "running" ? t("No running containers") : t("No stopped containers")}</b>
                   <p>
-                    {containerFilter === "stopped"
+                    {containerFilter === "stopped" && !containerSearch
                       ? t("All containers are currently running.")
                       : t("No containers match this filter.")}
                   </p>
                 </div>
               )}
             </Panel>
-          </>
+          </div>
         )}
-        {tab === "scripts" && (
+        {page === "scripts" && (
           <Panel
-            title={t("Quick actions")}
+            title={t("Script library")}
             note={t("Run and schedule approved scripts")}
             extra={readOnly ? undefined : (
               <div className="actions">
@@ -466,14 +550,21 @@ export default function Home() {
               </div>
             )}
           >
+            {state.scripts.length >= SEARCHABLE && (
+              <div className="panel-toolbar list-search">
+                <input type="search" aria-label={t("Search scripts")} placeholder={t("Search by name or path")} value={scriptSearch} onChange={(event) => setScriptSearch(event.target.value)} />
+              </div>
+            )}
             {scriptFolders.length ? (
               scriptFolders.map(([folder, scripts]) => (
                 <details
                   className="script-folder"
                   key={folder}
-                  open={openFolders.has(folder)}
+                  // While searching, every folder with a match is open.
+                  open={!!scriptSearch || openFolders.has(folder)}
                   onToggle={(event) => {
                     const open = event.currentTarget.open;
+                    if (scriptSearch) return;
                     setOpenFolders((current) => {
                       if (current.has(folder) === open) return current;
                       const next = new Set(current);
@@ -576,6 +667,8 @@ export default function Home() {
                   })}
                 </details>
               ))
+            ) : scriptSearch ? (
+              <div className="empty-state"><FileTerminal size={22} /><b>{t("Nothing matches “{search}”", { search: scriptSearch })}</b></div>
             ) : (
               <div className="empty-state">
                 <FileTerminal size={22} />
@@ -585,8 +678,8 @@ export default function Home() {
             )}
           </Panel>
         )}
-        {tab === "files" && <FileExplorer />}
-        {tab === "cron" && (
+        {page === "files" && <FileExplorer />}
+        {page === "cron" && (
           <Panel
             title={t("Scheduled jobs")}
             note={t("Choose a script, schedule, and the account that runs it")}
@@ -601,11 +694,17 @@ export default function Home() {
               </Btn>
             )}
           >
+            {state.schedules.length >= SEARCHABLE && (
+              <div className="panel-toolbar list-search">
+                <input type="search" aria-label={t("Search schedules")} placeholder={t("Search by name, command or time")} value={scheduleSearch} onChange={(event) => setScheduleSearch(event.target.value)} />
+              </div>
+            )}
             {state.schedules.length ? (
               state.schedules.map((schedule) => {
                 const script = state.scripts.find(
                   (item) => item.id === schedule.scriptId,
                 );
+                if (!matches(scheduleSearch, script?.name, schedule.command, schedule.label, schedule.expression, schedule.arguments)) return null;
                 return (
                   <div className="schedule-row" key={schedule.id}>
                     <div className="service-icon">
@@ -614,18 +713,19 @@ export default function Home() {
                     <div className="grow">
                       {/* A schedule without a script runs a command, which says more than its label. */}
                       <b>{script?.name || schedule.command || schedule.label}</b>
+                      {/* Cron fields and arguments read left to right in every language. */}
                       <small>
-                        {schedule.label} · {schedule.expression}{schedule.arguments ? ` · ${schedule.arguments}` : ""}
+                        {schedule.label} · <bdi dir="ltr">{schedule.expression}</bdi>{schedule.arguments ? <> · <bdi dir="ltr">{schedule.arguments}</bdi></> : null}
                       </small>
                     </div>
-                    <span
-                      className={`badge ${schedule.enabled ? "up" : "down"}`}
-                    >
-                      {schedule.enabled ? t("Enabled") : t("Paused")}
-                    </span>
-                    {(schedule.runAs || "user") === "root" && (
-                      <span className="badge root">root</span>
-                    )}
+                    <div className="row-side">
+                      <span className={`badge ${schedule.enabled ? "up" : "neutral"}`}>
+                        {schedule.enabled ? t("Enabled") : t("Paused")}
+                      </span>
+                      {(schedule.runAs || "user") === "root" && (
+                        <span className="badge root">root</span>
+                      )}
+                    </div>
                     {!readOnly && <RowMenu
                       label={t("Actions for the schedule {name}", { name: script?.name || schedule.command || schedule.label })}
                       disabled={!!busy}
@@ -647,7 +747,11 @@ export default function Home() {
                   </div>
                 );
               })
-            ) : (
+            ) : null}
+            {!!scheduleSearch && !state.schedules.some((schedule) => matches(scheduleSearch, state.scripts.find((item) => item.id === schedule.scriptId)?.name, schedule.command, schedule.label, schedule.expression, schedule.arguments)) && (
+              <div className="empty-state"><Clock3 size={22} /><b>{t("Nothing matches “{search}”", { search: scheduleSearch })}</b></div>
+            )}
+            {!state.schedules.length && (
               <div className="empty-state">
                 <Clock3 />
                 <h2>{t("No schedules yet")}</h2>
@@ -668,19 +772,40 @@ export default function Home() {
             </details>
           </Panel>
         )}
-        {tab === "history" && <HistoryPanel metrics={state.metrics} openLog={(run) => openLogs(t("{name} run", { name: run.scriptName }), "script/log", { id: run.scriptId, runId: run.id })} />}
-        {tab === "power" && <PowerPage readOnly={readOnly} />}
-        {tab === "alerts" && (
+        {page === "history" && <HistoryPanel metrics={state.metrics} initialKind={historyKind} openLog={(run) => openLogs(t("{name} run", { name: run.scriptName }), "script/log", { id: run.scriptId, runId: run.id })} />}
+        {page === "power" && <PowerPage readOnly={readOnly} />}
+        {page === "alerts" && (
           <Panel title={t("Alert rules")} note={t("Rules are checked every 5 minutes and on each dashboard refresh; cooldowns prevent repeated notifications.")} extra={readOnly ? undefined : <Btn className="primary" onClick={() => setAlertEditor(null)}>{t("New alert")}</Btn>}>
-            {(state.alerts || []).map((rule) => <div className="schedule-row" key={rule.id}><div className="grow"><b>{rule.name}</b><small>{describeAlert(rule.metric, rule.threshold)} · {t("cooldown {minutes} min", { minutes: rule.cooldownMinutes })}{rule.lastTriggeredAt ? ` · ${t("last triggered {time}", { time: new Date(rule.lastTriggeredAt).toLocaleString(locale()) })}` : ""}</small></div><span className={`badge ${rule.enabled ? "up" : "down"}`}>{rule.enabled ? t("Enabled") : t("Paused")}</span>{!readOnly && <RowMenu label={t("Actions for the alert {name}", { name: rule.name })} disabled={!!busy} items={[
+            {(state.alerts || []).length >= SEARCHABLE && (
+              <div className="panel-toolbar list-search">
+                <input type="search" aria-label={t("Search alerts")} placeholder={t("Search by name")} value={alertSearch} onChange={(event) => setAlertSearch(event.target.value)} />
+              </div>
+            )}
+            {(state.alerts || []).filter((rule) => matches(alertSearch, rule.name, describeAlert(rule.metric, rule.threshold))).map((rule) => <div className="schedule-row" key={rule.id}><div className="grow"><b>{rule.name}</b><small>{describeAlert(rule.metric, rule.threshold)} · {t("cooldown {minutes} min", { minutes: rule.cooldownMinutes })}{rule.lastTriggeredAt ? ` · ${t("last triggered {time}", { time: new Date(rule.lastTriggeredAt).toLocaleString(locale()) })}` : ""}</small></div><div className="row-side"><span className={`badge ${rule.enabled ? "up" : "neutral"}`}>{rule.enabled ? t("Enabled") : t("Paused")}</span></div>{!readOnly && <RowMenu label={t("Actions for the alert {name}", { name: rule.name })} disabled={!!busy} items={[
               { label: t("Edit"), icon: <Pencil size={15} />, onSelect: () => setAlertEditor(rule) },
               { label: t("Delete"), icon: <Trash2 size={15} />, danger: true, onSelect: async () => { if (await appConfirm(t("Delete the alert rule “{name}”?", { name: rule.name }), t("Delete alert"), t("Delete"), true)) await action(rule.id, "alerts/delete", { id: rule.id }); } },
             ]} />}</div>)}
+            {!!alertSearch && !(state.alerts || []).some((rule) => matches(alertSearch, rule.name, describeAlert(rule.metric, rule.threshold))) && <div className="empty-state"><Thermometer size={22}/><b>{t("Nothing matches “{search}”", { search: alertSearch })}</b></div>}
             {!state.alerts?.length && <div className="empty-state"><Thermometer size={22}/><b>{t("No alert rules yet")}</b><p>{t("Add thresholds for server health and jobs.")}</p></div>}
           </Panel>
         )}
-        {tab === "settings" && readOnly && <><AppearancePanel /><PasswordForm /></>}
-        {tab === "settings" && !readOnly && <><AppearancePanel /><NotificationsPanel /><ServerSettings /><Panel title={t("Storage monitoring")} note={t("Choose which mounted paths appear in capacity cards.")}><div className="panel-body"><Btn onClick={() => setStorageManager(true)}><HardDrive size={16}/>{t("Manage storage paths")}</Btn></div></Panel><DevicePanel devices={state.devices} current={state.device} revoke={(id) => action(id, "device/revoke", { id })} rename={(id, name) => action(id, "device/rename", { id, name })} createCode={async () => { try { setEnrollment(await api("enrollment/create", { minutes: "15" })); setCopied("idle"); } catch (e) { setErr(e instanceof Error ? e.message : t("Error")); } }} /><UsersPanel current={state.user?.name || ""} /><PasswordForm /><ConfigurationPanel refresh={refresh} /></>}
+        {page === "settings" && readOnly && <><AppearancePanel /><PasswordForm /></>}
+        {page === "settings" && !readOnly && <>
+          {/* Links to the sections of a page that is several screens long. */}
+          <div className="section-links" role="group" aria-label={t("Settings sections")}>
+            {SETTINGS_SECTIONS.map(([id, label]) => (
+              <button key={id} type="button" onClick={() => document.getElementById(id)?.scrollIntoView({ block: "start" })}>{t(label)}</button>
+            ))}
+          </div>
+          <div id="settings-appearance" className="settings-section"><AppearancePanel /></div>
+          <div id="settings-notifications" className="settings-section"><NotificationsPanel /></div>
+          <div id="settings-server" className="settings-section"><ServerSettings /></div>
+          <div id="settings-storage" className="settings-section"><Panel title={t("Storage monitoring")} note={t("Choose which mounted paths appear in capacity cards.")}><div className="panel-body"><Btn onClick={() => setStorageManager(true)}><HardDrive size={16}/>{t("Manage storage paths")}</Btn></div></Panel></div>
+          <div id="settings-browsers" className="settings-section"><DevicePanel devices={state.devices} current={state.device} revoke={(id) => action(id, "device/revoke", { id })} rename={(id, name) => action(id, "device/rename", { id, name })} createCode={async () => { try { setEnrollment(await api("enrollment/create", { minutes: "15" })); setCopied("idle"); } catch (e) { notify(e instanceof Error ? e.message : t("Error")); } }} /></div>
+          <div id="settings-accounts" className="settings-section"><UsersPanel current={state.user?.name || ""} /></div>
+          <div id="settings-password" className="settings-section"><PasswordForm /></div>
+          <div id="settings-backup" className="settings-section"><ConfigurationPanel refresh={refresh} /></div>
+        </>}
       </main>
       {logs && (
         <LiveLogViewer logs={logs} close={() => setLogs(null)} canStop={!readOnly} />
@@ -774,6 +899,7 @@ export default function Home() {
         </Modal>
       )}
       <DialogHost />
+      <ToastHost />
     </div>
   );
 }

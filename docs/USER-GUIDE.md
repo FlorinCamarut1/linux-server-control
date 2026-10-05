@@ -90,7 +90,9 @@ Shell scripts you approve can be run from the dashboard and followed live.
 
 ## Files
 
-Browse, search, sort, edit, copy, move, rename and delete files inside the allowed folders only. Text files up to 512 KB open in the built-in editor, which asks before closing with changes that were not saved. Folder sizes are calculated after the listing appears; sorting by size measures the folders first, so it takes longer in large folders.
+Browse, search, sort (by name, size or date), edit, copy, move, rename and delete files inside the allowed folders only. Every row shows the whole name, however long, with the size and the date it last changed under it; the links above the list show the current folder and lead back up. Text files up to 512 KB open in the built-in editor, which asks before closing with changes that were not saved. Any other file, such as a video, opens its **Details**: full name, path (with **Copy path**), size, date and what can be done with it. Folder sizes are calculated after the listing appears; sorting by size measures the folders first, so it takes longer in large folders.
+
+**Copy** or **Cut** in a row's **⋯** menu shows a bar along the bottom of the screen; open the destination folder and press **Paste here** in it.
 
 Hidden files and folders, whose names start with a dot (such as `.ssh` or `.env`), hold keys and settings, so they are left out: not listed, and not opened even by typing their path. Tick **Show hidden files** and enter the server account's sudo password to show them in this browser for 15 minutes; the server checks the password and the dashboard does not keep it. After five wrong passwords it waits 15 minutes.
 
@@ -155,7 +157,7 @@ To create a Discord webhook: in Discord, open the channel's settings, then **Int
 
 ## On a phone
 
-The dashboard adapts to small screens. The pages are in the menu behind the **☰** button of the top bar, which stays in view while you scroll; health tiles sit two to a row, and tables and charts fit the width.
+The dashboard adapts to small screens. The pages are in the menu behind the **☰** button of the top bar, which stays in view while you scroll and names the page you are on; health tiles sit two to a row, and tables and charts fit the width. **Log out** is at the bottom of that menu (on a computer, at the bottom of the side bar). The Back button closes an open dialog, and otherwise returns to the page before; a page can be bookmarked, such as `#files`. What an action did, or why it failed, appears at the bottom of the screen. On a tablet or a phone held sideways, the side bar shows only the icons of the pages.
 
 <img src="screenshots/mobile.png" alt="Overview on a phone" width="300"> <img src="screenshots/mobile-menu.png" alt="The menu of pages, opened from the top bar" width="300">
 

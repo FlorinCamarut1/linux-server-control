@@ -24,12 +24,12 @@ export const metadata: Metadata = {
   appleWebApp: { title: "Server Control", statusBarStyle: "black-translucent" },
 };
 
-// maximum-scale stops phones from zooming in when a form field is focused and
-// staying zoomed afterwards. iOS still allows zooming by pinching.
+// Pinch zoom stays allowed. Phones zoom in on a focused field whose text is
+// under 16px, which globals.css prevents by giving every field 16px on touch
+// screens.
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
-  maximumScale: 1,
   viewportFit: "cover",
   themeColor: "#090c10",
   colorScheme: "dark",

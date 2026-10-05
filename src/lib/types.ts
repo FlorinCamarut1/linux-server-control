@@ -96,7 +96,8 @@ export type FileBrowserData = {
   parent: string | null;
   roots: string[];
   total?: number;
-  entries: { name: string; path: string; type: "directory" | "file"; size: number | null }[];
+  // modified: when the entry last changed, in seconds since 1970.
+  entries: { name: string; path: string; type: "directory" | "file"; size: number | null; modified?: number }[];
   // Whether hidden files are listed, and whether they were asked for.
   hidden?: boolean;
   hiddenRequested?: boolean;

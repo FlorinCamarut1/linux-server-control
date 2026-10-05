@@ -1,7 +1,7 @@
 "use client";
 import { useState } from "react";
 import { api } from "@/lib/client-api";
-import { Btn, Modal } from "@/components/ui";
+import { Btn, Modal, ModalActions } from "@/components/ui";
 import type { S, Schedule } from "@/lib/types";
 import { locale, t, tn } from "@/lib/i18n";
 // Weekday names in the chosen language, Sunday first like cron (4 January 2026 is a Sunday).
@@ -33,7 +33,7 @@ export function ScheduleForm({
   // typed value needs someone to run it.
   const schedulable = (scripts.find((script) => script.id === scriptId)?.runOptions ?? []).filter((option) => !option.needsFile && !option.input);
   return (
-    <Modal title={existing ? t("Edit schedule") : t("New schedule")} close={close}>
+    <Modal title={existing ? t("Edit schedule") : t("New schedule")} close={close} guard>
       <form
         onSubmit={async (event) => {
           event.preventDefault();
@@ -215,7 +215,9 @@ export function ScheduleForm({
           </>
         )}
         {error && <div className="alert">{error}</div>}
-        <Btn className="primary">{existing ? t("Save schedule") : t("Create schedule")}</Btn>
+        <ModalActions cancel={close}>
+          <Btn className="primary">{existing ? t("Save schedule") : t("Create schedule")}</Btn>
+        </ModalActions>
       </form>
     </Modal>
   );

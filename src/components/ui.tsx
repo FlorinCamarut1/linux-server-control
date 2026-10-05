@@ -5,11 +5,14 @@ import { api } from "@/lib/client-api";
 import type { PreflightCheck, Run } from "@/lib/types";
 import { locale, msg, t } from "@/lib/i18n";
 import {
+  Check,
+  CircleAlert,
   Loader2,
   MoreHorizontal,
   Pause,
   Play,
   Square,
+  X,
 } from "lucide-react";
 export type DialogRequest = {
   kind: "confirm" | "prompt";
@@ -43,19 +46,69 @@ export const Btn = ({
 }: React.ButtonHTMLAttributes<HTMLButtonElement>) => (
   <button className={`button ${className}`} {...p} />
 );
+// What happened after an action, shown at the bottom of the screen where it is
+// seen wherever the page is scrolled: successes go by themselves, errors stay
+// until they are dismissed.
+// Sent by the page's Refresh button, for pages that load their own data.
+export const PAGE_REFRESH = "media-control-page-refresh";
+type Toast = { id: number; message: string; tone: "error" | "success" };
+const TOAST_EVENT = "media-control-toast";
+export function notify(message: string, tone: Toast["tone"] = "error") {
+  window.dispatchEvent(new CustomEvent(TOAST_EVENT, { detail: { message, tone } }));
+}
+export function ToastHost() {
+  const [toasts, setToasts] = useState<Toast[]>([]);
+  useEffect(() => {
+    let next = 0;
+    const timers = new Set<number>();
+    const add = (event: Event) => {
+      const { message, tone } = (event as CustomEvent<Omit<Toast, "id">>).detail;
+      const id = ++next;
+      // The same message again replaces the earlier one; at most three are shown.
+      setToasts((list) => [...list.filter((item) => item.message !== message), { id, message, tone }].slice(-3));
+      if (tone === "success") {
+        const timer = window.setTimeout(() => {
+          timers.delete(timer);
+          setToasts((list) => list.filter((item) => item.id !== id));
+        }, 4000);
+        timers.add(timer);
+      }
+    };
+    window.addEventListener(TOAST_EVENT, add);
+    return () => {
+      window.removeEventListener(TOAST_EVENT, add);
+      timers.forEach((timer) => window.clearTimeout(timer));
+    };
+  }, []);
+  return (
+    <div className="toasts">
+      {toasts.map((toast) => (
+        <div key={toast.id} className={`toast ${toast.tone}`} role={toast.tone === "error" ? "alert" : "status"}>
+          {toast.tone === "error" ? <CircleAlert size={18} /> : <Check size={18} />}
+          <span>{toast.message}</span>
+          <button type="button" className="toast-close" aria-label={t("Dismiss")} onClick={() => setToasts((list) => list.filter((item) => item.id !== toast.id))}>
+            <X size={18} />
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+}
 export function Panel({
+  id,
   title,
   note,
   extra,
   children,
 }: {
+  id?: string;
   title: string;
   note: string;
   extra?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
-    <section className="panel">
+    <section className="panel" id={id}>
       <div className="panel-head">
         <div>
           <h2>{title}</h2>
@@ -67,16 +120,19 @@ export function Panel({
     </section>
   );
 }
+// percent: how full something is, drawn as a bar that turns red from 85%.
 export function Metric({
   label,
   value,
   note,
   icon,
+  percent,
 }: {
   label: string;
   value: string;
   note?: string;
   icon: React.ReactNode;
+  percent?: number | null;
 }) {
   return (
     <div className="metric">
@@ -85,6 +141,11 @@ export function Metric({
         <small>{label}</small>
         <strong>{value}</strong>
         {note && <em>{note}</em>}
+        {typeof percent === "number" && (
+          <span className={`metric-bar${percent >= 85 ? " high" : ""}`} aria-hidden="true">
+            <i style={{ width: `${Math.min(100, Math.max(0, percent))}%` }} />
+          </span>
+        )}
       </div>
     </div>
   );
@@ -132,47 +193,124 @@ export async function copyText(text: string) {
     field.remove();
   }
 }
-// Open dialogs, the innermost last: Escape closes only the one on top.
-const openModals: symbol[] = [];
+// Open dialogs, the innermost last: Escape and the Back button close only the
+// one on top.
+type OpenModal = { key: string; close: () => void };
+const openModals: OpenModal[] = [];
+// Each dialog adds an entry to the browser history, so that the Back button or
+// gesture of a phone closes the dialog instead of leaving the dashboard. The
+// entries list the dialogs open at that point.
+const historyKeys = (): string[] => window.history.state?.lscModals ?? [];
+function backPressed() {
+  const top = openModals.at(-1);
+  if (!top || historyKeys().includes(top.key)) return;
+  // The entry is put back and the dialog asked to close, as Escape does: a
+  // dialog that asks before discarding what was typed may stay open.
+  window.history.pushState({ ...window.history.state, lscModals: [...historyKeys(), top.key] }, "");
+  top.close();
+}
+let listening = false, dropping = false;
+// Removes the entries of dialogs that closed, once all that close together have.
+function dropClosedEntries() {
+  if (dropping) return;
+  dropping = true;
+  queueMicrotask(() => {
+    dropping = false;
+    const keys = historyKeys(), open = new Set(openModals.map((modal) => modal.key));
+    let closed = 0;
+    while (closed < keys.length && !open.has(keys[keys.length - 1 - closed])) closed++;
+    if (closed) window.history.go(-closed);
+  });
+}
+const FOCUSABLE = 'a[href], button:not(:disabled), input:not(:disabled):not([type="hidden"]), select:not(:disabled), textarea:not(:disabled), summary, [tabindex]:not([tabindex="-1"])';
+// guard: the dialog is a form; once something was typed or chosen in it,
+// closing it by Escape, Back, Close or a press beside it asks first.
 export function Modal({
   title,
   close,
+  guard = false,
   children,
 }: {
   title: string;
   close: () => void;
+  guard?: boolean;
   children: React.ReactNode;
 }) {
   const panel = useRef<HTMLElement>(null);
   const titleId = useId();
-  // The caller's latest close handler, read when Escape is pressed.
+  const key = useId();
+  const edited = useRef(false);
+  // The caller's latest close handler, read when Escape or Back is pressed.
   const latestClose = useRef(close);
   useEffect(() => { latestClose.current = close; });
+  const requestClose = useCallback(async () => {
+    if (guard && edited.current && !await appConfirm(t("Close this form? What you entered is discarded."), t("Unsaved changes"), t("Discard"), true)) return;
+    latestClose.current();
+  }, [guard]);
+  const latestRequest = useRef(requestClose);
+  useEffect(() => { latestRequest.current = requestClose; });
   useEffect(() => {
-    const id = Symbol();
-    openModals.push(id);
+    const entry: OpenModal = { key, close: () => void latestRequest.current() };
+    openModals.push(entry);
+    if (!listening) {
+      window.addEventListener("popstate", backPressed);
+      listening = true;
+    }
+    if (historyKeys().at(-1) !== key) window.history.pushState({ ...window.history.state, lscModals: [...historyKeys(), key] }, "");
     const opener = document.activeElement as HTMLElement | null;
     // The dialog takes the focus, unless one of its fields already has it.
     if (!panel.current?.contains(document.activeElement)) panel.current?.focus({ preventScroll: true });
-    const key = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && openModals.at(-1) === id) latestClose.current();
+    const keydown = (event: KeyboardEvent) => {
+      if (openModals.at(-1) !== entry || !panel.current) return;
+      if (event.key === "Escape") return entry.close();
+      if (event.key !== "Tab") return;
+      // The focus stays in the dialog: Tab from its last control goes to its first.
+      const items = [...panel.current.querySelectorAll<HTMLElement>(FOCUSABLE)].filter((item) => item.offsetParent !== null);
+      if (!items.length) return;
+      const first = items[0], last = items[items.length - 1], active = document.activeElement;
+      const outside = !panel.current.contains(active) || active === panel.current;
+      if (event.shiftKey ? outside || active === first : outside || active === last) {
+        event.preventDefault();
+        (event.shiftKey ? last : first).focus();
+      }
     };
-    document.addEventListener("keydown", key);
+    document.addEventListener("keydown", keydown);
     return () => {
-      document.removeEventListener("keydown", key);
-      openModals.splice(openModals.indexOf(id), 1);
+      document.removeEventListener("keydown", keydown);
+      openModals.splice(openModals.indexOf(entry), 1);
+      dropClosedEntries();
       opener?.focus?.({ preventScroll: true });
     };
-  }, []);
+  }, [key]);
   return (
-    <div className="modal-bg" onMouseDown={close}>
-      <section ref={panel} className="modal" role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1} onMouseDown={(e) => e.stopPropagation()}>
+    <div className="modal-bg" onMouseDown={() => void requestClose()}>
+      <section
+        ref={panel}
+        className="modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
+        onMouseDown={(e) => e.stopPropagation()}
+        onInput={() => { edited.current = true; }}
+        onChange={() => { edited.current = true; }}
+      >
         <div className="panel-head">
           <h2 id={titleId}>{title}</h2>
-          <Btn onClick={close}>{t("Close")}</Btn>
+          <Btn onClick={() => void requestClose()}>{t("Close")}</Btn>
         </div>
         {children}
       </section>
+    </div>
+  );
+}
+// The buttons at the end of a dialog's form: Cancel beside the main action.
+// They stay at the bottom of a dialog taller than the screen.
+export function ModalActions({ cancel, children }: { cancel: () => void; children: React.ReactNode }) {
+  return (
+    <div className="modal-actions">
+      <Btn type="button" onClick={cancel}>{t("Cancel")}</Btn>
+      {children}
     </div>
   );
 }
@@ -303,10 +441,9 @@ export function DialogHost() {
     <Modal title={request.title} close={() => finish(false)}>
       <div className="modal-body">
         <p>{request.message}</p>
-        <div className="actions">
-          <Btn onClick={() => finish(false)}>{t("Cancel")}</Btn>
+        <ModalActions cancel={() => finish(false)}>
           <Btn className={request.danger ? "danger" : "primary"} onClick={() => finish(true)}>{request.confirmLabel}</Btn>
-        </div>
+        </ModalActions>
       </div>
     </Modal>
   );
@@ -316,7 +453,7 @@ export function PromptDialog({ request, finish }: { request: DialogRequest; fini
   return <Modal title={request.title} close={() => finish(null)}>
     <form onSubmit={(event) => { event.preventDefault(); if (value.trim()) finish(value); }}>
       <label>{request.message}<input autoFocus value={value} onChange={(event) => setValue(event.target.value)} /></label>
-      <div className="actions"><Btn type="button" onClick={() => finish(null)}>{t("Cancel")}</Btn><Btn className="primary" disabled={!value.trim()}>{request.confirmLabel}</Btn></div>
+      <ModalActions cancel={() => finish(null)}><Btn className="primary" disabled={!value.trim()}>{request.confirmLabel}</Btn></ModalActions>
     </form>
   </Modal>;
 }
@@ -337,7 +474,9 @@ export function runStatusLabel(status: string) {
 export function RunBadge({ run }: { run: Pick<Run, "status" | "exitCode" | "timedOut"> }) {
   const tone = { success: "up", failed: "down", running: "root", stopped: "neutral" }[run.status];
   const detail = run.status !== "failed" ? "" : run.timedOut ? ` · ${t("time limit")}` : run.exitCode !== undefined ? ` · ${t("code {code}", { code: run.exitCode })}` : "";
-  return <span className={`badge ${tone}`}>{runStatusLabel(run.status)}{detail}</span>;
+  // The status reads in lower case inside sentences; as a badge it starts with a capital, like the others.
+  const label = runStatusLabel(run.status);
+  return <span className={`badge ${tone}`}>{label.charAt(0).toLocaleUpperCase(locale()) + label.slice(1)}{detail}</span>;
 }
 // What became of a run, in words, for the log viewer.
 function describeRun(run: Run) {

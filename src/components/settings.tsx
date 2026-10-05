@@ -1,7 +1,7 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "@/lib/client-api";
-import { appConfirm, appPrompt, Btn, Panel, Modal, PreflightList, RowMenu } from "@/components/ui";
+import { appConfirm, appPrompt, Btn, Panel, Modal, ModalActions, PreflightList, RowMenu } from "@/components/ui";
 import { THEMES, applyTheme, savedTheme, type ThemeId } from "@/lib/theme";
 import type { PreflightCheck, St } from "@/lib/types";
 import { LANGUAGES, locale, msg, t } from "@/lib/i18n";
@@ -92,7 +92,7 @@ export function DevicePanel({ devices, current, revoke, rename, createCode }: { 
   return <Panel title={t("Authorized browsers")} note={t("Revoke access for an unknown device")} extra={<Btn className="primary" onClick={createCode}><KeyRound size={16}/>{t("Generate access code")}</Btn>}>
     {Object.entries(devices).map(([id, device]) => <div className="device-row" key={id}>
       <div className="grow"><b>{device.name}</b><small>{t("Authorized {time}", { time: formatCreated(device.created) })}</small></div>
-      {id === current && <span className="badge up">{t("This browser")}</span>}
+      {id === current && <div className="row-side"><span className="badge up">{t("This browser")}</span></div>}
       <RowMenu label={t("Actions for the browser {name}", { name: device.name })} items={[{
         label: t("Edit"), icon: <Pencil size={15} />,
         onSelect: async () => {
@@ -158,10 +158,13 @@ export function ServerSettings() {
 }
 export function ConfigurationPanel({ refresh }: { refresh: () => Promise<void> }) {
   const [message, setMessage] = useState(""); const [error, setError] = useState("");
+  // A real button opens the file chooser, so the keyboard reaches it.
+  const restoreFile = useRef<HTMLInputElement>(null);
   return <Panel title={t("Dashboard settings backup")} note={t("Exports dashboard scripts, schedules, folders, alerts, storage paths, the server connection and authorized devices. It does not contain server files, Docker data, accounts, passwords, notification channels, power devices, SSH keys, or sessions.")}>
     <div className="panel-body">
       <div className="actions configuration-actions"><Btn onClick={async () => { setMessage(""); setError(""); const data = await api("config/export"); const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }); const link = document.createElement("a"); link.href = URL.createObjectURL(blob); link.download = "linux-server-control-settings.json"; link.click(); URL.revokeObjectURL(link.href); setMessage(t("Settings export downloaded.")); }}>{t("Export dashboard settings")}</Btn>
-        <label className="button">{t("Restore dashboard settings")}<input type="file" accept="application/json" hidden onChange={async (event) => {
+        <Btn onClick={() => restoreFile.current?.click()}>{t("Restore dashboard settings")}</Btn>
+        <input ref={restoreFile} type="file" accept="application/json" hidden onChange={async (event) => {
           const input = event.currentTarget, file = input.files?.[0];
           if (!file) return;
           const content = await file.text();
@@ -170,7 +173,7 @@ export function ConfigurationPanel({ refresh }: { refresh: () => Promise<void> }
           setMessage(""); setError("");
           if (!await appConfirm(t("Restore dashboard settings and overwrite scripts, folders, schedules, devices, alerts and storage paths?"), t("Restore dashboard settings"), t("Restore"), true)) return;
           try { await api("config/restore", { payload: content }); await refresh(); setMessage(t("Dashboard settings restored.")); } catch (reason) { setError(reason instanceof Error ? reason.message : t("Restore failed")); }
-        }} /></label></div>
+        }} /></div>
       {message && <div className="success panel-feedback">{message}</div>}{error && <div className="alert panel-feedback">{error}</div>}
     </div>
   </Panel>;
@@ -224,7 +227,7 @@ export function NotificationsPanel() {
           <small>{data.types.find((type) => type.id === channel.type)?.name ?? channel.type} · {channel.url} · {t("{count} of {total} events", { count: channel.events.length, total: Object.keys(data.events).length })}</small>
           {(status[channel.id] || channel.lastError) && <small className={status[channel.id] === TEST_SENT ? "notice-ok" : "notice-error"}>{status[channel.id] === TEST_SENT ? t("Test sent.") : status[channel.id] || t("Last delivery failed: {error}", { error: channel.lastError ?? "" })}</small>}
         </div>
-        {!channel.enabled && <span className="badge root">{t("Paused")}</span>}
+        {!channel.enabled && <div className="row-side"><span className="badge neutral">{t("Paused")}</span></div>}
         <RowMenu label={t("Actions for the channel {name}", { name: channel.name })} items={[
           {
             label: t("Send test"), icon: <Send size={15} />,
@@ -252,7 +255,7 @@ function ChannelForm({ channel, data, close, saved }: { channel: Channel | null;
   const [type, setType] = useState(channel?.type ?? data.types[0].id);
   const [error, setError] = useState("");
   const info = data.types.find((item) => item.id === type);
-  return <Modal title={channel ? t("Edit {name}", { name: channel.name }) : t("Add notification channel")} close={close}>
+  return <Modal title={channel ? t("Edit {name}", { name: channel.name }) : t("Add notification channel")} close={close} guard>
     <form onSubmit={async (event) => {
       event.preventDefault(); setError("");
       const form = new FormData(event.currentTarget);
@@ -272,7 +275,7 @@ function ChannelForm({ channel, data, close, saved }: { channel: Channel | null;
       </fieldset>
       <label><input name="enabled" type="checkbox" value="true" defaultChecked={channel?.enabled !== false} /> {t("Enabled")}</label>
       {error && <div className="alert">{error}</div>}
-      <Btn className="primary">{channel ? t("Save channel") : t("Add channel")}</Btn>
+      <ModalActions cancel={close}><Btn className="primary">{channel ? t("Save channel") : t("Add channel")}</Btn></ModalActions>
     </form>
   </Modal>;
 }
@@ -295,7 +298,7 @@ export function UsersPanel({ current }: { current: string }) {
           <b>{user.username}{user.username === current ? ` (${t("you")})` : ""}</b>
           <small>{user.owner ? t("Owner, created at setup") : user.created ? t("Created {time}", { time: formatCreated(user.created) }) : ""}</small>
         </div>
-        <span className={`badge ${user.role === "admin" ? "up" : "root"}`}>{t(ROLE_LABELS[user.role])}</span>
+        <div className="row-side"><span className={`badge ${user.role === "admin" ? "up" : "root"}`}>{t(ROLE_LABELS[user.role])}</span></div>
         {/* The owner has no menu; the space keeps the badges in one column. */}
         {user.owner && <span className="menu-spacer" aria-hidden="true" />}
         {!user.owner && <RowMenu label={t("Actions for the account {name}", { name: user.username })} items={[
@@ -315,7 +318,7 @@ export function UsersPanel({ current }: { current: string }) {
 }
 function AccountForm({ account, self, close, saved }: { account: Account | null; self: boolean; close: () => void; saved: () => void }) {
   const [error, setError] = useState("");
-  return <Modal title={account ? t("Edit {name}", { name: account.username }) : t("Add account")} close={close}>
+  return <Modal title={account ? t("Edit {name}", { name: account.username }) : t("Add account")} close={close} guard>
     <form onSubmit={async (event) => {
       event.preventDefault(); setError("");
       const values = Object.fromEntries(new FormData(event.currentTarget)) as Record<string, string>;
@@ -326,7 +329,7 @@ function AccountForm({ account, self, close, saved }: { account: Account | null;
       <label>{t("Role")}<select name="role" defaultValue={account?.role ?? "viewer"} disabled={self}><option value="viewer">{t("Read-only")}</option><option value="admin">{t("Administrator")}</option></select>{self && <small>{t("You cannot change your own role.")}</small>}</label>
       <label>{t("Password")}<input name="password" type="password" minLength={12} required={!account} autoComplete="new-password" placeholder={account ? t("Leave blank to keep the current password") : ""} /><small>{t("At least 12 characters. A new browser also needs an access code the first time it signs in.")}</small></label>
       {error && <div className="alert">{error}</div>}
-      <Btn className="primary">{account ? t("Save account") : t("Add account")}</Btn>
+      <ModalActions cancel={close}><Btn className="primary">{account ? t("Save account") : t("Add account")}</Btn></ModalActions>
     </form>
   </Modal>;
 }
