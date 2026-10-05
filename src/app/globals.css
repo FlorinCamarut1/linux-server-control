@@ -2575,6 +2575,59 @@ label > textarea:disabled {
 .enroll[open] summary {
   margin-bottom: 16px;
 }
+/* The HTTPS certificate's download and the steps for the chosen device. */
+.certificate-help {
+  display: grid;
+  gap: 16px;
+  max-width: 680px;
+}
+.certificate-help p {
+  margin: 0;
+}
+.certificate-help > label {
+  margin: 0;
+}
+.certificate-help > .button {
+  justify-self: start;
+}
+.certificate-help ol {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding-inline-start: 20px;
+  list-style: decimal;
+  color: var(--text-soft);
+}
+.certificate-help code {
+  overflow-wrap: anywhere;
+  font: var(--text-sm)/1.5 ui-monospace, Consolas, monospace;
+}
+.certificate-help a:not(.button) {
+  color: var(--accent);
+  overflow-wrap: anywhere;
+}
+.certificate-note {
+  font-size: var(--text-md);
+}
+.certificate-check summary {
+  color: var(--muted);
+  font-size: var(--text-md);
+  cursor: pointer;
+}
+.certificate-check > * + * {
+  margin-top: 8px;
+}
+.certificate-check code,
+.certificate-check small {
+  display: block;
+  color: var(--muted);
+}
+.certificate-sign-in {
+  margin: 16px 0 0;
+}
+.certificate-sign-in[open] summary {
+  margin-bottom: 16px;
+}
 /* The connection form on the reconnect screen, below the Reconnect button. */
 .reconnect-settings {
   margin: 16px 0 0;
@@ -2986,6 +3039,9 @@ label > textarea:disabled {
   }
   .file-details-actions .button.primary {
     grid-column: 1 / -1;
+  }
+  .certificate-help > .button {
+    justify-self: stretch;
   }
   .path-input,
   .file-browser-head,

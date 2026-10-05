@@ -27,12 +27,31 @@ services:
 
   # Optional HTTPS: `docker compose --profile https up -d` serves the dashboard
   # on https://HTTPS_HOST:8444 with a certificate from Caddy's own local CA.
-  # Set COOKIE_SECURE=true in .env when you use it.
+  # Set COOKIE_SECURE=true in .env when you use it. Port 8080, not published,
+  # gives the CA's root certificate to the dashboard, which offers it for
+  # download under Settings → HTTPS certificate.
   https:
     image: caddy:2
     profiles: [https]
     restart: unless-stopped
-    command: caddy reverse-proxy --from https://${HTTPS_HOST:-${LAN_IP}}:8444 --to dashboard:3000 --internal-certs
+    environment:
+      HTTPS_HOST: ${HTTPS_HOST:-${LAN_IP}}
+      # Browsers send no server name (SNI) to an IP address; default_sni picks
+      # the certificate for them.
+      CADDYFILE: |
+        {
+          default_sni {$$HTTPS_HOST}
+        }
+        https://{$$HTTPS_HOST}:8444 {
+          tls internal
+          reverse_proxy dashboard:3000
+        }
+        http://:8080 {
+          root * /data/caddy/pki/authorities/local
+          rewrite * /root.crt
+          file_server
+        }
+    command: ["sh", "-c", "printf '%s' \"$$CADDYFILE\" > /tmp/Caddyfile && exec caddy run --config /tmp/Caddyfile --adapter caddyfile"]
     ports:
       - "${LAN_IP}:8444:8444"
     volumes:

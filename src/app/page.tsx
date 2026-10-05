@@ -9,7 +9,7 @@ import { FileExplorer } from "@/components/files";
 import { Overview, HistoryPanel, AlertForm, describeAlert } from "@/components/monitoring";
 import { ScheduleForm } from "@/components/schedules";
 import { ScriptForm, CustomScriptForm, RunScriptForm, FolderForm } from "@/components/scripts";
-import { AppearancePanel, NotificationsPanel, PasswordForm, DevicePanel, ServerSettings, ConfigurationPanel, StorageManager, UsersPanel } from "@/components/settings";
+import { AppearancePanel, CertificatePanel, NotificationsPanel, PasswordForm, DevicePanel, ServerSettings, ConfigurationPanel, StorageManager, UsersPanel } from "@/components/settings";
 import { appConfirm, appPrompt, Btn, copyText, Panel, Metric, formatBytes, formatPercent, formatUptime, Modal, DialogHost, LiveLogViewer, AppLoading, LoadingScreen, notify, PAGE_REFRESH, RowMenu, runStatusLabel, ToastHost } from "@/components/ui";
 import { applyTheme, savedTheme } from "@/lib/theme";
 import { LANGUAGE_CHANGED, applyLanguage, savedLanguage } from "@/lib/language";
@@ -64,6 +64,7 @@ const SETTINGS_SECTIONS = [
   ["settings-appearance", msg("Appearance")],
   ["settings-notifications", msg("Notifications")],
   ["settings-server", msg("Server connection")],
+  ["settings-certificate", msg("HTTPS certificate")],
   ["settings-storage", msg("Storage monitoring")],
   ["settings-browsers", msg("Authorized browsers")],
   ["settings-accounts", msg("Accounts")],
@@ -789,7 +790,7 @@ export default function Home() {
             {!state.alerts?.length && <div className="empty-state"><Thermometer size={22}/><b>{t("No alert rules yet")}</b><p>{t("Add thresholds for server health and jobs.")}</p></div>}
           </Panel>
         )}
-        {page === "settings" && readOnly && <><AppearancePanel /><PasswordForm /></>}
+        {page === "settings" && readOnly && <><AppearancePanel /><CertificatePanel /><PasswordForm /></>}
         {page === "settings" && !readOnly && <>
           {/* Links to the sections of a page that is several screens long. */}
           <div className="section-links" role="group" aria-label={t("Settings sections")}>
@@ -800,6 +801,7 @@ export default function Home() {
           <div id="settings-appearance" className="settings-section"><AppearancePanel /></div>
           <div id="settings-notifications" className="settings-section"><NotificationsPanel /></div>
           <div id="settings-server" className="settings-section"><ServerSettings /></div>
+          <div id="settings-certificate" className="settings-section"><CertificatePanel /></div>
           <div id="settings-storage" className="settings-section"><Panel title={t("Storage monitoring")} note={t("Choose which mounted paths appear in capacity cards.")}><div className="panel-body"><Btn onClick={() => setStorageManager(true)}><HardDrive size={16}/>{t("Manage storage paths")}</Btn></div></Panel></div>
           <div id="settings-browsers" className="settings-section"><DevicePanel devices={state.devices} current={state.device} revoke={(id) => action(id, "device/revoke", { id })} rename={(id, name) => action(id, "device/rename", { id, name })} createCode={async () => { try { setEnrollment(await api("enrollment/create", { minutes: "15" })); setCopied("idle"); } catch (e) { notify(e instanceof Error ? e.message : t("Error")); } }} /></div>
           <div id="settings-accounts" className="settings-section"><UsersPanel current={state.user?.name || ""} /></div>

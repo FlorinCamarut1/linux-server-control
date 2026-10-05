@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { api } from "@/lib/client-api";
+import { CertificateSignIn } from "@/components/certificate";
 import { ServerSettingsForm } from "@/components/settings";
 import { Btn, PreflightList, rich } from "@/components/ui";
 import { LanguageSelect } from "@/components/language";
@@ -68,6 +69,8 @@ export function Login({
             {loading ? t("Signing in…") : t("Sign in")}
           </Btn>
         </form>
+        {/* Before the first sign-in on a device, so that it can save the password. */}
+        <CertificateSignIn />
       </section>
     </main>
   );

@@ -6,6 +6,7 @@ import { THEMES, applyTheme, savedTheme, type ThemeId } from "@/lib/theme";
 import type { PreflightCheck, St } from "@/lib/types";
 import { LANGUAGES, locale, msg, t } from "@/lib/i18n";
 import { LanguageSelect } from "@/components/language";
+import { CertificateHelp } from "@/components/certificate";
 import {
   KeyRound,
   Pencil,
@@ -109,6 +110,11 @@ export function DevicePanel({ devices, current, revoke, rename, createCode }: { 
         },
       }]} />
     </div>)}
+  </Panel>;
+}
+export function CertificatePanel() {
+  return <Panel title={t("HTTPS certificate")} note={t("Trust this certificate once on each device: the HTTPS address then opens without a warning, the browser offers to save your password, and phones can install the dashboard as an app.")}>
+    <div className="panel-body"><CertificateHelp /></div>
   </Panel>;
 }
 export function AppearancePanel() {

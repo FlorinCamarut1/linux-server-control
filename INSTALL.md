@@ -253,7 +253,7 @@ A first helper installed by an earlier version of the dashboard cannot stop root
 
 ## Optional: HTTPS
 
-The dashboard is served over plain HTTP, which is acceptable on a home network you trust. HTTPS also lets Android phones and computers [install it as an app](docs/USER-GUIDE.md#on-a-phone). For HTTPS, the Compose file includes a Caddy service that is off by default:
+The dashboard is served over plain HTTP, which is acceptable on a home network you trust. HTTPS also lets browsers save your password and lets Android phones and computers [install it as an app](docs/USER-GUIDE.md#on-a-phone). For HTTPS, the Compose file includes a Caddy service that is off by default:
 
 ```bash
 cd ~/linux-server-control
@@ -261,13 +261,17 @@ echo "COOKIE_SECURE=true" >> .env
 docker compose --profile https up -d
 ```
 
-Open `https://YOUR_SERVER_IP:8444`. Caddy creates its own certificate authority, so browsers warn until you trust it. Export its root certificate and import it in your browser or device:
+Open `https://YOUR_SERVER_IP:8444`. Caddy creates its own certificate authority, so browsers warn until you trust it, and do not offer to save the password until then. Trust it once on each device: **Settings → HTTPS certificate** (or **Save the password in this browser** on the sign-in page) downloads the authority's root certificate and shows the steps for the device's system, with the certificate's fingerprint to compare. The root is valid for ten years. The same file is also at:
 
 ```bash
 docker compose cp https:/data/caddy/pki/authorities/local/root.crt .
 ```
 
 To use a name instead of the address, set `HTTPS_HOST=server.lan` in `.env`. With `COOKIE_SECURE=true`, sign-in works only over HTTPS, so use port `8444` from then on; each browser enrolls once more under the new address.
+
+An older compose.yaml, whose `https` service runs `caddy reverse-proxy`, offers no download of the root certificate and fails with browsers on an IP address, which send no server name; run the installer again, or download compose.github.yaml again as compose.yaml.
+
+For a certificate made another way, mount its public certificate into the dashboard container and set `HTTPS_CA_CERT` to its path in `.env`; the download then offers that file. Only the public certificate is read, never a key.
 
 ## Accounts for other people
 

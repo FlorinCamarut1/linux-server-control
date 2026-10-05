@@ -9,4 +9,5 @@ export * from "./host/scripts";
 export * from "./host/monitor";
 export * from "./host/backup";
 export * from "./host/language";
+export * from "./host/certificate";
 export { t, tn, msg, locale, isLanguage } from "./i18n";

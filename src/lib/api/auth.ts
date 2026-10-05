@@ -5,6 +5,8 @@ import {
   audit,
   digest,
   hash,
+  httpsAddress,
+  httpsCertificate,
   persistSessions,
   preflight,
   type PreflightCheck,
@@ -229,12 +231,38 @@ async function login({ req, body }: PublicContext) {
   return setAuthCookies(NextResponse.json({ ok: true }), session, device);
 }
 
+// The HTTPS certificate is public by nature, and a new browser needs it before
+// it signs in: trusted from the start, it saves the password at the first sign-in.
+async function certificateInfo() {
+  const certificate = await httpsCertificate();
+  if (!certificate) return NextResponse.json({ available: false, address: httpsAddress() });
+  return NextResponse.json({
+    available: true,
+    address: httpsAddress(),
+    fingerprint: certificate.fingerprint256,
+    validTo: new Date(certificate.validTo).toISOString(),
+    name: certificate.subject.split("\n").find((line) => line.startsWith("CN="))?.slice(3) ?? "",
+  });
+}
+// DER for the devices that install it, PEM for Linux's certificate folder.
+// inline: Safari on an iPhone installs it as a profile instead of saving a file.
+async function certificateFile({ req }: PublicContext) {
+  const certificate = await httpsCertificate();
+  if (!certificate) return fail(t("Not found"), 404);
+  const query = req.nextUrl.searchParams, pem = query.get("format") === "pem";
+  const headers: Record<string, string> = { "content-type": pem ? "application/x-pem-file" : "application/x-x509-ca-cert", "cache-control": "no-store" };
+  if (query.get("inline") !== "1") headers["content-disposition"] = `attachment; filename="linux-server-control-ca.${pem ? "pem" : "crt"}"`;
+  return new NextResponse(pem ? certificate.toString() : new Uint8Array(certificate.raw), { headers });
+}
+
 export const publicRoutes: Routes<PublicContext> = {
   // For the container health check; reveals nothing about the installation.
   "GET health": () => NextResponse.json({ ok: true }),
   "GET setup/status": setupStatus,
   "POST setup": setup,
   "POST login": login,
+  "GET certificate": certificateInfo,
+  "GET certificate/file": certificateFile,
 };
 
 export const accountRoutes: Routes<Context> = {

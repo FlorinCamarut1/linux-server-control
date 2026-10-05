@@ -36,6 +36,8 @@ If the server lacks a tool that a page needs, such as `python3` for Files or `cr
 
 Every other browser or phone needs a one-time **access code** the first time it signs in. Create one on an authorized browser under **Settings → Authorized browsers → Generate access code**, then, on the new browser, open **New browser? Enter an enrollment code** on the sign-in page.
 
+A sign-in lasts a week. Signing out, changing the password or revoking the browser ends it sooner.
+
 ![Sign-in page with the enrollment code section open](screenshots/login.jpg)
 
 After five wrong passwords a browser is blocked for 15 minutes. Browsers that are not enrolled yet share one limit, so guessing from new browsers never locks out your own.
@@ -144,6 +146,7 @@ Rules that fire when a value reaches a threshold: CPU temperature, CPU, RAM or s
 - **Appearance**: choose a theme (Dark, Light, Nord, Dracula, Solarized, Gruvbox, Catppuccin, Tokyo Night, Rosé Pine, Black, Latte, or System to follow the device). Each browser keeps its own choice.
 - **Notifications**: send alerts (and their return to normal), failed runs, successful runs of the scripts set to announce them, and power device changes to Discord, Slack (also Mattermost and Rocket.Chat), ntfy, or any webhook that accepts JSON. Choose the events per channel and use **Test** to check it.
 - **Server connection**: the SSH target and port, the allowed folders and how long metrics are kept. Saving tests the connection first and keeps the previous settings if the server does not answer. **Check server requirements** tests what the server provides and names anything missing.
+- **HTTPS certificate**: with [HTTPS](../INSTALL.md#optional-https) on, download the certificate and follow the steps for the device's system (Windows, macOS, iPhone and iPad, Android, Linux, ChromeOS) to trust it once. The HTTPS address then opens without a warning, and the browser offers to save the password. The sign-in page offers the same under **Save the password in this browser**.
 - **Storage monitoring**: the mounted folders shown as storage cards.
 - **Authorized browsers**: see and revoke devices, and create access codes for new ones. The browser you are using is marked. The last authorized browser cannot be revoked, because no other could sign in afterwards.
 - **Accounts**: add accounts for other people. An **Administrator** can change everything. A **Read-only** account sees the pages, history and logs, but has no Files page and cannot run, edit or delete anything.

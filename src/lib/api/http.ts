@@ -18,7 +18,8 @@ export function ok(data: Record<string, unknown> = {}) {
   return NextResponse.json({ ok: true, ...data });
 }
 
-export const SESSION_SECONDS = 8 * 60 * 60;
+// A sign-in lasts a week; signing out, a new password or revoking the browser ends it sooner.
+export const SESSION_SECONDS = 7 * 24 * 60 * 60;
 const DEVICE_SECONDS = 365 * 24 * 60 * 60;
 export function setAuthCookies(response: NextResponse, session: string, device?: string) {
   const options = { httpOnly: true, secure: process.env.COOKIE_SECURE === "true", sameSite: "strict" as const, path: "/" };
