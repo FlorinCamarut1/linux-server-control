@@ -198,15 +198,51 @@ export async function copyText(text: string) {
 type OpenModal = { key: string; close: () => void };
 const openModals: OpenModal[] = [];
 // Each dialog adds an entry to the browser history, so that the Back button or
-// gesture of a phone closes the dialog instead of leaving the dashboard. The
-// entries list the dialogs open at that point.
-const historyKeys = (): string[] => window.history.state?.lscModals ?? [];
-function backPressed() {
+// gesture of a phone closes the dialog instead of leaving the dashboard. An
+// entry lists the dialogs open at that point. The list of the current entry is
+// kept here as well, because the browser takes the steps back asked of it
+// later: two dialogs that close one after the other (a confirmation, then the
+// editor that asked for it) must step back over both entries, not over one
+// twice. One step back is taken at a time, and a dialog that opens meanwhile
+// adds its entry once it is over.
+let entries: string[] | null = null;
+let travelling = false, owedSteps = 0;
+const waiting: (() => void)[] = [];
+const currentEntries = (): string[] => (entries ??= [...(window.history.state?.lscModals ?? [])]);
+function addEntry(key: string) {
+  if (travelling) return void waiting.push(() => addEntry(key));
+  if (currentEntries().at(-1) === key) return;
+  entries = [...currentEntries(), key];
+  window.history.pushState({ ...window.history.state, lscModals: entries }, "");
+}
+let settleTimer = 0;
+function stepBack(steps: number) {
+  if (travelling) return void (owedSteps += steps);
+  travelling = true;
+  // A step back that the browser does not take (no entry left) sends no event.
+  settleTimer = window.setTimeout(arrived, 1000);
+  window.history.go(-steps);
+}
+function arrived() {
+  window.clearTimeout(settleTimer);
+  travelling = false;
+  if (owedSteps) {
+    const steps = owedSteps;
+    owedSteps = 0;
+    return stepBack(steps);
+  }
+  waiting.splice(0).forEach((add) => add());
+}
+function historyMoved() {
+  if (travelling) return arrived();
+  // Back or Forward from the browser: the top dialog closes, as with Escape.
+  // Its entry is put back first, so that a dialog that asks before discarding
+  // what was typed, and stays open, still has one.
+  entries = [...(window.history.state?.lscModals ?? [])];
   const top = openModals.at(-1);
-  if (!top || historyKeys().includes(top.key)) return;
-  // The entry is put back and the dialog asked to close, as Escape does: a
-  // dialog that asks before discarding what was typed may stay open.
-  window.history.pushState({ ...window.history.state, lscModals: [...historyKeys(), top.key] }, "");
+  if (!top || entries.includes(top.key)) return;
+  entries = [...entries, top.key];
+  window.history.pushState({ ...window.history.state, lscModals: entries }, "");
   top.close();
 }
 let listening = false, dropping = false;
@@ -216,12 +252,15 @@ function dropClosedEntries() {
   dropping = true;
   queueMicrotask(() => {
     dropping = false;
-    const keys = historyKeys(), open = new Set(openModals.map((modal) => modal.key));
+    const keys = currentEntries(), open = new Set(openModals.map((modal) => modal.key));
     let closed = 0;
     while (closed < keys.length && !open.has(keys[keys.length - 1 - closed])) closed++;
-    if (closed) window.history.go(-closed);
+    if (!closed) return;
+    entries = keys.slice(0, keys.length - closed);
+    stepBack(closed);
   });
 }
+let modalCount = 0;
 const FOCUSABLE = 'a[href], button:not(:disabled), input:not(:disabled):not([type="hidden"]), select:not(:disabled), textarea:not(:disabled), summary, [tabindex]:not([tabindex="-1"])';
 // guard: the dialog is a form; once something was typed or chosen in it,
 // closing it by Escape, Back, Close or a press beside it asks first.
@@ -238,7 +277,9 @@ export function Modal({
 }) {
   const panel = useRef<HTMLElement>(null);
   const titleId = useId();
-  const key = useId();
+  // Unique for each dialog opened, unlike useId, which a dialog opened again in
+  // the same place would share with the one before it.
+  const [key] = useState(() => `modal-${++modalCount}`);
   const edited = useRef(false);
   // The caller's latest close handler, read when Escape or Back is pressed.
   const latestClose = useRef(close);
@@ -253,10 +294,10 @@ export function Modal({
     const entry: OpenModal = { key, close: () => void latestRequest.current() };
     openModals.push(entry);
     if (!listening) {
-      window.addEventListener("popstate", backPressed);
+      window.addEventListener("popstate", historyMoved);
       listening = true;
     }
-    if (historyKeys().at(-1) !== key) window.history.pushState({ ...window.history.state, lscModals: [...historyKeys(), key] }, "");
+    addEntry(key);
     const opener = document.activeElement as HTMLElement | null;
     // The dialog takes the focus, unless one of its fields already has it.
     if (!panel.current?.contains(document.activeElement)) panel.current?.focus({ preventScroll: true });

@@ -175,7 +175,7 @@ test("a script is created, run and recorded in the history", async ({ page }) =>
 
   await open(page, "History");
   const run = page.locator(".schedule-row", { hasText: "Greeting" }).first();
-  await expect(run.locator(".badge")).toHaveText("success", { timeout: 15000 });
+  await expect(run.locator(".badge")).toHaveText("Success", { timeout: 15000 });
 });
 
 test("a running script is stopped from its log and recorded as stopped", async ({ page }) => {
@@ -202,7 +202,7 @@ test("a running script is stopped from its log and recorded as stopped", async (
 
   await open(page, "History");
   const run = page.locator(".schedule-row", { hasText: "Long job" }).first();
-  await expect(run.locator(".badge")).toHaveText("stopped");
+  await expect(run.locator(".badge")).toHaveText("Stopped");
   await expect(run).toContainText("stopped by admin");
   // A stopped run needs no attention.
   await open(page, "Overview");
@@ -251,7 +251,7 @@ test("a schedule is written to the crontab, runs, and can be paused and deleted"
   await open(page, "History");
   await page.getByRole("button", { name: /Cron runs/ }).click();
   const run = page.locator(".schedule-row", { hasText: "Every day at 03:00" }).first();
-  await expect(run.locator(".badge")).toHaveText("success", { timeout: 15000 });
+  await expect(run.locator(".badge")).toHaveText("Success", { timeout: 15000 });
 
   await open(page, "Schedules");
   await choose(page, row, "Pause");
