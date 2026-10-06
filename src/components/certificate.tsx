@@ -9,7 +9,7 @@ import { api } from "@/lib/client-api";
 import { locale, msg, t } from "@/lib/i18n";
 import { rich } from "@/components/ui";
 
-type Info = { available: boolean; address: string | null; fingerprint?: string; validTo?: string };
+type Info = { available: boolean; addresses: string[]; fingerprint?: string; validTo?: string };
 type System = "windows" | "macos" | "ios" | "android" | "linux" | "chromeos";
 const SYSTEMS: [System, string][] = [
   ["windows", "Windows"], ["macos", "macOS"], ["ios", "iPhone / iPad"],
@@ -56,7 +56,7 @@ function detectSystem(): System {
 function useCertificate() {
   const [info, setInfo] = useState<Info | null>(null);
   useEffect(() => {
-    void api("certificate", undefined, true).then(setInfo).catch(() => setInfo({ available: false, address: null }));
+    void api("certificate", undefined, true).then(setInfo).catch(() => setInfo({ available: false, addresses: [] }));
   }, []);
   return info;
 }
@@ -87,7 +87,8 @@ function CertificateSteps({ info }: { info: Info }) {
     );
   // iPhones install a profile that Safari opens itself, so it is not saved as a file.
   const file = system === "linux" ? "/api/certificate/file?format=pem" : system === "ios" ? "/api/certificate/file?inline=1" : "/api/certificate/file";
-  const elsewhere = info.address && typeof window !== "undefined" && window.location.origin !== info.address;
+  // On none of the HTTPS addresses yet: the first is offered.
+  const address = typeof window !== "undefined" && !info.addresses.includes(window.location.origin) ? info.addresses[0] : undefined;
   return (
     <div className="certificate-help">
       <label>
@@ -103,7 +104,7 @@ function CertificateSteps({ info }: { info: Info }) {
       <ol>
         {STEPS[system].map((step) => <li key={step}>{t(step)}</li>)}
         {system === "linux" && <li>{rich(t("For the whole system as well, run {command}"), { command: <code>sudo cp linux-server-control-ca.pem /usr/local/share/ca-certificates/linux-server-control-ca.crt && sudo update-ca-certificates</code> })}</li>}
-        {elsewhere && <li>{rich(t("Then open the secure address {address} and sign in: the browser offers to save the password."), { address: <a href={info.address!}>{info.address}</a> })}</li>}
+        {address && <li>{rich(t("Then open the secure address {address} and sign in: the browser offers to save the password."), { address: <a href={address}>{address}</a> })}</li>}
       </ol>
       {DESKTOP.has(system) && <p className="certificate-note">{t("Firefox keeps its own list: Settings → Privacy & Security → Certificates → View Certificates → Authorities → Import, then tick “Trust this CA to identify websites”.")}</p>}
       <details className="certificate-check">

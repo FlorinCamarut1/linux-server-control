@@ -5,7 +5,7 @@ import {
   audit,
   digest,
   hash,
-  httpsAddress,
+  httpsAddresses,
   httpsCertificate,
   persistSessions,
   preflight,
@@ -235,10 +235,10 @@ async function login({ req, body }: PublicContext) {
 // it signs in: trusted from the start, it saves the password at the first sign-in.
 async function certificateInfo() {
   const certificate = await httpsCertificate();
-  if (!certificate) return NextResponse.json({ available: false, address: httpsAddress() });
+  if (!certificate) return NextResponse.json({ available: false, addresses: httpsAddresses() });
   return NextResponse.json({
     available: true,
-    address: httpsAddress(),
+    addresses: httpsAddresses(),
     fingerprint: certificate.fingerprint256,
     validTo: new Date(certificate.validTo).toISOString(),
     name: certificate.subject.split("\n").find((line) => line.startsWith("CN="))?.slice(3) ?? "",

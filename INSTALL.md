@@ -279,7 +279,7 @@ Open `https://YOUR_SERVER_IP:8444`; port 8443 stays plain HTTP, where signing in
 docker compose cp https:/data/caddy/pki/authorities/local/root.crt .
 ```
 
-To use a name instead of the address, set `HTTPS_HOST=server.lan` in `.env`. With `COOKIE_SECURE=true`, sign-in works only over HTTPS, so use port `8444` from then on; each browser enrolls once more under the new address.
+To use a name instead of the address, or as well, list them in `HTTPS_HOST`, separated by commas, the address first; the certificate then covers each. For example, to reach the dashboard on your network and through Tailscale's MagicDNS name, `HTTPS_HOST=192.168.1.10,my-server`, then `docker compose --profile https up -d`. The address that comes first is the one browsers get on an IP address, since they send no name; a second IP address, such as Tailscale's 100.x one, cannot be used, so use its name instead. Each new name is a new site for the browser: it enrolls once more there, and the root certificate it already trusts covers it. With `COOKIE_SECURE=true`, sign-in works only over HTTPS, so use port `8444` from then on; each browser enrolls once more under the new address.
 
 An older compose.yaml, whose `https` service runs `caddy reverse-proxy`, offers no download of the root certificate and fails with browsers on an IP address, which send no server name; run the installer again, or download compose.github.yaml again as compose.yaml.
 

@@ -29,7 +29,10 @@ services:
 
   # Optional HTTPS: `docker compose --profile https up -d` serves the dashboard
   # on https://HTTPS_HOST:8444 with a certificate from Caddy's own local CA.
-  # Set COOKIE_SECURE=true in .env when you use it. Port 8080, not published,
+  # Set COOKIE_SECURE=true in .env when you use it. HTTPS_HOST may list several
+  # names and addresses, separated by commas (192.168.1.10,server,server.lan):
+  # the certificate covers each, and the first is for browsers on an IP address,
+  # which send no server name (SNI). Port 8080, not published,
   # gives the CA's root certificate to the dashboard, which offers it for
   # download under Settings → HTTPS certificate.
   https:
@@ -38,13 +41,11 @@ services:
     restart: unless-stopped
     environment:
       HTTPS_HOST: ${HTTPS_HOST:-${LAN_IP}}
-      # Browsers send no server name (SNI) to an IP address; default_sni picks
-      # the certificate for them.
       CADDYFILE: |
         {
-          default_sni {$$HTTPS_HOST}
+          default_sni {$$HTTPS_FIRST}
         }
-        https://{$$HTTPS_HOST}:8444 {
+        {$$HTTPS_SITES} {
           tls internal
           reverse_proxy dashboard:3000
         }
@@ -53,7 +54,15 @@ services:
           rewrite * /root.crt
           file_server
         }
-    command: ["sh", "-c", "printf '%s' \"$$CADDYFILE\" > /tmp/Caddyfile && exec caddy run --config /tmp/Caddyfile --adapter caddyfile"]
+    command:
+      - sh
+      - -c
+      - |
+        HTTPS_FIRST=$$(printf '%s' "$$HTTPS_HOST" | tr -d ' ' | cut -d, -f1)
+        HTTPS_SITES=$$(printf '%s' "$$HTTPS_HOST" | tr -d ' ' | sed 's/,,*/,/g; s/^,//; s/,$$//; s|[^,][^,]*|https://&:8444|g; s/,/, /g')
+        export HTTPS_FIRST HTTPS_SITES
+        printf '%s' "$$CADDYFILE" > /tmp/Caddyfile
+        exec caddy run --config /tmp/Caddyfile --adapter caddyfile
     ports:
       - "${LAN_IP}:8444:8444"
     volumes:

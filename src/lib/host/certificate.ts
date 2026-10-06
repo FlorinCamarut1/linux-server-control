@@ -25,8 +25,9 @@ export async function httpsCertificate() {
   kept = { at: Date.now(), certificate };
   return certificate;
 }
-// The HTTPS address of the Compose file's HTTPS service.
-export function httpsAddress() {
-  const host = process.env.HTTPS_HOST || process.env.LAN_IP;
-  return host && host !== "0.0.0.0" ? `https://${host}:8444` : null;
+// The HTTPS addresses of the Compose file's HTTPS service: HTTPS_HOST may list
+// several names and addresses, separated by commas.
+export function httpsAddresses() {
+  const hosts = (process.env.HTTPS_HOST || process.env.LAN_IP || "").split(",").map((host) => host.trim());
+  return hosts.filter((host) => host && host !== "0.0.0.0").map((host) => `https://${host}:8444`);
 }
