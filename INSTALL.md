@@ -20,7 +20,7 @@ curl -fsSL https://raw.githubusercontent.com/FlorinCamarut1/linux-server-control
 The installer does steps 1 to 5 for you:
 
 - It checks the server and lists what is missing: the SSH server, Docker and Docker Compose, your account in the `docker` group, and, where the `ufw` firewall is on, a rule that lets the dashboard's container reach SSH. It shows the `sudo` commands for these and runs them only after you agree. It offers `python3`, `file` and `cron` as well, which the Files page, the file editor and Schedules use.
-- It asks three things, each with a suggestion you can keep by pressing Enter: the server's address on your network, the folders the dashboard may manage (`~/scripts` unless you name others), and the disks to show as storage cards (the mounts under `/mnt`, `/media` and `/srv`, or `/` when there are none).
+- It asks four things, each with a suggestion you can keep by pressing Enter: the server's address on your network, the folders the dashboard may manage (`~/scripts` unless you name others), the disks to show as storage cards (the mounts under `/mnt`, `/media` and `/srv`, or `/` when there are none), and whether to serve the dashboard over [HTTPS](#optional-https) as well (no unless you answer yes).
 - It creates `~/linux-server-control` with `compose.yaml`, `.env`, the dashboard's own SSH key, allowed to sign in to your account, and the server's recorded identity, and checks that the key signs in.
 - It starts the dashboard, checks from inside its container that it reaches the server over SSH, and prints the address to open and the one-time setup token.
 
@@ -34,7 +34,13 @@ less install.sh
 sh install.sh
 ```
 
-Running it again updates the dashboard and keeps its settings, key and data. Without a terminal, for example from another script, it asks nothing: it keeps every suggestion and runs no `sudo` command, unless `LSC_YES=1` agrees to them. `sh install.sh --help` lists the variables that answer its questions in advance.
+Running it again updates the dashboard and keeps its settings, key and data. It also finds a dashboard installed in another folder, by hand or by an earlier version, from its running container, and updates it there. Without a terminal, for example from another script, it asks nothing: it keeps every suggestion and runs no `sudo` command, unless `LSC_YES=1` agrees to them. `sh install.sh --help` lists the variables that answer its questions in advance.
+
+To turn HTTPS on later, or off, run it again with `LSC_HTTPS=yes` (or `no`):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/FlorinCamarut1/linux-server-control/main/install.sh | LSC_HTTPS=yes sh
+```
 
 ## What you need
 
@@ -253,15 +259,21 @@ A first helper installed by an earlier version of the dashboard cannot stop root
 
 ## Optional: HTTPS
 
-The dashboard is served over plain HTTP, which is acceptable on a home network you trust. HTTPS also lets browsers save your password and lets Android phones and computers [install it as an app](docs/USER-GUIDE.md#on-a-phone). For HTTPS, the Compose file includes a Caddy service that is off by default:
+The dashboard is served over plain HTTP, which is acceptable on a home network you trust. HTTPS also lets browsers save your password and lets Android phones and computers [install it as an app](docs/USER-GUIDE.md#on-a-phone). For HTTPS, the Compose file includes a Caddy service that is off by default. The installer turns it on when you answer yes, or when it runs with `LSC_HTTPS=yes`:
 
 ```bash
-cd ~/linux-server-control
+curl -fsSL https://raw.githubusercontent.com/FlorinCamarut1/linux-server-control/main/install.sh | LSC_HTTPS=yes sh
+```
+
+It does what HTTPS needs: it sets `COOKIE_SECURE=true`, so that sign-in cookies travel over HTTPS only; it sets `HTTPS_HOST` to the server's address, which the certificate is made for, also when `LAN_IP=0.0.0.0` makes the dashboard listen on every network; it starts the dashboard with `--profile https`; and it checks that HTTPS answers. By hand, in the dashboard's folder:
+
+```bash
 echo "COOKIE_SECURE=true" >> .env
+echo "HTTPS_HOST=YOUR_SERVER_IP" >> .env
 docker compose --profile https up -d
 ```
 
-Open `https://YOUR_SERVER_IP:8444`. Caddy creates its own certificate authority, so browsers warn until you trust it, and do not offer to save the password until then. Trust it once on each device: **Settings → HTTPS certificate** (or **Save the password in this browser** on the sign-in page) downloads the authority's root certificate and shows the steps for the device's system, with the certificate's fingerprint to compare. The root is valid for ten years. The same file is also at:
+Open `https://YOUR_SERVER_IP:8444`; port 8443 stays plain HTTP, where signing in no longer works once `COOKIE_SECURE=true`. Caddy creates its own certificate authority, so browsers warn until you trust it, and do not offer to save the password until then. Trust it once on each device: **Settings → HTTPS certificate** (or **Save the password in this browser** on the sign-in page) downloads the authority's root certificate and shows the steps for the device's system, with the certificate's fingerprint to compare. The root is valid for ten years. The same file is also at:
 
 ```bash
 docker compose cp https:/data/caddy/pki/authorities/local/root.crt .

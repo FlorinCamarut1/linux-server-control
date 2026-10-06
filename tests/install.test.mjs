@@ -22,9 +22,11 @@ const readable = (file) => { try { return readFileSync(file, "utf8"); } catch { 
 const UFW_RULE = "ufw allow from 172.16.0.0/12 to any port 2222 proto tcp comment 'Linux Server Control'";
 const UFW = /^ENABLED=yes/m.test(readable("/etc/ufw/ufw.conf")) && !readable("/etc/ufw/user.rules").includes("--dport 2222 -s 172.16.0.0/12 -j ACCEPT");
 
-function server({ compose = true, dockerRunning = true, dockerGroup = true, sshRunning = true } = {}) {
+// elsewhere: Docker runs a dashboard installed in ~/media-dashboard.
+function server({ compose = true, dockerRunning = true, dockerGroup = true, sshRunning = true, elsewhere = false } = {}) {
   const base = mkdtempSync(path.join(tmpdir(), "lsc-install-"));
   const bin = path.join(base, "bin"), home = path.join(base, "home"), state = path.join(base, "state");
+  const other = path.join(home, "media-dashboard");
   for (const folder of [bin, home, state]) mkdirSync(folder);
   const tool = (name, body) => writeFileSync(path.join(bin, name), `#!/bin/sh\n${body}\n`, { mode: 0o755 });
   // Docker: compose may be missing and the daemon stopped; a finished setup
@@ -33,7 +35,9 @@ function server({ compose = true, dockerRunning = true, dockerGroup = true, sshR
 case "$*" in
   "compose version") ${compose ? "echo 'Docker Compose version v2.40.0'" : "echo 'docker: unknown command: docker compose' >&2; exit 1"} ;;
   info) ${dockerRunning ? "exit 0" : "echo 'Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?' >&2; exit 1"} ;;
-  "compose up -d"|"compose up -d --build") exit 0 ;;
+  "compose up -d"|"compose up -d --build"|"compose --profile https up -d"|"compose --profile https up -d --build") exit 0 ;;
+  "compose --profile https rm -sf https") exit 0 ;;
+  "ps -a "*) ${elsewhere ? `echo 'ghcr.io/florincamarut1/linux-server-control:latest ${other}'` : ":"} ;;
   "compose ps -q dashboard") echo 3f1c2a9b7d01 ;;
   "inspect "*) echo "running healthy" ;;
   "compose exec -T dashboard ssh "*) exit 0 ;;
@@ -54,6 +58,12 @@ esac`);
 key=$(awk '{ print $1 " " $2 }' /etc/ssh/ssh_host_ed25519_key.pub 2>/dev/null)
 printf '|1|c2FsdA==|aGFzaA== %s\\n' "\${key:-ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIStandIn}"`);
   tool("ssh", `printf '%s\\n' "$*" >> '${state}/ssh.log'`);
+  // HTTPS answers at once; downloads go to the real curl.
+  const curl = spawnSync("sh", ["-c", "command -v curl"], { encoding: "utf8" }).stdout.trim();
+  tool("curl", `case "$*" in
+  *"https://127.0.0.1:8444/api/health"*) printf '%s\\n' "$*" >> '${state}/https.log' ;;
+  *) exec '${curl}' "$@" ;;
+esac`);
   // The groups of this machine's account, with or without docker.
   tool("id", `case "$1" in
   -nG) groups=$(/usr/bin/id "$@" | tr ' ' '\\n' | grep -vx docker | paste -sd' ' -); echo "$groups${dockerGroup ? " docker" : ""}" ;;
@@ -77,7 +87,7 @@ esac`);
   };
   const log = (name) => (existsSync(path.join(state, name)) ? readFileSync(path.join(state, name), "utf8").trim().split("\n") : []);
   const dir = path.join(home, "linux-server-control");
-  return { run, log, home, dir, state };
+  return { run, log, home, dir, state, other };
 }
 
 test("a server that has everything is set up in one go", () => {
@@ -192,6 +202,62 @@ test("an address that is not this server's is refused", () => {
   assert.equal(result.status, 1);
   assert.match(result.stderr, /192\.0\.2\.10 is not an address of this server/);
   assert.ok(!existsSync(path.join(dir, ".env")));
+});
+
+test("HTTPS is set up when asked for, kept by updates, and turned off again", () => {
+  const { run, log, dir } = server();
+  const result = run({ LSC_HTTPS: "yes" });
+  assert.equal(result.status, 0, result.output);
+  const env = () => readFileSync(path.join(dir, ".env"), "utf8").split("\n");
+  assert.ok(env().includes("COOKIE_SECURE=true"), "sign-in cookies over HTTPS only");
+  assert.ok(env().includes("HTTPS_HOST=127.0.0.1"), "the certificate is for the server's address");
+  assert.ok(log("docker.log").includes("compose --profile https up -d"));
+  assert.match(result.stdout, /Open\s+https:\/\/127\.0\.0\.1:8444/);
+  assert.match(result.stdout, /Settings → HTTPS certificate/);
+  assert.match(result.stdout, /HTTPS answers on https:\/\/127\.0\.0\.1:8444/);
+  assert.equal(log("https.log").length, 1, "HTTPS is checked once it answers");
+  // An update keeps it, and a name set by hand for the certificate.
+  writeFileSync(path.join(dir, "data", "config.json"), "{}");
+  writeFileSync(path.join(dir, ".env"), env().map((line) => (line.startsWith("HTTPS_HOST=") ? "HTTPS_HOST=server.lan" : line)).join("\n"));
+  const again = run({ LSC_IP: "" });
+  assert.equal(again.status, 0, again.output);
+  assert.match(again.stdout, /up to date and running at https:\/\/127\.0\.0\.1:8444/);
+  assert.ok(env().includes("HTTPS_HOST=server.lan"));
+  assert.equal(log("docker.log").filter((line) => line === "compose --profile https up -d").length, 2);
+  // Turned off, cookies are sent over HTTP again and Caddy stops.
+  const off = run({ LSC_IP: "", LSC_HTTPS: "no" });
+  assert.equal(off.status, 0, off.output);
+  assert.ok(env().includes("COOKIE_SECURE=false"));
+  assert.ok(log("docker.log").includes("compose --profile https rm -sf https"));
+  assert.match(off.stdout, /up to date and running at http:\/\/127\.0\.0\.1:8443/);
+});
+
+test("a new installation is asked about HTTPS and says how to turn it on", () => {
+  const { run, home, dir } = server();
+  const result = run();
+  assert.equal(result.status, 0, result.output);
+  assert.match(result.stdout, /Serve the dashboard over HTTPS as well, on port 8444 \(yes or no\): no/);
+  assert.doesNotMatch(readFileSync(path.join(dir, ".env"), "utf8"), /^COOKIE_SECURE=true$/m);
+  assert.match(result.stdout, /LSC_HTTPS=yes/);
+  const unclear = run({ LSC_HTTPS: "maybe", LSC_DIR: path.join(home, "another") });
+  assert.equal(unclear.status, 1, "only yes or no");
+  assert.match(unclear.stderr, /Answer yes or no: maybe/);
+});
+
+test("an installation in another folder is found and updated there", () => {
+  const { run, log, other, dir } = server({ elsewhere: true });
+  // Installed there first, as by hand, with an older compose.yaml.
+  assert.equal(run({ LSC_DIR: other }).status, 0);
+  writeFileSync(path.join(other, "compose.yaml"), "# without the https service\n");
+  const result = run({ LSC_IP: "", LSC_HTTPS: "yes" });
+  assert.equal(result.status, 0, result.output);
+  assert.ok(result.stdout.includes(`Found the dashboard installed in ${other}`), result.stdout);
+  assert.match(result.stdout, /Updating Linux Server Control/);
+  assert.ok(!existsSync(dir), "nothing is installed in the default folder");
+  assert.equal(readFileSync(path.join(other, "compose.yaml"), "utf8"), readFileSync(path.join(ROOT, "compose.github.yaml"), "utf8"));
+  assert.equal(readFileSync(path.join(other, "compose.yaml.bak"), "utf8"), "# without the https service\n");
+  assert.match(readFileSync(path.join(other, ".env"), "utf8"), /^COOKIE_SECURE=true$/m);
+  assert.ok(log("docker.log").includes("compose --profile https up -d"));
 });
 
 test("it runs when piped into sh, as the one-line command does", () => {

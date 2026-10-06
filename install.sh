@@ -24,7 +24,12 @@ Each question has a default, and these variables answer them in advance:
   LSC_MONITORED_PATHS  storage shown as cards (the mounts under /mnt, /media and /srv,
                        else /)
   LSC_VERSION          the image to run: latest, or a release such as 0.5.0
-  LSC_YES=1            take every default and agree to every change, without asking"
+  LSC_HTTPS            yes to serve the dashboard over HTTPS as well, on port 8444,
+                       or no (no; an update keeps the installation's choice)
+  LSC_YES=1            take every default and agree to every change, without asking
+
+An installation in another folder, made by hand or by an earlier version, is
+found from its running container and updated there, unless LSC_DIR is set."
 
 SOURCE=${LSC_SOURCE:-https://raw.githubusercontent.com/FlorinCamarut1/linux-server-control/main}
 GUIDE=https://github.com/FlorinCamarut1/linux-server-control/blob/main/INSTALL.md
@@ -130,6 +135,16 @@ detect_mounts() {
     awk 'NR > 1 && $6 ~ /^\/(mnt|media|srv)\// { print $6 }' | sort -u | paste -sd, -
 }
 in_group() { id -nG ${2:+"$2"} | tr ' ' '\n' | grep -qx "$1"; }
+yes_no() {
+  case $1 in [Yy]|[Yy][Ee][Ss]|1|[Tt][Rr][Uu][Ee]) printf 'yes\n' ;; [Nn]|[Nn][Oo]|0|[Ff][Aa][Ll][Ss][Ee]) printf 'no\n' ;; *) fail "Answer yes or no: $1" ;; esac
+}
+# The folder of a dashboard that Docker runs from another folder, such as one
+# installed by hand or by an earlier version of this script.
+installed_elsewhere() {
+  have docker || return 0
+  docker ps -a --filter label=com.docker.compose.service=dashboard --format '{{.Image}} {{.Label "com.docker.compose.project.working_dir"}}' 2>/dev/null < /dev/null |
+    awk '$1 ~ /linux-server-control/ && $2 ~ /^\// { print $2; exit }'
+}
 
 # What this server lacks, as commands for root.
 PLAN=''
@@ -328,6 +343,24 @@ choose_settings() {
   mounts=$(detect_mounts)
   ask "Storage to show as cards (mounted folders, separated by commas)" "${LSC_MONITORED_PATHS:-${mounts:-/}}"
   MONITORED=$answer
+
+  # HTTPS lets browsers save the password and phones install the dashboard as
+  # an app, once each device trusts the certificate (Settings → HTTPS certificate).
+  ask "Serve the dashboard over HTTPS as well, on port 8444 (yes or no)" "${LSC_HTTPS:-no}"
+  HTTPS=$(yes_no "$answer")
+}
+
+# HTTPS: Caddy's service in compose.yaml serves the dashboard on port 8444 with
+# a certificate for HTTPS_HOST, and sign-in cookies are sent over HTTPS only.
+# HTTPS_HOST is the real address even where the dashboard listens on every
+# network (LAN_IP=0.0.0.0); a name set there by hand is kept.
+apply_https() {
+  if [ "$HTTPS" = yes ]; then
+    [ "$(env_value "$1" COOKIE_SECURE)" = true ] || set_env "$1" COOKIE_SECURE true
+    [ -n "$(env_value "$1" HTTPS_HOST)" ] || set_env "$1" HTTPS_HOST "$IP"
+  elif [ "$(env_value "$1" COOKIE_SECURE)" = true ]; then
+    set_env "$1" COOKIE_SECURE false
+  fi
 }
 
 prepare_files() {
@@ -343,7 +376,10 @@ prepare_files() {
     fi
     mv "$DIR/compose.yaml.new" "$DIR/compose.yaml"
   fi
-  [ -z "$UPDATE" ] || return 0
+  if [ -n "$UPDATE" ]; then
+    apply_https "$DIR/.env"
+    return 0
+  fi
   if [ -n "$CHECKOUT" ]; then cp "$DIR/.env.example" "$DIR/.env.new"
   else fetch .env.example "$DIR/.env.new"
   fi
@@ -355,6 +391,7 @@ prepare_files() {
   set_env "$DIR/.env.new" MONITORED_PATHS "$MONITORED"
   set_env "$DIR/.env.new" REMOTE_LOGS "$HOME/.local/state/media-dashboard"
   set_env "$DIR/.env.new" VERSION "${LSC_VERSION:-latest}"
+  apply_https "$DIR/.env.new"
   chmod 600 "$DIR/.env.new"
   mv "$DIR/.env.new" "$DIR/.env"
   ok "Settings written to $DIR/.env"
@@ -409,9 +446,14 @@ start_dashboard() {
   else say "${BOLD}Starting the dashboard${RESET} (the first start downloads its image)"
   fi
   cd "$DIR"
-  # DOCKER is "docker" or "sudo docker", so it is split on purpose.
+  PROFILE=''
+  [ "$HTTPS" != yes ] || PROFILE='--profile https'
+  # DOCKER is "docker" or "sudo docker", and PROFILE two words, so they are split on purpose.
   # shellcheck disable=SC2086
-  $DOCKER compose up -d ${CHECKOUT:+--build} < /dev/null || fail "Docker could not start the dashboard. If it says \"cannot assign requested address\", LAN_IP in $DIR/.env is not an address of this server."
+  $DOCKER compose $PROFILE up -d ${CHECKOUT:+--build} < /dev/null || fail "Docker could not start the dashboard. If it says \"cannot assign requested address\", LAN_IP in $DIR/.env is not an address of this server."
+  # HTTPS turned off: its service stops.
+  # shellcheck disable=SC2086
+  [ "$HTTPS" = yes ] || [ -z "${HTTPS_WAS:-}" ] || $DOCKER compose --profile https rm -sf https < /dev/null >/dev/null 2>&1 || true
   # shellcheck disable=SC2086
   container=$($DOCKER compose ps -q dashboard < /dev/null)
   waited=0
@@ -438,22 +480,49 @@ start_dashboard() {
     note "The container cannot sign in to $USER_NAME@$IP over SSH yet: $(printf '%s' "$output" | tail -n 1)"
     note "A firewall may keep the container from port $SSH_PORT: allow it from Docker's networks (172.16.0.0/12). See \"Setup says the server connection could not be verified\" in $GUIDE"
   fi
+  [ "$HTTPS" = yes ] || return 0
+  # Caddy creates its certificate in a moment.
+  waited=0
+  until https_answers; do
+    if [ "$waited" -ge 20 ]; then
+      note "HTTPS does not answer on https://$IP:8444 yet. Its log: cd $DIR && $DOCKER compose --profile https logs https"
+      return 0
+    fi
+    sleep 2
+    waited=$((waited + 2))
+  done
+  ok "HTTPS answers on https://$IP:8444"
+}
+https_answers() {
+  if have curl; then curl -fsk --max-time 5 "https://$IP:8444/api/health" >/dev/null 2>&1
+  elif have wget; then wget -q --no-check-certificate -T 5 -O /dev/null "https://$IP:8444/api/health" 2>/dev/null
+  else return 0
+  fi
 }
 
 report() {
   # shellcheck disable=SC2086
   token=$($DOCKER compose logs dashboard < /dev/null 2>/dev/null | sed -n 's/.*Initial setup token: \([A-Za-z0-9_-]*\).*/\1/p' | tail -n 1)
+  if [ "$HTTPS" = yes ]; then address="https://$IP:8444"; else address="http://$IP:8443"; fi
   say ""
   if [ -n "$token" ]; then
     say "${GREEN}${BOLD}Linux Server Control is installed.${RESET}"
     say ""
-    say "  Open         ${BOLD}http://$IP:8443${RESET}"
+    say "  Open         ${BOLD}$address${RESET}"
     say "  Setup token  ${BOLD}$token${RESET}"
     say ""
     say "Enter the token, choose a username and a password of at least 12 characters,"
     say "and keep the connection fields as they are: they are filled in already."
   else
-    say "${GREEN}${BOLD}Linux Server Control is up to date and running${RESET} at ${BOLD}http://$IP:8443${RESET}"
+    say "${GREEN}${BOLD}Linux Server Control is up to date and running${RESET} at ${BOLD}$address${RESET}"
+  fi
+  if [ "$HTTPS" = yes ]; then
+    say ""
+    say "Sign in on $address only: over HTTPS the browser keeps the sign-in, and"
+    say "http://$IP:8443 no longer signs in. The browser warns about the certificate"
+    say "until the device trusts it: open Settings → HTTPS certificate (or \"Save the"
+    say "password in this browser\" on the sign-in page) and follow the steps for the"
+    say "device, once on each. Then the warning is gone and the browser saves the password."
   fi
   still=''
   for tool in python3 file crontab; do have "$tool" || still="$still $tool"; done
@@ -463,6 +532,7 @@ report() {
   if [ -n "$CHECKOUT" ]; then say "The dashboard runs from the source code in $DIR. To update it: git pull, then run this again."
   else say "The dashboard's files are in $DIR. To update it, run the same command again."
   fi
+  [ "$HTTPS" = yes ] || say "To serve it over HTTPS as well (saved passwords, the app on phones), run it again with LSC_HTTPS=yes before sh."
 }
 
 main() {
@@ -478,6 +548,13 @@ main() {
   HOME=${HOME:?HOME is not set}
   DIR=${LSC_DIR:-$HOME/linux-server-control}
   case $DIR in /*) ;; *) fail "LSC_DIR must be an absolute folder." ;; esac
+  if [ -z "${LSC_DIR:-}" ] && [ ! -f "$DIR/.env" ]; then
+    found=$(installed_elsewhere)
+    if [ -n "$found" ] && [ -f "$found/.env" ]; then
+      DIR=$found
+      say "Found the dashboard installed in $DIR"
+    fi
+  fi
   UPDATE=''
   [ ! -f "$DIR/.env" ] || UPDATE=1
   # A copy of the source code (a clone) builds the dashboard itself.
@@ -490,6 +567,13 @@ main() {
     IP=$(env_value "$DIR/.env" SSH_TARGET | sed 's/.*@//')
     SSH_PORT=$(env_value "$DIR/.env" SSH_PORT)
     SSH_PORT=${SSH_PORT:-22}
+    # An update keeps HTTPS as it is, unless LSC_HTTPS says otherwise.
+    HTTPS_WAS=''
+    [ "$(env_value "$DIR/.env" COOKIE_SECURE)" != true ] || HTTPS_WAS=1
+    if [ -n "${LSC_HTTPS:-}" ]; then HTTPS=$(yes_no "$LSC_HTTPS")
+    elif [ -n "$HTTPS_WAS" ]; then HTTPS=yes
+    else HTTPS=no
+    fi
   else
     say "${BOLD}Installing Linux Server Control${RESET} in $DIR, for $USER_NAME"
     SSH_PORT=${LSC_SSH_PORT:-$(detect_ssh_port)}
