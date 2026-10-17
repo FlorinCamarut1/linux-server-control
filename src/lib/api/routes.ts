@@ -232,6 +232,10 @@ const fileRoutes: Routes<Context> = {
   },
   "POST file/browse": async (context) => {
     const { body } = context, hidden = showsHidden(context);
+    // The file explorer asks for the folder sizes next; measuring starts now,
+    // alongside the listing, and that request shares this measurement.
+    if (String(body.sizes) === "true" && String(body.sort) !== "size")
+      folderSizes(body.path || "", hidden, String(body.fresh) === "true").catch(() => {});
     return NextResponse.json({
       ...await browseFiles(body.path || "", {
         search: body.search || "", sort: body.sort || "name",

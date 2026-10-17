@@ -266,6 +266,7 @@ type Listing = { path: string; roots: string[]; parent: string | null; entries: 
 const listings = new Map<string, { at: number; listing: Listing }>();
 function forgetListings() {
   listings.clear();
+  measurements.clear();
 }
 export async function browseFiles(requested = "", options: { search?: string; sort?: string; offset?: number; limit?: number; hidden?: boolean } = {}) {
   const search = options.search || "", sort = options.sort || "name", hidden = !!options.hidden;
@@ -287,8 +288,27 @@ export async function browseFiles(requested = "", options: { search?: string; so
   }
   return page(listing);
 }
-export function folderSizes(requested: string, hidden = false) {
-  return remoteFileOperation({ path: requested, action: "sizes", scripts: false, hidden });
+// Measuring a folder walks everything below it (du), which on a media disk takes
+// seconds. A measurement is kept as long as a listing, and requests that arrive
+// while it runs share it: turning a page, searching, or coming back to a folder
+// does not measure it again. `fresh` (the page's Refresh button) measures again,
+// and any change made through the dashboard forgets the measurements.
+type FolderSizes = { path: string; sizes: Record<string, number> };
+const measurements = new Map<string, { at: number; sizes: Promise<FolderSizes> }>();
+export function folderSizes(requested: string, hidden = false, fresh = false) {
+  const key = JSON.stringify([allowedRoots(), requested, hidden]);
+  const kept = measurements.get(key);
+  if (!fresh && kept && Date.now() - kept.at < LISTING_TTL_MS) return kept.sizes;
+  const sizes = remoteFileOperation<FolderSizes>({ path: requested, action: "sizes", scripts: false, hidden });
+  measurements.delete(key);
+  measurements.set(key, { at: Date.now(), sizes });
+  // A failed measurement is not kept.
+  sizes.catch(() => { if (measurements.get(key)?.sizes === sizes) measurements.delete(key); });
+  for (const oldest of measurements.keys()) {
+    if (measurements.size <= LISTINGS_KEPT) break;
+    measurements.delete(oldest);
+  }
+  return sizes;
 }
 export async function deleteFolder(requested: string) {
   await remoteFileOperation({ path: requested, action: "delete" });
