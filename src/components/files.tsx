@@ -49,11 +49,13 @@ export function useDirectory<T>(endpoint: string, directory: string, includeSize
     setError("");
   }
   // Only sets state after awaiting, so it can run directly from the effect.
-  const fetchDirectory = useCallback(async () => {
+  // `fresh` measures the folder sizes again instead of using the server's last measurement.
+  const fetchDirectory = useCallback(async (fresh = false) => {
     const current = ++generation.current;
     const requestOptions = JSON.parse(optionsKey);
     try {
-      const result = await api(endpoint, { path: directory, ...requestOptions }, true);
+      // With `sizes` the server starts measuring the folder alongside the listing.
+      const result = await api(endpoint, { path: directory, ...requestOptions, ...(includeSizes && { sizes: true, fresh }) }, true);
       if (current !== generation.current) return;
       setData(result);
       setLoading(false);
@@ -61,7 +63,8 @@ export function useDirectory<T>(endpoint: string, directory: string, includeSize
       if (includeSizes && result.entries.some((entry: FileBrowserData["entries"][number]) => entry.type === "directory" && entry.size === null)) {
         setSizesLoading(true);
         try {
-          const measured = await api("file/sizes", { path: result.path, hidden: requestOptions.hidden }, true);
+          // The folder as requested, so that this joins the measurement the listing started.
+          const measured = await api("file/sizes", { path: directory, hidden: requestOptions.hidden }, true);
           if (current === generation.current) {
             const entries = result.entries.map((entry: FileBrowserData["entries"][number]) =>
               entry.type === "directory" ? { ...entry, size: measured.sizes[entry.path] ?? null } : entry);
@@ -88,11 +91,11 @@ export function useDirectory<T>(endpoint: string, directory: string, includeSize
     const requests = generation;
     return () => { requests.current++; };
   }, [fetchDirectory]);
-  const load = useCallback(() => {
+  const load = useCallback((fresh = false) => {
     setLoading(true);
     setSizesLoading(false);
     setError("");
-    return fetchDirectory();
+    return fetchDirectory(fresh);
   }, [fetchDirectory]);
   return { data, error, setError, loading, sizesLoading, load };
 }
@@ -124,9 +127,9 @@ export function FileExplorer() {
     } | null>(null);
   const { data, error, loading, sizesLoading, load } = useDirectory<FileBrowserData & { total?: number; offset?: number; limit?: number }>("file/browse", directory, true, { search, sort, offset, limit: FILES_PAGE, hidden: showHidden });
   const listTop = useRef<HTMLDivElement>(null);
-  // The page's Refresh button reads the folder again too.
+  // The page's Refresh button reads the folder, and measures it, again too.
   useEffect(() => {
-    const refresh = () => void load();
+    const refresh = () => void load(true);
     window.addEventListener(PAGE_REFRESH, refresh);
     return () => window.removeEventListener(PAGE_REFRESH, refresh);
   }, [load]);

@@ -124,3 +124,34 @@ test("sorting by size measures folders first and pages through the whole folder"
   const byName = plain(await server.browseFiles(root));
   assert.equal(byName.entries[0].size, null, "name listings leave folder sizes for later");
 });
+
+test("a folder is measured once for requests close together, and again after a change or when asked", async () => {
+  const measured = [];
+  const host = (argv, input) => {
+    const request = input ? JSON.parse(input) : {};
+    if (request.action === "sizes") measured.push(request.path);
+    return { stdout: JSON.stringify(request.action === "sizes" ? { path: "/srv/media", sizes: { "/srv/media/films": 42 } } : { ok: true, path: "/srv/media/new" }) };
+  };
+  const { server } = loadServer({ host, delay: 5, env: { ALLOWED_PATHS: "/srv/media" } });
+  const [first, second] = await Promise.all([server.folderSizes("/srv/media"), server.folderSizes("/srv/media")]);
+  assert.equal(plain(first).sizes["/srv/media/films"], 42);
+  assert.deepEqual(plain(second), plain(first));
+  await server.folderSizes("/srv/media");
+  assert.equal(measured.length, 1, "requests while measuring, and soon after, share one measurement");
+  await server.folderSizes("/srv/media", false, true);
+  assert.equal(measured.length, 2, "a fresh request measures again");
+  await server.createFileOrFolder("/srv/media", "new", "folder");
+  await server.folderSizes("/srv/media");
+  assert.equal(measured.length, 3, "a change through the dashboard forgets the measurement");
+  await server.folderSizes("/srv/media", true);
+  assert.equal(measured.length, 4, "hidden files are measured apart");
+});
+
+test("a failed measurement is not kept", async () => {
+  let fail = true;
+  const host = () => fail ? { code: 1, stderr: "ValueError: File operation failed" } : { stdout: JSON.stringify({ path: "/srv/media", sizes: {} }) };
+  const { server } = loadServer({ host, env: { ALLOWED_PATHS: "/srv/media" } });
+  await assert.rejects(server.folderSizes("/srv/media"), /File operation failed/);
+  fail = false;
+  assert.deepEqual(plain(await server.folderSizes("/srv/media")).sizes, {});
+});
