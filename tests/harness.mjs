@@ -130,6 +130,16 @@ export function loadApi(server, env = {}) {
   return { http, auth };
 }
 
+// Loads the API's route table (src/lib/api/routes.ts) on top of a server loaded
+// with loadServer. A route is called with a context like the one the catch-all
+// route builds: { req: { nextUrl }, body, sid, session, devices, user }.
+export function loadRoutes(server, env = {}) {
+  const { http, auth } = loadApi(server, env);
+  const notify = loadNotify(server), power = loadPower(server);
+  const modules = { "@/lib/server": server, "@/lib/power": power, "@/lib/notify": notify, "./auth": auth, "./http": http };
+  return loadModule("../src/lib/api/routes.ts", { Buffer, console, URL, URLSearchParams, process: { env } }, (name) => modules[name]);
+}
+
 // Loads src/lib/notify.ts on top of a server loaded with loadServer.
 export function loadNotify(server) {
   const power = loadPower(server);

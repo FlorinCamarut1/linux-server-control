@@ -84,11 +84,18 @@ export function HistoryPanel({ metrics, openLog, initialKind = "scripts" }: { me
   const [data, setData] = useState<(HistoryPage & { kind: string }) | null>(null);
   const [error, setError] = useState("");
   useEffect(() => {
-    let current = true;
+    let current = true, loading = false;
     const query = new URLSearchParams({ kind, search, status, offset: String(page * HISTORY_PAGE_ROWS), limit: String(HISTORY_PAGE_ROWS) });
-    const load = () => api(`history/runs?${query}`, undefined, true)
-      .then((result: HistoryPage) => { if (current) { setData({ ...result, kind }); setError(""); } })
-      .catch((reason) => { if (current) setError(reason instanceof Error ? reason.message : t("Could not load the history")); });
+    // A slow answer (the scheduled runs are read from the server) is waited for
+    // instead of being asked for again on top of it.
+    const load = () => {
+      if (loading) return;
+      loading = true;
+      api(`history/runs?${query}`, undefined, true)
+        .then((result: HistoryPage) => { if (current) { setData({ ...result, kind }); setError(""); } })
+        .catch((reason) => { if (current) setError(reason instanceof Error ? reason.message : t("Could not load the history")); })
+        .finally(() => { loading = false; });
+    };
     // Typing in the search field waits a moment instead of asking per letter.
     const first = setTimeout(load, search ? 250 : 0);
     const timer = setInterval(() => { if (!document.hidden) void load(); }, 15000);

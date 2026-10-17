@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import path from "node:path";
 import { msg, t } from "../i18n";
 import { audit } from "./store";
-import { allowedRoots, run, runInput, ssh } from "./ssh";
+import { allowedRoots, run, runInput, serverSettings, ssh } from "./ssh";
 export function isAllowedPath(value: string) {
   return allowedRoots().some((root) => value === root || value.startsWith(root + "/"));
 }
@@ -43,6 +43,7 @@ export async function resolveSelectedFile(requested: string, hidden = false) {
   return resolved;
 }
 const MAX_EDITABLE_FILE_BYTES = 512 * 1024;
+const SAVE_SCRIPT = 'temporary=$(mktemp) || exit 1; trap \'rm -f "$temporary"\' EXIT HUP INT TERM; cat > "$temporary" && [ "$(($(wc -c < "$temporary")))" -eq "$2" ] && cat "$temporary" > "$1"';
 export async function readEditableFile(requested: string, hidden = false) {
   const resolved = await resolveSelectedFile(requested, hidden);
   const size = Number((await run(["stat", "-c", "%s", resolved])).trim());
@@ -59,7 +60,10 @@ export async function saveEditableFile(requested: string, content: string, hidde
   if (Buffer.byteLength(content, "utf8") > MAX_EDITABLE_FILE_BYTES)
     throw Error(t("Only text files up to 512 KB can be saved here"));
   if (content.includes("\0")) throw Error(t("Binary content cannot be saved here"));
-  await runInput(["sh", "-c", 'cat > "$1"', "sh", resolved], content, 15000);
+  // The content arrives in a temporary file and replaces the file's own only
+  // once all of it is there: a connection lost on the way leaves the file as it
+  // was. Writing into the file keeps its owner, permissions and links.
+  await runInput(["sh", "-c", SAVE_SCRIPT, "sh", resolved, String(Buffer.byteLength(content, "utf8"))], content, 15000);
   forgetListings();
   audit("edited file " + resolved);
 }
@@ -171,35 +175,40 @@ elif request["action"] in ("copy", "move", "rename"):
         shutil.move(source, output)
     print(json.dumps({"ok": True, "path": output}))
 else:
+    def measure(folders, whole, limit):
+        # The sizes du reports (the folder and each folder in it when whole),
+        # without hidden ones, and whether du finished within its time limit.
+        sizes = {}
+        try:
+            measured = subprocess.run(
+                ["du", "-b", "--max-depth=1" if whole else "-s", "--", *folders],
+                capture_output=True, text=True, timeout=limit, check=False)
+            output, complete = measured.stdout, True
+        except subprocess.TimeoutExpired as expired:
+            # What du printed in time; its last line may be cut short.
+            output, complete = expired.stdout or "", False
+            if isinstance(output, bytes):
+                output = output.decode("utf-8", "replace")
+            output = output[:output.rfind("\n") + 1]
+        except OSError:
+            return sizes, False
+        for line in output.splitlines():
+            amount, _, name = line.partition("\t")
+            if amount.isdigit() and name and not concealed(os.path.realpath(name)):
+                sizes[os.path.realpath(name)] = int(amount)
+        return sizes, complete
     entries = []
     sizes = {}
     if request["action"] == "sizes":
-        try:
-            measured = subprocess.run(
-                ["du", "-b", "--max-depth=1", "--", target],
-                capture_output=True, text=True, timeout=20, check=False)
-            for line in measured.stdout.splitlines():
-                amount, name = line.split("\t", 1)
-                sizes[os.path.realpath(name)] = int(amount)
-        except (OSError, ValueError, subprocess.TimeoutExpired):
-            pass
-        print(json.dumps({"path": target, "sizes": sizes}))
+        sizes, complete = measure([target], True, 20)
+        print(json.dumps({"path": target, "sizes": sizes, "complete": complete}))
         sys.exit(0)
     ordering = request.get("sort") or "name"
-    if ordering == "size" and isinstance(request.get("sizes"), dict):
-        # Measured by the dashboard already.
-        sizes = request["sizes"]
-    elif ordering == "size":
-        # Sorting by size across pages needs every folder's size first.
-        try:
-            measured = subprocess.run(
-                ["du", "-b", "--max-depth=1", "--", target],
-                capture_output=True, text=True, timeout=20, check=False)
-            for line in measured.stdout.splitlines():
-                amount, name = line.split("\t", 1)
-                sizes[os.path.realpath(name)] = int(amount)
-        except (OSError, ValueError, subprocess.TimeoutExpired):
-            pass
+    measured = isinstance(request.get("sizes"), dict)
+    if ordering == "size":
+        # Sorting by size across pages needs every folder's size first: the
+        # dashboard's measurement, or one taken here.
+        sizes = request["sizes"] if measured else measure([target], True, 20)[0]
     with os.scandir(target) as items:
         for item in items:
             if item.name.startswith(".") and not show_hidden:
@@ -218,6 +227,12 @@ else:
     query = str(request.get("search") or "").lower()
     if query:
         entries = [item for item in entries if query in item["name"].lower()]
+    missing = [item for item in entries if item["type"] == "directory" and item["size"] is None]
+    if ordering == "size" and measured and missing:
+        # Folders made since the dashboard measured, such as a new download.
+        found = measure([item["path"] for item in missing], False, 8)[0]
+        for item in missing:
+            item["size"] = found.get(os.path.realpath(item["path"]))
     if ordering == "size":
         entries.sort(key=lambda item: (item.get("size") is None, -(item.get("size") or 0), item["name"].lower()))
     elif ordering == "date":
@@ -232,12 +247,15 @@ else:
         "entries": entries[offset:offset + limit], "total": len(entries), "offset": offset, "limit": limit}))
 `;
 type FileChange = { ok: boolean; path?: string };
-async function remoteFileOperation<T = Record<string, unknown>>(request: Record<string, unknown>) {
+// Copying, moving or deleting a season of films takes far longer than reading a
+// folder; ending the wait early would report a failure while it goes on.
+const FILE_OPERATION_MS = 30 * 1000, FILE_TRANSFER_MS = 2 * 60 * 60 * 1000;
+async function remoteFileOperation<T = Record<string, unknown>>(request: Record<string, unknown>, timeoutMs = FILE_OPERATION_MS) {
   const [command, args] = ssh(["python3", "-c", fileOperation]);
   return new Promise<T>((resolve, reject) => {
     const child = spawn(command, args, { stdio: ["pipe", "pipe", "pipe"] });
     let output = "", error = "";
-    const timeout = setTimeout(() => { child.kill(); reject(Error(t("File operation timed out"))); }, 30000);
+    const timeout = setTimeout(() => { child.kill(); reject(Error(t("File operation timed out"))); }, timeoutMs);
     child.stdout.on("data", (chunk) => { output += chunk; });
     child.stderr.on("data", (chunk) => { error += chunk; });
     child.on("error", (reason) => { clearTimeout(timeout); reject(reason); });
@@ -267,21 +285,30 @@ const LISTING_TTL_MS = 5 * 60 * 1000;
 const LISTINGS_KEPT = 8;
 type Listing = { path: string; roots: string[]; parent: string | null; entries: unknown[]; total: number };
 const listings = new Map<string, { at: number; listing: Listing }>();
+// Changes made through the dashboard; a measurement that started before one is
+// not kept under another name once it ends.
+let changes = 0;
 function forgetListings() {
+  changes++;
   listings.clear();
   measurements.clear();
 }
-export async function browseFiles(requested = "", options: { search?: string; sort?: string; offset?: number; limit?: number; hidden?: boolean } = {}) {
+// Cached listings and measurements belong to one server and its allowed locations.
+const cacheKey = (...parts: unknown[]) => JSON.stringify([serverSettings().sshTarget, allowedRoots(), ...parts]);
+export async function browseFiles(requested = "", options: { search?: string; sort?: string; offset?: number; limit?: number; hidden?: boolean; fresh?: boolean } = {}) {
   const search = options.search || "", sort = options.sort || "name", hidden = !!options.hidden;
   const offset = Math.max(0, Math.floor(Number(options.offset) || 0));
   const limit = Math.min(1000, Math.max(1, Math.floor(Number(options.limit) || 100)));
-  const key = JSON.stringify([allowedRoots(), requested, search, sort, hidden]);
+  const key = cacheKey(requested, search, sort, hidden);
   const page = (listing: Listing) => ({ ...listing, entries: listing.entries.slice(offset, offset + limit), offset, limit });
-  const kept = offset > 0 ? listings.get(key) : undefined;
+  // The page's Refresh button lists again whichever page is open.
+  const kept = offset > 0 && !options.fresh ? listings.get(key) : undefined;
   if (kept && Date.now() - kept.at < LISTING_TTL_MS) return page(kept.listing);
   // Sorting by size uses the folder's measurement, which the folder sizes share,
-  // instead of measuring the folder again; a failed one is measured while listing.
-  const sizes = sort === "size" ? (await folderSizes(requested, hidden).catch(() => undefined))?.sizes : undefined;
+  // instead of measuring the folder again; without a whole one it is measured
+  // while listing.
+  const measured = sort === "size" ? await folderSizes(requested, hidden, options.fresh).catch(() => undefined) : undefined;
+  const sizes = measured?.complete !== false ? measured?.sizes : undefined;
   const request = { path: requested, action: "browse", scripts: false, search, sort, hidden, ...(sizes && { sizes }) };
   const listing = await remoteFileOperation<Listing>({ ...request, offset: 0, limit: LISTING_MAX_ENTRIES });
   listings.delete(key);
@@ -295,30 +322,59 @@ export async function browseFiles(requested = "", options: { search?: string; so
   return page(listing);
 }
 // Measuring a folder walks everything below it (du), which on a media disk takes
-// seconds. A measurement is kept as long as a listing, and requests that arrive
-// while it runs share it: turning a page, searching, or coming back to a folder
-// does not measure it again. `fresh` (the page's Refresh button) measures again,
-// and any change made through the dashboard forgets the measurements.
-type FolderSizes = { path: string; sizes: Record<string, number> };
-const measurements = new Map<string, { at: number; sizes: Promise<FolderSizes> }>();
-export function folderSizes(requested: string, hidden = false, fresh = false) {
-  const key = JSON.stringify([allowedRoots(), requested, hidden]);
-  const kept = measurements.get(key);
-  if (!fresh && kept && Date.now() - kept.at < LISTING_TTL_MS) return kept.sizes;
-  const sizes = remoteFileOperation<FolderSizes>({ path: requested, action: "sizes", scripts: false, hidden });
+// seconds. A measurement is kept as long as a listing, under the folder as
+// requested and as it resolved (so that "" and the first allowed location share
+// one), and requests that arrive while it runs share it: turning a page,
+// searching, or coming back to a folder does not measure it again.
+// - `fresh` (the page's Refresh button) measures again, unless a measurement that
+//   started moments ago is still running.
+// - A folder missing from a kept measurement, such as a new download, has the
+//   folder measured again.
+// - One that du's time limit cut short is not kept.
+// - Any change made through the dashboard forgets the measurements.
+type FolderSizes = { path: string; sizes: Record<string, number>; complete?: boolean };
+type Measurement = { at: number; running: boolean; sizes: Promise<FolderSizes> };
+const measurements = new Map<string, Measurement>();
+const MEASUREMENT_SHARED_MS = 10 * 1000;
+function keepMeasurement(key: string, measurement: Measurement) {
   measurements.delete(key);
-  measurements.set(key, { at: Date.now(), sizes });
-  // A failed measurement is not kept.
-  sizes.catch(() => { if (measurements.get(key)?.sizes === sizes) measurements.delete(key); });
+  measurements.set(key, measurement);
+  // Two names for each of the folders kept.
   for (const oldest of measurements.keys()) {
-    if (measurements.size <= LISTINGS_KEPT) break;
+    if (measurements.size <= LISTINGS_KEPT * 2) break;
     measurements.delete(oldest);
   }
-  return sizes;
+}
+function forgetMeasurement(measurement: Measurement) {
+  for (const [key, kept] of measurements) if (kept === measurement) measurements.delete(key);
+}
+function measure(requested: string, hidden: boolean) {
+  const before = changes;
+  const measurement: Measurement = { at: Date.now(), running: true, sizes: Promise.resolve({ path: "", sizes: {} }) };
+  measurement.sizes = remoteFileOperation<FolderSizes>({ path: requested, action: "sizes", scripts: false, hidden }).then((result) => {
+    measurement.running = false;
+    if (result.complete === false) forgetMeasurement(measurement);
+    else if (result.path !== requested && changes === before) keepMeasurement(cacheKey(result.path, hidden), measurement);
+    return result;
+  }, (error) => {
+    measurement.running = false;
+    forgetMeasurement(measurement);
+    throw error;
+  });
+  keepMeasurement(cacheKey(requested, hidden), measurement);
+  return measurement.sizes;
+}
+export async function folderSizes(requested: string, hidden = false, fresh = false, expected: string[] = []) {
+  const kept = measurements.get(cacheKey(requested, hidden));
+  const age = kept ? Date.now() - kept.at : Infinity;
+  if (!kept || age >= LISTING_TTL_MS || (fresh && !(kept.running && age < MEASUREMENT_SHARED_MS))) return measure(requested, hidden);
+  const result = await kept.sizes;
+  if (age >= MEASUREMENT_SHARED_MS && expected.some((folder) => !(folder in result.sizes))) return measure(requested, hidden);
+  return result;
 }
 export async function deleteFolder(requested: string) {
-  await remoteFileOperation({ path: requested, action: "delete" });
-  forgetListings();
+  try { await remoteFileOperation({ path: requested, action: "delete" }, FILE_TRANSFER_MS); }
+  finally { forgetListings(); }
   audit("deleted folder " + requested);
 }
 export async function changeFile(
@@ -328,15 +384,20 @@ export async function changeFile(
   name = "",
   hidden = false,
 ) {
-  const result = await remoteFileOperation<FileChange>({
-    path: source,
-    action,
-    source,
-    destination,
-    name,
-    hidden,
-  });
-  forgetListings();
+  let result: FileChange;
+  // A failed or interrupted change may have changed the folder too.
+  try {
+    result = await remoteFileOperation<FileChange>({
+      path: source,
+      action,
+      source,
+      destination,
+      name,
+      hidden,
+    }, action === "rename" ? FILE_OPERATION_MS : FILE_TRANSFER_MS);
+  } finally {
+    forgetListings();
+  }
   audit(`${action} ${source}${result.path ? " -> " + result.path : ""}`);
   return result;
 }

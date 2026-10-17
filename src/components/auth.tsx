@@ -103,11 +103,13 @@ export function ConnectionUnavailable({ error, retry, signOut, loading }: { erro
     </main>
   );
 }
-export function Setup({ done, loading }: { done: () => void; loading: boolean }) {
+export type SetupServer = { sshTarget: string; sshPort: number; scriptRoot: string; allowedPaths: string[]; remoteLogs: string };
+// `server`: the connection details that prefill the form, from the request that
+// found setup was needed, so the form is complete when it first shows and what
+// is typed into it is never replaced.
+export function Setup({ done, loading, server }: { done: () => void; loading: boolean; server?: SetupServer }) {
   const [message, setMessage] = useState("");
-  const [server, setServer] = useState<{ sshTarget: string; sshPort: number; scriptRoot: string; allowedPaths: string[]; remoteLogs: string } | null>(null);
   const [checks, setChecks] = useState<PreflightCheck[] | null>(null);
-  useEffect(() => { void api("setup/status", undefined, true).then((data) => setServer(data.server)).catch(() => {}); }, []);
   // Setup succeeded, but the server lacks something a page needs: say so before continuing.
   if (checks)
     return (
@@ -129,7 +131,7 @@ export function Setup({ done, loading }: { done: () => void; loading: boolean })
         <p>{t("Create the administrator account and verify the server connection.")}</p>
         <LanguageSelect compact />
         {message && <div className="alert">{message}</div>}
-        <form key={server ? "loaded" : "loading"} onSubmit={async (event) => {
+        <form onSubmit={async (event) => {
           event.preventDefault();
           try {
             const result = await api("setup", Object.fromEntries(new FormData(event.currentTarget)));

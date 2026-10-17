@@ -266,3 +266,19 @@ test("one sampling of several devices writes the power state once", async () => 
   const state = JSON.parse(readFileSync(path.join(data, "power.json"), "utf8"));
   assert.deepEqual([state.a.lastW, state.b.lastW, Boolean(state.c.error)], [12, 12, true], "every device's reading or failure is kept");
 });
+
+test("a device deleted while it is being read keeps no state", async () => {
+  let release;
+  const reading = new Promise((resolve) => { release = resolve; });
+  const plug = await device(async (req, res) => { await reading; json(res, { apower: 5, output: true }); });
+  const { server, data } = loadServer();
+  const power = loadPower(server);
+  server.save("power-devices", [{ id: "gone", name: "Gone", driver: "shelly", enabled: true, config: { host: plug } }]);
+  const sampling = power.samplePower();
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  server.save("power-devices", []);
+  release();
+  await sampling;
+  const state = JSON.parse(readFileSync(path.join(data, "power.json"), "utf8"));
+  assert.equal(state.gone, undefined);
+});

@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { CommandError, asActor, inLanguage, t } from "@/lib/server";
+import { CommandError, asActor, forgetPendingSnapshot, inLanguage, t } from "@/lib/server";
 import { authenticate, permitted, publicRoutes } from "@/lib/api/auth";
 import { type Body, fail, sameOrigin } from "@/lib/api/http";
 import { routes } from "@/lib/api/routes";
@@ -36,7 +36,11 @@ async function answer(req: NextRequest, route: string, body: Body) {
     const handler = routes[route];
     if (!handler) return fail(t("Not found"), 404);
     if (!permitted(route, signedIn.user.role, body)) return fail(t("This account is read-only."), 403);
-    return await asActor(signedIn.user.name, () => handler({ req, body, ...signedIn }));
+    const response = await asActor(signedIn.user.name, () => handler({ req, body, ...signedIn }));
+    // What only an administrator may call changes something, which the next
+    // refresh must show.
+    if (!permitted(route, "viewer", body)) forgetPendingSnapshot();
+    return response;
   } catch (error) {
     if (error instanceof CommandError) return fail(error.message, 502);
     return fail(error instanceof Error ? error.message : t("Internal error"));

@@ -143,6 +143,15 @@ test("normalizeSchedule keeps root schedules restricted to approved scripts", ()
   assert.equal(server.normalizeSchedule({ ...base, enabled: "false" }, [SCRIPT], true).enabled, false);
 });
 
+test("an edited alert rule keeps whether it fired and when, unless it watches something else", () => {
+  const { server } = loadServer();
+  server.save("alerts", [{ id: "a1", name: "Hot", metric: "temperature", threshold: 80, cooldownMinutes: 30, enabled: true, active: true, lastTriggeredAt: 1000 }]);
+  server.saveAlert({ id: "a1", name: "Very hot", metric: "temperature", threshold: "85", cooldownMinutes: "30", enabled: "true" });
+  assert.deepEqual([server.alertRules()[0].name, server.alertRules()[0].active, server.alertRules()[0].lastTriggeredAt], ["Very hot", true, 1000]);
+  server.saveAlert({ id: "a1", name: "Busy", metric: "cpu", threshold: "90", cooldownMinutes: "30", enabled: "true" });
+  assert.deepEqual([server.alertRules()[0].active, server.alertRules()[0].lastTriggeredAt], [undefined, undefined]);
+});
+
 test("normalizeAlert treats a missing enabled flag as disabled", () => {
   const { server } = loadServer();
   const input = { metric: "cpu", threshold: "90", cooldownMinutes: "30" };

@@ -62,11 +62,13 @@ import { demoState } from "./demo";
 import { type Body, type Context, type Routes, ok } from "./http";
 import { isLanguage, t } from "@/lib/server";
 
-// Dashboard records stored in DATA_DIR; reading them needs no SSH.
+// Dashboard records stored in DATA_DIR; reading them needs no SSH. A read-only
+// account is not given the scripts' variables, which often hold passwords and
+// tokens.
 function records({ devices, user, session }: Context) {
   return {
     user,
-    scripts: scripts(),
+    scripts: user.role === "viewer" ? scripts().map((script) => ({ ...script, variables: undefined })) : scripts(),
     folders: folders(),
     schedules: schedules(),
     devices,
@@ -99,8 +101,11 @@ async function state(context: Context) {
   recordMetricSample(snapshot.stats);
   const alerts = evaluateAlerts(snapshot);
   const { cronLog, ...host } = snapshot;
+  // Nor the crontabs, whose lines carry the same variables.
+  const crontabs = context.user.role === "viewer" ? { cron: "", root: { ...host.root, cron: "", system: "" } } : {};
   return NextResponse.json({
     ...host,
+    ...crontabs,
     ...records(context),
     alertState: alerts,
     cronFailures: cronFailures(await collectCronRuns(cronLog)),
@@ -234,18 +239,24 @@ const fileRoutes: Routes<Context> = {
     const { body } = context, hidden = showsHidden(context);
     // The file explorer asks for the folder sizes next, and a listing sorted by
     // size needs them; measuring starts now and both share this measurement.
+    const fresh = String(body.fresh) === "true";
     if (String(body.sizes) === "true")
-      folderSizes(body.path || "", hidden, String(body.fresh) === "true").catch(() => {});
+      folderSizes(body.path || "", hidden, fresh).catch(() => {});
     return NextResponse.json({
       ...await browseFiles(body.path || "", {
         search: body.search || "", sort: body.sort || "name",
-        offset: Number(body.offset || 0), limit: Number(body.limit || 100), hidden,
+        offset: Number(body.offset || 0), limit: Number(body.limit || 100), hidden, fresh,
       }),
       // A session whose time ran out asked for hidden files without getting them.
       hidden, hiddenRequested: String(body.hidden) === "true",
     });
   },
-  "POST file/sizes": async (context) => NextResponse.json(await folderSizes(context.body.path || "", showsHidden(context))),
+  // `expected`: the folders shown, which a kept measurement must include.
+  "POST file/sizes": async (context) => {
+    const expected: unknown = context.body.expected;
+    const folders = Array.isArray(expected) ? expected.filter((item): item is string => typeof item === "string").slice(0, 1000) : [];
+    return NextResponse.json(await folderSizes(context.body.path || "", showsHidden(context), false, folders));
+  },
   "POST file/operation": async (context) => {
     const { body } = context;
     const action = body.action;
@@ -277,6 +288,9 @@ const scriptRoutes: Routes<Context> = {
   "POST script/browse": async ({ body }) => NextResponse.json(await browseScripts(body.path || "")),
   "POST script/save": async ({ body }) => {
     await addScript(body);
+    // A schedule's crontab line carries its script's path, variables and time limit.
+    const scheduled = schedules().filter((item) => item.scriptId === body.id);
+    if (body.id && scheduled.length) await syncCron(scheduled.map((item) => item.runAs || "user"));
     return ok();
   },
   "POST script/create-custom": async ({ body }) => {
