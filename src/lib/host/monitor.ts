@@ -150,6 +150,15 @@ export function normalizeAlert(input: Record<string, unknown>): AlertRule {
 }
 export function saveAlert(input: Record<string, unknown>) {
   const rule = normalizeAlert(input);
+  // The form does not send whether the rule is above its threshold or when it
+  // last fired; an edited rule keeps both, so it neither fires again within its
+  // cooldown nor misses saying it is back to normal. A rule that watches
+  // something else starts afresh.
+  const stored = alertRules().find((item) => item.id === rule.id);
+  if (stored && stored.metric === rule.metric) {
+    if (stored.active) rule.active = true;
+    if (stored.lastTriggeredAt && !rule.lastTriggeredAt) rule.lastTriggeredAt = stored.lastTriggeredAt;
+  }
   save("alerts", [...alertRules().filter((item) => item.id !== rule.id), rule]);
   audit("alert saved " + rule.id);
 }
@@ -336,9 +345,16 @@ async function collectSnapshot() {
 }
 export function hostSnapshot() {
   if (!pendingSnapshot) {
-    pendingSnapshot = collectSnapshot().finally(() => { pendingSnapshot = undefined; });
+    const started = collectSnapshot().finally(() => { if (pendingSnapshot === started) pendingSnapshot = undefined; });
+    pendingSnapshot = started;
   }
   return pendingSnapshot;
+}
+// After a change made through the dashboard, such as a container stopped, the
+// next request reads the server again instead of joining a snapshot that began
+// before the change.
+export function forgetPendingSnapshot() {
+  pendingSnapshot = undefined;
 }
 // A leading dash would be read by Docker as an option, not as a name.
 export const CONTAINER_NAME = /^\w[\w.-]*$/;

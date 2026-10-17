@@ -1,7 +1,7 @@
 "use client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiError, api } from "@/lib/client-api";
-import { Login, ConnectionUnavailable, Setup } from "@/components/auth";
+import { Login, ConnectionUnavailable, Setup, type SetupServer } from "@/components/auth";
 import { ContainerRow } from "@/components/containers";
 import { PowerPage } from "@/components/power";
 import { containerLinks } from "@/lib/container-links";
@@ -107,7 +107,7 @@ export default function Home() {
       expires: number;
     } | null>(null),
     [copied, setCopied] = useState<"idle" | "copied" | "manual">("idle"),
-    [needsSetup, setNeedsSetup] = useState(false),
+    [needsSetup, setNeedsSetup] = useState(false), [setupServer, setSetupServer] = useState<SetupServer>(),
     [initializing, setInitializing] = useState(true),
     [pendingRequests, setPendingRequests] = useState(0),
     // Bumped when the language changes, so that every text is drawn again.
@@ -168,6 +168,7 @@ export default function Home() {
       try {
         const setup = await api("setup/status", undefined, true);
         setNeedsSetup(!setup.configured);
+        setSetupServer(setup.server);
       } catch {}
     } finally {
       setInitializing(false);
@@ -333,7 +334,7 @@ export default function Home() {
   }
   if (initializing || !languageReady) return <LoadingScreen />;
   if (needsSetup)
-    return <Setup done={() => { setNeedsSetup(false); void refresh(); }} loading={pendingRequests > 0} />;
+    return <Setup done={() => { setNeedsSetup(false); void refresh(); }} loading={pendingRequests > 0} server={setupServer} />;
   if (!state && hostDown)
     return <ConnectionUnavailable error={err} retry={() => void refresh()} signOut={signOut} loading={pendingRequests > 0} />;
   if (!state)
@@ -759,7 +760,8 @@ export default function Home() {
                 <p>{t("Create one by selecting a script and when it should run.")}</p>
               </div>
             )}
-            <details className="raw-cron">
+            {/* A read-only account is not sent the crontabs, which hold the scripts' variables. */}
+            {!readOnly && <><details className="raw-cron">
               <summary>{t("Show full server crontab")}</summary>
               <pre>{state.cron || t("No scheduled jobs.")}</pre>
             </details>
@@ -770,7 +772,7 @@ export default function Home() {
               ) : (
                 <p className="root-access-note">{t("Root cron access is not enabled yet.")}</p>
               )}
-            </details>
+            </details></>}
           </Panel>
         )}
         {page === "history" && <HistoryPanel metrics={state.metrics} initialKind={historyKind} openLog={(run) => openLogs(t("{name} run", { name: run.scriptName }), "script/log", { id: run.scriptId, runId: run.id })} />}

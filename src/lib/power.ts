@@ -379,7 +379,10 @@ export async function samplePower() {
     }
   }));
   const states = powerState(), now = Date.now();
+  // A device deleted while it was being read keeps no state and sends no news.
+  const kept = new Set(powerDevices().map((device) => device.id));
   for (const result of results) {
+    if (!kept.has(result.device.id)) continue;
     // Announce changes only: a device that was failing and reads again, or the reverse.
     const wasFailing = Boolean(states[result.device.id]?.error);
     if (result.reading) {

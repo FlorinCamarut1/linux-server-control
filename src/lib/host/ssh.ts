@@ -65,17 +65,18 @@ export function allowedRoots() { return serverSettings().allowedPaths; }
 // Reuses one SSH connection for the many short commands a page load issues,
 // instead of a full handshake for each. The socket lives in the /tmp tmpfs.
 // The connection outlasts the background monitor's 5-minute interval, so the
-// first page load after a pause does not wait for a handshake either; when the
-// server stops answering, keep-alives close it within 45 seconds.
-function multiplexOptions() {
+// first page load after a pause does not wait for a handshake either. A command
+// that must not share it (testing the connection) gets its own.
+function multiplexOptions(shared: boolean) {
   if (process.env.SSH_MULTIPLEX === "false") return [];
-  return ["-o", "ControlMaster=auto", "-o", "ControlPath=/tmp/lsc-ssh-%C", "-o", "ControlPersist=330", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3"];
+  if (!shared) return ["-o", "ControlPath=none"];
+  return ["-o", "ControlMaster=auto", "-o", "ControlPath=/tmp/lsc-ssh-%C", "-o", "ControlPersist=330"];
 }
 // The private key and the server's recorded identity, mounted into the
 // container; SSH_KEY_FILE and SSH_KNOWN_HOSTS_FILE name other files.
 const sshKeyFile = () => process.env.SSH_KEY_FILE || "/run/ssh/id_ed25519";
 const sshKnownHostsFile = () => process.env.SSH_KNOWN_HOSTS_FILE || "/run/ssh/known_hosts";
-export const ssh = (args: string[]): [string, string[]] => {
+export const ssh = (args: string[], shared = true): [string, string[]] => {
   const { sshTarget: target, sshPort } = serverSettings();
   return target
     ? [
@@ -93,7 +94,7 @@ export const ssh = (args: string[]): [string, string[]] => {
           String(sshPort),
           "-o",
           `UserKnownHostsFile=${sshKnownHostsFile()}`,
-          ...multiplexOptions(),
+          ...multiplexOptions(shared),
           target,
           shell(args),
         ],
@@ -103,7 +104,9 @@ export const ssh = (args: string[]): [string, string[]] => {
 export async function testServerConnection() {
   const target = serverSettings().sshTarget;
   if (!target) return { host: "local", mode: "local" as const };
-  const host = (await runAsync(["hostname"], 12000)).trim();
+  // A connection of its own, so the key and the server's identity are checked
+  // now rather than trusted from the shared connection.
+  const host = (await runAsync(["hostname"], 12000, undefined, false)).trim();
   return { host, mode: "ssh" as const, target };
 }
 // Quotes arguments for the command line that the SSH user's login shell reads,
@@ -120,8 +123,8 @@ export class CommandError extends Error {}
 // The last failure logged per command, so a command that fails on every refresh
 // (Docker on a server without it) is logged once, not every 15 seconds.
 const loggedFailures = new Map<string, string>();
-export function runAsync(args: string[], timeout = 30000, input?: string) {
-  const [command, arguments_] = ssh(args);
+export function runAsync(args: string[], timeout = 30000, input?: string, shared = true) {
+  const [command, arguments_] = ssh(args, shared);
   return new Promise<string>((resolve, reject) => {
     const child = execFile(command, arguments_, { encoding: "utf8", timeout, maxBuffer: 4e6 }, (error, stdout, stderr) => {
       if (!error) {

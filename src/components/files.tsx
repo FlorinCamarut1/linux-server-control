@@ -60,11 +60,14 @@ export function useDirectory<T>(endpoint: string, directory: string, includeSize
       setData(result);
       setLoading(false);
       // A listing sorted by size arrives with its folder sizes already measured.
-      if (includeSizes && result.entries.some((entry: FileBrowserData["entries"][number]) => entry.type === "directory" && entry.size === null)) {
+      const unmeasured = includeSizes ? result.entries.filter((entry: FileBrowserData["entries"][number]) => entry.type === "directory" && entry.size === null) : [];
+      if (unmeasured.length) {
         setSizesLoading(true);
         try {
-          // The folder as requested, so that this joins the measurement the listing started.
-          const measured = await api("file/sizes", { path: directory, hidden: requestOptions.hidden }, true);
+          // The folder as requested, so that this joins the measurement the
+          // listing started; a kept one that lacks a folder shown is taken again.
+          const expected = unmeasured.map((entry: FileBrowserData["entries"][number]) => entry.path);
+          const measured = await api("file/sizes", { path: directory, hidden: requestOptions.hidden, expected }, true);
           if (current === generation.current) {
             const entries = result.entries.map((entry: FileBrowserData["entries"][number]) =>
               entry.type === "directory" ? { ...entry, size: measured.sizes[entry.path] ?? null } : entry);
@@ -128,9 +131,10 @@ export function FileExplorer() {
   // The folder is searched once typing pauses, instead of once per letter.
   const [query, setQuery] = useState("");
   useEffect(() => {
+    if (search === query) return;
     const timer = setTimeout(() => { setQuery(search); setOffset(0); }, 250);
     return () => clearTimeout(timer);
-  }, [search]);
+  }, [search, query]);
   const { data, error, loading, sizesLoading, load } = useDirectory<FileBrowserData & { total?: number; offset?: number; limit?: number }>("file/browse", directory, true, { search: query, sort, offset, limit: FILES_PAGE, hidden: showHidden });
   const listTop = useRef<HTMLDivElement>(null);
   // The page's Refresh button reads the folder, and measures it, again too.
