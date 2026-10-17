@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { createServer } from "node:http";
+import { createRequire } from "node:module";
 import path from "node:path";
 import test from "node:test";
 import { loadPower, loadServer, plain } from "./harness.mjs";
@@ -245,4 +246,23 @@ test("a Tapo plug with its local API closed points to the app setting", async ()
   const port = probe.address().port;
   await new Promise((resolve) => probe.close(resolve));
   await assert.rejects(driver(power, "tapo").read({ host: `127.0.0.1:${port}`, username: "me@example.com", password: "x" }), /Third-Party Compatibility/);
+});
+
+test("one sampling of several devices writes the power state once", async () => {
+  const plug = await device((req, res) => json(res, { apower: 12, output: true }));
+  const { server, data } = loadServer();
+  const power = loadPower(server);
+  server.save("power-devices", [
+    { id: "a", name: "Plug A", driver: "shelly", enabled: true, config: { host: plug } },
+    { id: "b", name: "Plug B", driver: "shelly", enabled: true, config: { host: plug } },
+    { id: "c", name: "Gone", driver: "shelly", enabled: true, config: { host: "127.0.0.1:1" } },
+  ]);
+  const fs = createRequire(import.meta.url)("node:fs");
+  const original = fs.writeFileSync;
+  let writes = 0;
+  fs.writeFileSync = (file, ...rest) => { if (String(file).startsWith(path.join(data, "power.json"))) writes++; return original(file, ...rest); };
+  try { await power.samplePower(); } finally { fs.writeFileSync = original; }
+  assert.equal(writes, 1);
+  const state = JSON.parse(readFileSync(path.join(data, "power.json"), "utf8"));
+  assert.deepEqual([state.a.lastW, state.b.lastW, Boolean(state.c.error)], [12, 12, true], "every device's reading or failure is kept");
 });

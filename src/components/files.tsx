@@ -125,7 +125,13 @@ export function FileExplorer() {
       action: "copy" | "move";
       name: string;
     } | null>(null);
-  const { data, error, loading, sizesLoading, load } = useDirectory<FileBrowserData & { total?: number; offset?: number; limit?: number }>("file/browse", directory, true, { search, sort, offset, limit: FILES_PAGE, hidden: showHidden });
+  // The folder is searched once typing pauses, instead of once per letter.
+  const [query, setQuery] = useState("");
+  useEffect(() => {
+    const timer = setTimeout(() => { setQuery(search); setOffset(0); }, 250);
+    return () => clearTimeout(timer);
+  }, [search]);
+  const { data, error, loading, sizesLoading, load } = useDirectory<FileBrowserData & { total?: number; offset?: number; limit?: number }>("file/browse", directory, true, { search: query, sort, offset, limit: FILES_PAGE, hidden: showHidden });
   const listTop = useRef<HTMLDivElement>(null);
   // The page's Refresh button reads the folder, and measures it, again too.
   useEffect(() => {
@@ -285,7 +291,7 @@ export function FileExplorer() {
           <Btn disabled={loading}>{t("Go")}</Btn>
         </form>
         <div className="file-explorer-tools">
-          <input type="search" aria-label={t("Search files")} value={search} onChange={(event) => { setSearch(event.target.value); setOffset(0); }} placeholder={t("Search this folder")} />
+          <input type="search" aria-label={t("Search files")} value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t("Search this folder")} />
           <select aria-label={t("Sort files")} value={sort} onChange={(event) => { setSort(event.target.value); setOffset(0); }}>
             <option value="name">{t("Sort by name")}</option>
             <option value="size">{t("Sort by size")}</option>
@@ -352,7 +358,7 @@ export function FileExplorer() {
           ))}
           </div>
         ) : null}
-        {!loading && !error && data && !data.entries.length && <div className="empty-state"><Folder size={22} /><b>{search ? t("Nothing matches “{search}”", { search }) : t("This folder is empty")}</b></div>}
+        {!loading && !error && data && !data.entries.length && <div className="empty-state"><Folder size={22} /><b>{query ? t("Nothing matches “{search}”", { search: query }) : t("This folder is empty")}</b></div>}
         {pager}
       </Panel>
       {clipboard && (
