@@ -345,7 +345,8 @@ const MAX_GAP_MS = 10 * 60000;
 const HOUR = 3600000;
 // Adds a reading and integrates the energy since the previous one (trapezoid),
 // unless the gap is too long to assume the power was steady in between.
-export function recordReading(id: string, reading: PowerReading, at: number, states = powerState()) {
+// Without `persist` the caller saves the states, once for several readings.
+export function recordReading(id: string, reading: PowerReading, at: number, states = powerState(), persist = true) {
   const state = states[id] ?? { recent: [], hourly: [] };
   const previous = state.recent.at(-1);
   if (previous && at > previous.at && at - previous.at <= MAX_GAP_MS) {
@@ -360,7 +361,7 @@ export function recordReading(id: string, reading: PowerReading, at: number, sta
   state.hourly = state.hourly.filter((hour) => hour.at > at - retention);
   Object.assign(state, { lastAt: at, lastW: reading.powerW, on: reading.on, error: undefined, errorAt: undefined });
   states[id] = state;
-  save("power", states, false);
+  if (persist) save("power", states, false);
   return state;
 }
 
@@ -383,13 +384,14 @@ export async function samplePower() {
     const wasFailing = Boolean(states[result.device.id]?.error);
     if (result.reading) {
       if (wasFailing) emitDashboardEvent(() => ({ type: "power-online", severity: "success", title: t("{name} is responding again", { name: result.device.name }), message: t("Current power {watts} W.", { watts: Math.round(result.reading.powerW) }) }));
-      recordReading(result.device.id, result.reading, now, states);
+      recordReading(result.device.id, result.reading, now, states, false);
     } else {
       if (!wasFailing) emitDashboardEvent(() => ({ type: "power-offline", severity: "warning", title: t("{name} stopped responding", { name: result.device.name }), message: result.error ?? t("The device could not be read.") }));
       states[result.device.id] = { ...(states[result.device.id] ?? { recent: [], hourly: [] }), error: result.error, errorAt: now };
-      save("power", states, false);
     }
   }
+  // The file holds two days of readings per device; it is written once per sampling.
+  save("power", states, false);
 }
 
 // Power over the range (1-minute samples for 24 hours, hourly averages beyond)

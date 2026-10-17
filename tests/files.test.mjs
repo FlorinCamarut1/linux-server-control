@@ -155,3 +155,20 @@ test("a failed measurement is not kept", async () => {
   fail = false;
   assert.deepEqual(plain(await server.folderSizes("/srv/media")).sizes, {});
 });
+
+test("sorting by size uses the folder's measurement instead of measuring again", async () => {
+  const requests = [];
+  const host = (argv, input) => {
+    const request = input ? JSON.parse(input) : {};
+    requests.push(request);
+    if (request.action === "sizes") return { stdout: JSON.stringify({ path: "/srv/media", sizes: { "/srv/media/films": 42 } }) };
+    return { stdout: JSON.stringify({ path: "/srv/media", roots: ["/srv/media"], parent: null, entries: [], total: 0 }) };
+  };
+  const { server } = loadServer({ host, env: { ALLOWED_PATHS: "/srv/media" } });
+  await server.folderSizes("/srv/media");
+  await server.browseFiles("/srv/media", { sort: "size" });
+  assert.equal(requests.filter((item) => item.action === "sizes").length, 1, "the folder is measured once");
+  assert.deepEqual(plain(requests.at(-1).sizes), { "/srv/media/films": 42 }, "the listing gets the measured sizes");
+  await server.browseFiles("/srv/media", { sort: "name" });
+  assert.equal(requests.at(-1).sizes, undefined, "other orders do not wait for sizes");
+});

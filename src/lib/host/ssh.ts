@@ -64,9 +64,12 @@ export function validateServerSettings(input: Partial<ServerSettings>): ServerSe
 export function allowedRoots() { return serverSettings().allowedPaths; }
 // Reuses one SSH connection for the many short commands a page load issues,
 // instead of a full handshake for each. The socket lives in the /tmp tmpfs.
+// The connection outlasts the background monitor's 5-minute interval, so the
+// first page load after a pause does not wait for a handshake either; when the
+// server stops answering, keep-alives close it within 45 seconds.
 function multiplexOptions() {
   if (process.env.SSH_MULTIPLEX === "false") return [];
-  return ["-o", "ControlMaster=auto", "-o", "ControlPath=/tmp/lsc-ssh-%C", "-o", "ControlPersist=60"];
+  return ["-o", "ControlMaster=auto", "-o", "ControlPath=/tmp/lsc-ssh-%C", "-o", "ControlPersist=330", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3"];
 }
 // The private key and the server's recorded identity, mounted into the
 // container; SSH_KEY_FILE and SSH_KNOWN_HOSTS_FILE name other files.

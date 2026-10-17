@@ -186,7 +186,10 @@ else:
         print(json.dumps({"path": target, "sizes": sizes}))
         sys.exit(0)
     ordering = request.get("sort") or "name"
-    if ordering == "size":
+    if ordering == "size" and isinstance(request.get("sizes"), dict):
+        # Measured by the dashboard already.
+        sizes = request["sizes"]
+    elif ordering == "size":
         # Sorting by size across pages needs every folder's size first.
         try:
             measured = subprocess.run(
@@ -276,7 +279,10 @@ export async function browseFiles(requested = "", options: { search?: string; so
   const page = (listing: Listing) => ({ ...listing, entries: listing.entries.slice(offset, offset + limit), offset, limit });
   const kept = offset > 0 ? listings.get(key) : undefined;
   if (kept && Date.now() - kept.at < LISTING_TTL_MS) return page(kept.listing);
-  const request = { path: requested, action: "browse", scripts: false, search, sort, hidden };
+  // Sorting by size uses the folder's measurement, which the folder sizes share,
+  // instead of measuring the folder again; a failed one is measured while listing.
+  const sizes = sort === "size" ? (await folderSizes(requested, hidden).catch(() => undefined))?.sizes : undefined;
+  const request = { path: requested, action: "browse", scripts: false, search, sort, hidden, ...(sizes && { sizes }) };
   const listing = await remoteFileOperation<Listing>({ ...request, offset: 0, limit: LISTING_MAX_ENTRIES });
   listings.delete(key);
   if (listing.total > listing.entries.length)
