@@ -7,7 +7,7 @@ import { loadServer, plain, realHost } from "./harness.mjs";
 
 // A real directory tree: an allowed root, a sibling outside it, and a symlink
 // inside the root that points out of it.
-function tree() {
+function tree(host = realHost) {
   const base = mkdtempSync(path.join(tmpdir(), "lsc-files-"));
   const root = path.join(base, "allowed"), outside = path.join(base, "allowed-not");
   mkdirSync(path.join(root, "docs"), { recursive: true });
@@ -17,7 +17,7 @@ function tree() {
   writeFileSync(path.join(outside, "secret.txt"), "secret\n");
   writeFileSync(path.join(root, "image.bin"), Buffer.from([0, 1, 2, 3, 255, 0, 7]));
   symlinkSync(outside, path.join(root, "escape"));
-  const { server, commands } = loadServer({ host: realHost, env: { ALLOWED_PATHS: root, SCRIPT_ROOT: root } });
+  const { server, commands } = loadServer({ host, env: { ALLOWED_PATHS: root, SCRIPT_ROOT: root } });
   return { server, root, outside, commands };
 }
 
@@ -74,6 +74,51 @@ test("the editor reads and saves text files inside the root only", async () => {
   assert.equal(readFileSync(path.join(outside, "secret.txt"), "utf8"), "secret\n");
   writeFileSync(path.join(root, "big.txt"), "x".repeat(600 * 1024));
   await assert.rejects(server.readEditableFile(path.join(root, "big.txt")), /up to 512 KB/);
+});
+
+test("opening a file in the editor is one host command, and so is refusing it", async () => {
+  let output = "";
+  const { server, root, outside, commands } = tree((argv, input) => {
+    const result = realHost(argv, input);
+    output = result.stdout;
+    return result;
+  });
+  mkdirSync(path.join(root, ".ssh"));
+  writeFileSync(path.join(root, ".ssh", "key"), "private key\n");
+  symlinkSync(path.join(root, ".ssh", "key"), path.join(root, "key-link"));
+  symlinkSync(path.join(root, "notes.txt"), path.join(root, ".notes-link"));
+  writeFileSync(path.join(root, "big.txt"), "big ".repeat(150 * 1024));
+  const open = async (name, hidden = false) => {
+    const before = commands.length;
+    try { return plain(await server.readEditableFile(name, hidden)); }
+    catch (error) {
+      // Nothing outside, hidden, too large or binary comes back from the host.
+      assert.doesNotMatch(output, /secret\n|private key|big big|\x01\x02\x03/, `${name} is not read`);
+      return error.message;
+    }
+    finally { assert.equal(commands.length - before, 1, `one host command for ${name}`); }
+  };
+  assert.deepEqual(await open(path.join(root, "notes.txt")), { path: path.join(root, "notes.txt"), content: "hello\n" });
+  assert.deepEqual(await open(path.join(root, ".ssh", "key"), true), { path: path.join(root, ".ssh", "key"), content: "private key\n" }, "hidden files open once shown");
+  assert.match(await open(path.join(root, "missing.txt")), /File not found/);
+  assert.match(await open(path.join(outside, "secret.txt")), /inside an allowed location/);
+  assert.match(await open(path.join(root, "escape", "secret.txt")), /inside an allowed location/);
+  assert.match(await open(path.join(root, ".ssh", "key")), /Hidden files are shown only after Show hidden files/);
+  assert.match(await open(path.join(root, "key-link")), /Hidden files/, "also through a link with a visible name");
+  assert.match(await open(path.join(root, ".notes-link")), /Hidden files/, "and a hidden name for a visible file");
+  assert.match(await open(path.join(root, "docs")), /Choose a regular file/);
+  assert.match(await open(path.join(root, "big.txt")), /up to 512 KB/);
+  assert.match(await open(path.join(root, "image.bin")), /not a supported text file/);
+});
+
+test("a file whose name ends in a space opens and saves as itself", async () => {
+  const { server, root } = tree();
+  writeFileSync(path.join(root, "notes.txt "), "with a space\n");
+  const file = plain(await server.readEditableFile(path.join(root, "notes.txt ")));
+  assert.deepEqual(file, { path: path.join(root, "notes.txt "), content: "with a space\n" });
+  await server.saveEditableFile(file.path, "changed\n");
+  assert.equal(readFileSync(path.join(root, "notes.txt "), "utf8"), "changed\n");
+  assert.equal(readFileSync(path.join(root, "notes.txt"), "utf8"), "hello\n", "not the file without the space");
 });
 
 test("new files and folders are created inside the root with valid names only", async () => {
