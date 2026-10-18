@@ -2228,6 +2228,10 @@ body:has(.clipboard-bar) main {
   font-size: var(--text-sm);
   font-variant-numeric: tabular-nums;
 }
+/* A folder's size from an earlier measurement, while it is measured again. */
+.file-size-stale {
+  opacity: 0.55;
+}
 .file-details-name {
   color: var(--text);
   font-size: var(--text-lg);

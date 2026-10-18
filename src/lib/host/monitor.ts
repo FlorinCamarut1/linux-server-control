@@ -174,7 +174,7 @@ const REQUIRED_TOOLS: [tool: string, level: "error" | "warning", purpose: string
 ];
 const PREFLIGHT_SCRIPT = [
   'for tool in bash free df python3 file crontab docker; do if command -v "$tool" >/dev/null 2>&1; then echo "tool:$tool=ok"; else echo "tool:$tool=missing"; fi; done',
-  'if realpath -e -- / >/dev/null 2>&1 && df -B1 -P / >/dev/null 2>&1 && du -b /dev/null >/dev/null 2>&1; then echo gnu=ok; else echo gnu=missing; fi',
+  'if realpath -e -- / >/dev/null 2>&1 && df -B1 -P / >/dev/null 2>&1; then echo gnu=ok; else echo gnu=missing; fi',
   'if command -v docker >/dev/null 2>&1; then if out=$(docker ps -q 2>&1); then echo docker=ok; else echo "docker=$(printf "%s" "$out" | tail -n 1)"; fi; fi',
   'logs=$1; shift',
   'if mkdir -p -- "$logs" 2>/dev/null && [ -w "$logs" ]; then echo logs=ok; else echo logs=missing; fi',
@@ -204,7 +204,7 @@ export async function preflight(): Promise<{ host: string; checks: PreflightChec
     checks.push({ id: "docker", label: t("Docker access"), status: docker === "ok" ? "ok" : "warning", detail: docker === "ok" ? t("The SSH user may use Docker.") : dockerProblem(docker) });
   }
   const gnu = values.get("gnu") === "ok";
-  checks.push({ id: "gnu", label: t("GNU core utilities"), status: gnu ? "ok" : "warning", detail: gnu ? t("realpath, df and du support the options used.") : t("realpath -e, df -B1 or du -b is not supported (BusyBox?). Storage cards, file checks and folder sizes need GNU coreutils.") });
+  checks.push({ id: "gnu", label: t("GNU core utilities"), status: gnu ? "ok" : "warning", detail: gnu ? t("realpath and df support the options used.") : t("realpath -e or df -B1 is not supported (BusyBox?). Storage cards and file checks need GNU coreutils.") });
   const logs = values.get("logs") === "ok";
   checks.push({ id: "logs", label: t("Remote logs folder"), status: logs ? "ok" : "warning", detail: logs ? t("{path} is writable.", { path: settings.remoteLogs }) : t("{path} cannot be created or written by the SSH user. Schedules log their runs there.", { path: settings.remoteLogs }) });
   for (const folder of settings.allowedPaths) {

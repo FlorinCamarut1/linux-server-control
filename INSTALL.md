@@ -48,8 +48,8 @@ curl -fsSL https://raw.githubusercontent.com/FlorinCamarut1/linux-server-control
 |---|---|---|
 | An SSH server and a normal user account | Everything | `openssh-server` |
 | `bash`, `free`, `df` | The dashboard itself | Present on every mainstream distribution |
-| GNU `realpath`, `du`, `stat`, `tail` | Storage cards, file checks, folder sizes | `coreutils` |
-| `python3` | The Files page and the script picker | `python3` |
+| GNU `realpath`, `stat`, `tail` | Storage cards, file checks | `coreutils` |
+| `python3` | The Files page, its folder sizes, and the script picker | `python3` |
 | `file` | The file editor | `file` |
 | `crontab` | Schedules | `cron` (Debian, Ubuntu) or `cronie` (Arch, Fedora) |
 | Docker, usable by your account | Running the dashboard, and the Containers page | Step 1 |

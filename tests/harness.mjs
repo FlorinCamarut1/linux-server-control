@@ -43,9 +43,11 @@ function loadModule(entry, globals, modules = () => undefined) {
 
 // Loads src/lib/server.ts in its own context with a fresh DATA_DIR. Host commands
 // never run: `host(args, input)` answers them with { stdout, stderr, code } or a
-// thrown error, and every command is recorded in `commands`. With
-// realProcesses, commands run for real instead, for tests of running scripts.
-export function loadServer({ env = {}, host = () => ({ stdout: "" }), delay = 0, realProcesses = false } = {}) {
+// thrown error, and every command is recorded in `commands`. A process may print
+// its stdout in parts, an array of them `delay` apart, and a process that was
+// ended is marked `killed`. With realProcesses, commands run for real instead,
+// for tests of running scripts. `now` replaces Date.now().
+export function loadServer({ env = {}, host = () => ({ stdout: "" }), delay = 0, realProcesses = false, now } = {}) {
   const data = mkdtempSync(path.join(tmpdir(), "lsc-test-"));
   const commands = [];
   const childProcess = {
@@ -75,11 +77,15 @@ export function loadServer({ env = {}, host = () => ({ stdout: "" }), delay = 0,
     spawn(command, args) {
       const child = new EventEmitter();
       const argv = [command, ...args];
-      const entry = { argv, input: undefined };
+      const entry = { argv, input: undefined, killed: false };
       commands.push(entry);
       child.stdout = new EventEmitter();
       child.stderr = new EventEmitter();
-      child.kill = () => {};
+      child.kill = () => {
+        if (entry.killed) return;
+        entry.killed = true;
+        setTimeout(() => child.emit("close", null), 0);
+      };
       child.stdin = {
         on() {},
         end(input) {
@@ -88,9 +94,17 @@ export function loadServer({ env = {}, host = () => ({ stdout: "" }), delay = 0,
             let result;
             try { result = host(argv, input) ?? {}; }
             catch (error) { return child.emit("error", error); }
-            if (result.stdout) child.stdout.emit("data", result.stdout);
-            if (result.stderr) child.stderr.emit("data", result.stderr);
-            child.emit("close", result.code ?? 0);
+            const parts = Array.isArray(result.stdout) ? result.stdout : [result.stdout];
+            const print = (index) => {
+              if (entry.killed) return;
+              if (index < parts.length) {
+                if (parts[index]) child.stdout.emit("data", parts[index]);
+                return index + 1 < parts.length ? setTimeout(() => print(index + 1), delay) : print(index + 1);
+              }
+              if (result.stderr) child.stderr.emit("data", result.stderr);
+              child.emit("close", result.code ?? 0);
+            };
+            print(0);
           }, delay);
         },
       };
@@ -99,6 +113,7 @@ export function loadServer({ env = {}, host = () => ({ stdout: "" }), delay = 0,
   };
   const server = loadModule("../src/lib/server.ts", {
     Buffer, setTimeout, clearTimeout, setInterval, clearInterval,
+    ...(now && { Date: class extends Date { static now() { return now(); } } }),
     console: { ...console, error() {} },
     process: { env: { DATA_DIR: data, SSH_TARGET: "", ALLOWED_PATHS: "/srv/scripts", SCRIPT_ROOT: "/srv/scripts", MONITORED_PATHS: "/srv/example", ...env } },
   }, (name) => (name === "node:child_process" && !realProcesses ? childProcess : undefined));
