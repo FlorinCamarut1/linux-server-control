@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, existsSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -111,45 +111,70 @@ test("a folder is listed once for all its pages, and again after a change", asyn
   assert.equal(listed(), before + 1);
 });
 
+// What the server prints while it measures the folders in `folder`.
+const printed = (folder, sizes, complete = true) =>
+  [{ path: folder }, ...Object.entries(sizes).map(([each, size]) => ({ folder: each, size })), { complete }].map((line) => JSON.stringify(line) + "\n").join("");
+const action = (command) => { try { return JSON.parse(command.input).action; } catch { return undefined; } };
+const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const listingOf = (folder, names) => JSON.stringify({ path: folder, roots: ["/srv/media"], parent: null, entries: names.map((name) => ({ name, path: `${folder}/${name}`, type: "directory", size: null, modified: 1 })), total: names.length });
+
 test("sorting by size measures folders first and pages through the whole folder", async () => {
-  const { server, root } = tree();
+  const { server, root, commands } = tree();
   writeFileSync(path.join(root, "docs", "large.txt"), "x".repeat(50000));
   writeFileSync(path.join(root, "medium.txt"), "x".repeat(20000));
   const bySize = plain(await server.browseFiles(root, { sort: "size" }));
   assert.deepEqual(bySize.entries.slice(0, 2).map((entry) => entry.name), ["docs", "medium.txt"], "largest first, folders by their contents");
-  assert.ok(bySize.entries[0].size >= 50000);
+  assert.equal(bySize.entries[0].size, 50002);
   const second = plain(await server.browseFiles(root, { sort: "size", offset: 1, limit: 1 }));
   assert.deepEqual(second.entries.map((entry) => entry.name), ["medium.txt"]);
   assert.equal(second.total, bySize.total, "every page reports the full count");
+  const measured = commands.filter((item) => action(item) === "sizes").length;
   const byName = plain(await server.browseFiles(root));
-  assert.equal(byName.entries[0].size, null, "name listings leave folder sizes for later");
+  assert.equal(byName.entries.find((entry) => entry.name === "docs").size, 50002, "other orders show the sizes measured so far");
+  assert.equal(commands.filter((item) => action(item) === "sizes").length, measured, "without measuring again");
 });
 
-test("a folder is measured once for requests close together, and again after a change or when asked", async () => {
+test("a folder's size counts every hard link, a symbolic link as itself, and the folders below are measured on the way", async () => {
+  const { server, root, outside } = tree();
+  writeFileSync(path.join(root, "docs", "big.bin"), Buffer.alloc(10000));
+  mkdirSync(path.join(root, "docs", "deep"));
+  writeFileSync(path.join(root, "docs", "deep", "c.txt"), "ccc");
+  mkdirSync(path.join(root, "other"));
+  linkSync(path.join(root, "docs", "big.bin"), path.join(root, "other", "same.bin"));
+  symlinkSync(outside, path.join(root, "other", "away"));
+  const { sizes } = plain(await server.folderSizes(root));
+  assert.equal(sizes[path.join(root, "docs")], 2 + 10000 + 3);
+  assert.equal(sizes[path.join(root, "other")], 10000 + lstatSync(path.join(root, "other", "away")).size, "measured as if alone, whatever else is measured");
+  const docs = plain(await server.browseFiles(path.join(root, "docs")));
+  assert.equal(docs.entries.find((entry) => entry.name === "deep").size, 3, "a folder below already has its size");
+});
+
+test("a folder is measured once for requests close together, and again when asked or after a change in it", async () => {
   const measured = [];
   const host = (argv, input) => {
-    const request = input ? JSON.parse(input) : {};
-    if (request.action === "sizes") measured.push(request.path);
-    return { stdout: JSON.stringify(request.action === "sizes" ? { path: "/srv/media", sizes: { "/srv/media/films": 42 } } : { ok: true, path: "/srv/media/new" }) };
+    const request = JSON.parse(input || "{}");
+    if (request.action !== "sizes") return { stdout: JSON.stringify({ ok: true }) };
+    measured.push(request);
+    return { stdout: printed("/srv/media", { "/srv/media/films": 42 }) };
   };
   const { server } = loadServer({ host, delay: 5, env: { ALLOWED_PATHS: "/srv/media" } });
   const [first, second] = await Promise.all([server.folderSizes("/srv/media"), server.folderSizes("/srv/media")]);
-  assert.equal(plain(first).sizes["/srv/media/films"], 42);
+  assert.deepEqual(plain(first), { path: "/srv/media", sizes: { "/srv/media/films": 42 }, complete: true });
   assert.deepEqual(plain(second), plain(first));
   await server.folderSizes("/srv/media");
   assert.equal(measured.length, 1, "requests while measuring, and soon after, share one measurement");
   await server.folderSizes("/srv/media", false, true);
   assert.equal(measured.length, 2, "a fresh request measures again");
-  await server.createFileOrFolder("/srv/media", "new", "folder");
+  await server.changeFile("delete", "/srv/media/films/old.mkv");
   await server.folderSizes("/srv/media");
-  assert.equal(measured.length, 3, "a change through the dashboard forgets the measurement");
+  assert.equal(measured.length, 3, "a change in the folder measures it again");
   await server.folderSizes("/srv/media", true);
   assert.equal(measured.length, 4, "hidden files are measured apart");
 });
 
 test("a failed measurement is not kept", async () => {
   let fail = true;
-  const host = () => fail ? { code: 1, stderr: "ValueError: File operation failed" } : { stdout: JSON.stringify({ path: "/srv/media", sizes: {} }) };
+  const host = () => fail ? { code: 1, stderr: "ValueError: File operation failed" } : { stdout: printed("/srv/media", {}) };
   const { server } = loadServer({ host, env: { ALLOWED_PATHS: "/srv/media" } });
   await assert.rejects(server.folderSizes("/srv/media"), /File operation failed/);
   fail = false;
@@ -158,64 +183,136 @@ test("a failed measurement is not kept", async () => {
 
 test("sorting by size uses the folder's measurement instead of measuring again", async () => {
   const requests = [];
+  let fail = false;
   const host = (argv, input) => {
-    const request = input ? JSON.parse(input) : {};
+    const request = JSON.parse(input || "{}");
     requests.push(request);
-    if (request.action === "sizes") return { stdout: JSON.stringify({ path: "/srv/media", sizes: { "/srv/media/films": 42 } }) };
-    return { stdout: JSON.stringify({ path: "/srv/media", roots: ["/srv/media"], parent: null, entries: [], total: 0 }) };
+    if (request.action === "sizes") return fail ? { code: 1, stderr: "ValueError: File operation failed" } : { stdout: printed("/srv/media", { "/srv/media/films": 42 }) };
+    return { stdout: listingOf("/srv/media", []) };
   };
   const { server } = loadServer({ host, env: { ALLOWED_PATHS: "/srv/media" } });
   await server.folderSizes("/srv/media");
   await server.browseFiles("/srv/media", { sort: "size" });
   assert.equal(requests.filter((item) => item.action === "sizes").length, 1, "the folder is measured once");
   assert.deepEqual(plain(requests.at(-1).sizes), { "/srv/media/films": 42 }, "the listing gets the measured sizes");
+  assert.equal(requests.at(-1).measure, 8, "and measures only the folders made since");
   await server.browseFiles("/srv/media", { sort: "name" });
   assert.equal(requests.at(-1).sizes, undefined, "other orders do not wait for sizes");
+  fail = true;
+  await server.browseFiles("/srv/media", { sort: "size", fresh: true });
+  assert.equal(requests.at(-1).measure, 20, "without a measurement the listing measures every folder");
 });
 
-test("a measurement du cut short is not kept, and a listing sorted by size then measures for itself", async () => {
+test("a measurement cut short keeps the sizes it printed, and the next one measures the rest", async () => {
   const requests = [];
   const host = (argv, input) => {
-    const request = input ? JSON.parse(input) : {};
-    requests.push(request);
-    if (request.action === "sizes") return { stdout: JSON.stringify({ path: "/srv/media", sizes: {}, complete: false }) };
-    return { stdout: JSON.stringify({ path: "/srv/media", roots: ["/srv/media"], parent: null, entries: [], total: 0 }) };
+    requests.push(JSON.parse(input || "{}"));
+    return { stdout: requests.length === 1 ? printed("/srv/media", { "/srv/media/films": 42 }, false) : printed("/srv/media", { "/srv/media/shows": 7 }) };
   };
   const { server } = loadServer({ host, env: { ALLOWED_PATHS: "/srv/media" } });
-  await server.folderSizes("/srv/media");
-  await server.folderSizes("/srv/media");
-  assert.equal(requests.filter((item) => item.action === "sizes").length, 2, "measured again");
-  await server.browseFiles("/srv/media", { sort: "size" });
-  assert.equal(requests.at(-1).sizes, undefined, "the listing is not given the incomplete sizes");
+  assert.equal(plain(await server.folderSizes("/srv/media")).complete, false);
+  const second = plain(await server.folderSizes("/srv/media"));
+  assert.deepEqual(plain(requests[1].skip), ["/srv/media/films"], "what was measured is not measured again");
+  assert.deepEqual(second, { path: "/srv/media", sizes: { "/srv/media/films": 42, "/srv/media/shows": 7 }, complete: true });
 });
 
-test("a folder is measured once whether asked for as requested or as it resolved", async () => {
-  let measured = 0;
+test("a folder is measured once whether asked for as requested or as it resolved, and a folder made since on its own", async () => {
+  const requests = [];
   const host = (argv, input) => {
-    const request = input ? JSON.parse(input) : {};
-    if (request.action === "sizes") measured++;
-    return { stdout: JSON.stringify({ path: "/srv/media", sizes: { "/srv/media/films": 42 }, complete: true }) };
+    const request = JSON.parse(input || "{}");
+    requests.push(request);
+    return { stdout: request.only ? printed("/srv/media", { "/srv/media/new-download": 5 }) : printed("/srv/media", { "/srv/media/films": 42 }) };
   };
   const { server } = loadServer({ host, env: { ALLOWED_PATHS: "/srv/media" } });
   await server.folderSizes("");
   await server.folderSizes("/srv/media");
-  assert.equal(measured, 1);
-  // A kept measurement just taken is not taken again for a folder it lacks.
-  await server.folderSizes("/srv/media", false, false, ["/srv/media/new-download"]);
-  assert.equal(measured, 1);
+  assert.equal(requests.length, 1);
+  const shown = plain(await server.folderSizes("/srv/media", false, false, ["/srv/media/films", "/srv/media/new-download"]));
+  assert.equal(requests.length, 2);
+  assert.deepEqual(plain(requests[1].only), ["/srv/media/new-download"], "only the folder the measurement lacks is measured");
+  assert.deepEqual(shown, { path: "/srv/media", sizes: { "/srv/media/films": 42, "/srv/media/new-download": 5 }, complete: true });
 });
 
 test("Refresh shares a measurement still running, and measures again once it ended", async () => {
   let measured = 0;
   const host = (argv, input) => {
     if (JSON.parse(input || "{}").action === "sizes") measured++;
-    return { stdout: JSON.stringify({ path: "/srv/media", sizes: {}, complete: true }) };
+    return { stdout: printed("/srv/media", {}) };
   };
   const { server } = loadServer({ host, delay: 20, env: { ALLOWED_PATHS: "/srv/media" } });
   await Promise.all([server.folderSizes("/srv/media", false, true), server.folderSizes("/srv/media", false, true), server.folderSizes("/srv/media", false, true)]);
   assert.equal(measured, 1);
   await server.folderSizes("/srv/media", false, true);
   assert.equal(measured, 2);
+});
+
+test("the sizes of the folders shown arrive as they are measured", async () => {
+  const host = () => ({ stdout: [printed("/srv/media", { "/srv/media/films": 42 }).split("\n").slice(0, 2).join("\n") + "\n", JSON.stringify({ folder: "/srv/media/shows", size: 7 }) + "\n" + JSON.stringify({ complete: true }) + "\n"] });
+  const { server } = loadServer({ host, delay: 400, env: { ALLOWED_PATHS: "/srv/media" } });
+  server.startFolderSizes("/srv/media");
+  const first = plain(await server.folderSizes("/srv/media", false, false, ["/srv/media/films", "/srv/media/shows"]));
+  assert.deepEqual(first, { path: "/srv/media", sizes: { "/srv/media/films": 42 }, complete: false }, "the first, without waiting for the rest");
+  const second = plain(await server.folderSizes("/srv/media", false, false, ["/srv/media/shows"]));
+  assert.deepEqual(second, { path: "/srv/media", sizes: { "/srv/media/shows": 7 }, complete: true });
+});
+
+test("a size measured a while ago is shown as stale while it is measured again, and forgotten after a day", async () => {
+  let clock = Date.now(), size = 42;
+  const host = (argv, input) => {
+    const request = JSON.parse(input || "{}");
+    return { stdout: request.action === "sizes" ? printed("/srv/media", { "/srv/media/films": size }) : listingOf("/srv/media", ["films"]) };
+  };
+  const { server } = loadServer({ host, now: () => clock, env: { ALLOWED_PATHS: "/srv/media" } });
+  await server.folderSizes("/srv/media");
+  const films = () => server.browseFiles("/srv/media").then((listing) => plain(listing.entries[0]));
+  assert.deepEqual(await films(), { name: "films", path: "/srv/media/films", type: "directory", size: 42, modified: 1 });
+  clock += 6 * 60 * 1000;
+  size = 50;
+  assert.deepEqual(await films(), { name: "films", path: "/srv/media/films", type: "directory", size: 42, modified: 1, stale: true });
+  assert.deepEqual(plain(await server.folderSizes("/srv/media", false, false, ["/srv/media/films"])).sizes, { "/srv/media/films": 50 });
+  assert.equal((await films()).stale, undefined);
+  clock += 25 * 60 * 60 * 1000;
+  assert.equal((await films()).size, null);
+});
+
+test("a change makes the folders it is in stale, forgets those below it, and stops measuring them", async () => {
+  const host = (argv, input) => {
+    const request = JSON.parse(input || "{}");
+    if (request.action === "browse") return { stdout: request.path === "/srv/media" ? listingOf("/srv/media", ["films", "shows"]) : listingOf("/srv/media/films", ["old"]) };
+    if (request.action !== "sizes") return { stdout: JSON.stringify({ ok: true }) };
+    if (request.path === "/srv/media") return { stdout: printed("/srv/media", { "/srv/media/films": 42, "/srv/media/films/old": 40, "/srv/media/shows": 7 }) };
+    return { stdout: [JSON.stringify({ path: request.path }) + "\n", printed(request.path, {})] };
+  };
+  const { server, commands } = loadServer({ host, delay: 30, env: { ALLOWED_PATHS: "/srv/media" } });
+  await server.folderSizes("/srv/media");
+  server.startFolderSizes("/srv/media/films");
+  await server.changeFile("delete", "/srv/media/films/old");
+  assert.ok(commands.find((item) => action(item) === "sizes" && JSON.parse(item.input).path === "/srv/media/films").killed, "the folder changed is no longer measured");
+  const shown = plain((await server.browseFiles("/srv/media")).entries).map((entry) => [entry.name, entry.size, !!entry.stale]);
+  assert.deepEqual(shown, [["films", 42, true], ["shows", 7, false]], "the folder it was in is stale, others stay as they are");
+  assert.equal(plain((await server.browseFiles("/srv/media/films")).entries)[0].size, null, "what was deleted is forgotten");
+});
+
+test("a measurement nobody waits for is stopped, and keeps the sizes it printed", async () => {
+  const host = () => ({ stdout: [printed("/srv/media", { "/srv/media/films": 42 }).split("\n").slice(0, 2).join("\n") + "\n", ...Array(20).fill("")] });
+  const { server, commands } = loadServer({ host, delay: 300, env: { ALLOWED_PATHS: "/srv/media" } });
+  server.startFolderSizes("/srv/media");
+  await pause(3500);
+  assert.ok(commands[0].killed);
+  assert.deepEqual(plain(await server.folderSizes("/srv/media", false, false, ["/srv/media/films"])).sizes, { "/srv/media/films": 42 });
+  assert.deepEqual(plain(JSON.parse(commands[1].input).skip), ["/srv/media/films"]);
+});
+
+test("folder sizes name hidden folders only to sessions that show them", async () => {
+  const host = (argv, input) => {
+    const request = JSON.parse(input || "{}");
+    return { stdout: printed("/srv/media", { "/srv/media/films": 42, ...(request.hidden && { "/srv/media/.secrets": 9 }) }) };
+  };
+  const { server } = loadServer({ host, env: { ALLOWED_PATHS: "/srv/media" } });
+  await server.folderSizes("/srv/media", true);
+  const asked = ["/srv/media/films", "/srv/media/.secrets", "/etc/passwd"];
+  assert.deepEqual(plain(await server.folderSizes("/srv/media", false, false, asked)).sizes, { "/srv/media/films": 42 });
+  assert.deepEqual(plain(await server.folderSizes("/srv/media", true, false, asked)).sizes, { "/srv/media/films": 42, "/srv/media/.secrets": 9 });
 });
 
 test("folder sizes leave hidden folders out until hidden files are shown", async () => {

@@ -59,18 +59,20 @@ export function useDirectory<T>(endpoint: string, directory: string, includeSize
       if (current !== generation.current) return;
       setData(result);
       setLoading(false);
-      // A listing sorted by size arrives with its folder sizes already measured.
-      const unmeasured = includeSizes ? result.entries.filter((entry: FileBrowserData["entries"][number]) => entry.type === "directory" && entry.size === null) : [];
-      if (unmeasured.length) {
+      // Folders arrive with the sizes measured so far: those without one, and
+      // stale ones, are filled in as the server measures them.
+      const waiting = new Set<string>(includeSizes ? result.entries.filter((entry: Entry) => entry.type === "directory" && (entry.size === null || entry.stale)).map((entry: Entry) => entry.path) : []);
+      if (waiting.size) {
         setSizesLoading(true);
         try {
-          // The folder as requested, so that this joins the measurement the
-          // listing started; a kept one that lacks a folder shown is taken again.
-          const expected = unmeasured.map((entry: FileBrowserData["entries"][number]) => entry.path);
-          const measured = await api("file/sizes", { path: directory, hidden: requestOptions.hidden, expected }, true);
-          if (current === generation.current) {
-            const entries = result.entries.map((entry: FileBrowserData["entries"][number]) =>
-              entry.type === "directory" ? { ...entry, size: measured.sizes[entry.path] ?? null } : entry);
+          let entries: Entry[] = result.entries;
+          for (let complete = false; waiting.size && !complete;) {
+            // The folder as requested, so that this joins the measurement the listing started.
+            const measured = await api("file/sizes", { path: directory, hidden: requestOptions.hidden, expected: [...waiting] }, true);
+            if (current !== generation.current) return;
+            complete = measured.complete;
+            entries = entries.map((entry) => entry.type === "directory" && entry.path in measured.sizes ? { ...entry, size: measured.sizes[entry.path], stale: false } : entry);
+            for (const folder of Object.keys(measured.sizes)) waiting.delete(folder);
             setData({ ...result, entries });
           }
         } catch {
@@ -340,7 +342,10 @@ export function FileExplorer() {
               <small className="file-meta">
                 {entry.size === null
                   ? (sizesLoading ? t("Calculating size…") : t("Size unavailable"))
-                  : formatBytes(entry.size)}
+                  : entry.stale && sizesLoading
+                    // Measured earlier, and being measured again.
+                    ? <span className="file-size-stale" title={t("Calculating size…")}>{formatBytes(entry.size)}</span>
+                    : formatBytes(entry.size)}
                 {entry.modified ? <> · <time dateTime={new Date(entry.modified * 1000).toISOString()}>{formatModified(entry.modified)}</time></> : null}
               </small>
             </button>

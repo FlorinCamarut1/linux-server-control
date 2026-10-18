@@ -47,6 +47,7 @@ import {
   scriptRuns,
   scripts,
   serverSettings,
+  startFolderSizes,
   stopRun,
   syncCron,
   testServerConnection,
@@ -240,8 +241,7 @@ const fileRoutes: Routes<Context> = {
     // The file explorer asks for the folder sizes next, and a listing sorted by
     // size needs them; measuring starts now and both share this measurement.
     const fresh = String(body.fresh) === "true";
-    if (String(body.sizes) === "true")
-      folderSizes(body.path || "", hidden, fresh).catch(() => {});
+    if (String(body.sizes) === "true") startFolderSizes(body.path || "", hidden, fresh);
     return NextResponse.json({
       ...await browseFiles(body.path || "", {
         search: body.search || "", sort: body.sort || "name",
@@ -251,7 +251,8 @@ const fileRoutes: Routes<Context> = {
       hidden, hiddenRequested: String(body.hidden) === "true",
     });
   },
-  // `expected`: the folders shown, which a kept measurement must include.
+  // `expected`: the folders shown that have no size yet, or a stale one. The
+  // answer comes once some are measured; `complete` says that no more will come.
   "POST file/sizes": async (context) => {
     const expected: unknown = context.body.expected;
     const folders = Array.isArray(expected) ? expected.filter((item): item is string => typeof item === "string").slice(0, 1000) : [];
