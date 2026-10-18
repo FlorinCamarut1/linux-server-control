@@ -10,6 +10,7 @@ import { loadPower, loadServer, plain } from "./harness.mjs";
 const sha256 = (...parts) => createHash("sha256").update(Buffer.concat(parts)).digest();
 const sha1 = (value) => createHash("sha1").update(value).digest();
 
+const servers = new Map();
 // Starts an HTTP server for one test and returns its host:port.
 async function device(handler) {
   const server = createServer(async (req, res) => {
@@ -19,32 +20,43 @@ async function device(handler) {
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   test.after(() => server.close());
-  return `127.0.0.1:${server.address().port}`;
+  const host = `127.0.0.1:${server.address().port}`;
+  servers.set(host, server);
+  return host;
+}
+// Stops a device's server, so connecting to it is refused.
+function stop(host) {
+  const server = servers.get(host);
+  return new Promise((resolve) => { server.close(resolve); server.closeAllConnections(); });
 }
 const json = (res, body, status = 200) => { res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(body)); };
 
-// The plug's side of the KLAP protocol, for the client to talk to.
+// The plug's side of the KLAP protocol, for the client to talk to. It counts
+// handshakes and rejected requests, gives its sessions `timeout` seconds (a
+// day by default), answers every request with HTTP 403 while `failing`, and
+// restart() makes it forget its session, as a plug that lost power would.
 function fakeTapo(plug) {
-  const { username, password } = plug;
-  const auth = sha256(sha1(username), sha1(password));
-  let local, remote, session;
+  let local, remote, session, sessions = 0;
+  Object.assign(plug, { handshakes: 0, rejected: 0, restart: () => { session = undefined; } });
   return (req, res, body) => {
     // Like the real plug, reject requests whose header names are lower case.
     if (!req.rawHeaders.includes("Content-Length") && req.method === "POST") { res.writeHead(400); return res.end(); }
+    const auth = sha256(sha1(plug.username), sha1(plug.password));
     const url = new URL(req.url, "http://plug");
     if (url.pathname === "/app/handshake1") {
-      local = body; remote = randomBytes(16);
-      res.writeHead(200, { "set-cookie": "TP_SESSIONID=abc123;TIMEOUT=86400" });
+      plug.handshakes++;
+      local = body; remote = randomBytes(16); sessions++;
+      res.writeHead(200, { "set-cookie": `TP_SESSIONID=session${sessions};TIMEOUT=${plug.timeout ?? 86400}` });
       return res.end(Buffer.concat([remote, sha256(local, remote, auth)]));
     }
-    if (req.headers.cookie !== "TP_SESSIONID=abc123") { res.writeHead(403); return res.end(); }
     if (url.pathname === "/app/handshake2") {
-      if (!body.equals(sha256(remote, local, auth))) { res.writeHead(403); return res.end(); }
+      if (req.headers.cookie !== `TP_SESSIONID=session${sessions}` || !body.equals(sha256(remote, local, auth))) { res.writeHead(403); return res.end(); }
       const derive = (label) => sha256(Buffer.from(label), local, remote, auth);
-      session = { key: derive("lsk").subarray(0, 16), iv: derive("iv").subarray(0, 12), sig: derive("ldk").subarray(0, 28) };
+      session = { cookie: req.headers.cookie, key: derive("lsk").subarray(0, 16), iv: derive("iv").subarray(0, 12), sig: derive("ldk").subarray(0, 28) };
       res.writeHead(200); return res.end();
     }
     if (url.pathname === "/app/request") {
+      if (!session || req.headers.cookie !== session.cookie || plug.failing) { plug.rejected++; res.writeHead(403); return res.end(); }
       const counter = Buffer.alloc(4); counter.writeInt32BE(Number(url.searchParams.get("seq")));
       const iv = Buffer.concat([session.iv, counter]);
       const encrypted = body.subarray(32);
@@ -246,6 +258,57 @@ test("a Tapo plug with its local API closed points to the app setting", async ()
   const port = probe.address().port;
   await new Promise((resolve) => probe.close(resolve));
   await assert.rejects(driver(power, "tapo").read({ host: `127.0.0.1:${port}`, username: "me@example.com", password: "x" }), /Third-Party Compatibility/);
+});
+
+test("a Tapo plug's session is kept between readings and renewed once when it fails", async () => {
+  const power = loadPower(loadServer().server);
+  const plug = { username: "me@example.com", password: "secret", milliwatts: 5000, on: true };
+  const config = { host: await device(fakeTapo(plug)), username: plug.username, password: plug.password };
+  const tapo = driver(power, "tapo");
+  // Simultaneous work waits for the first handshake instead of making its own.
+  await Promise.all([tapo.read(config), tapo.read(config)]);
+  assert.equal((await tapo.read(config)).powerW, 5);
+  await tapo.switch(config, false);
+  assert.equal((await tapo.read(config)).on, false);
+  assert.deepEqual([plug.handshakes, plug.rejected, plug.on], [1, 0, false]);
+  // A plug that restarted has forgotten the session.
+  plug.restart();
+  assert.equal((await tapo.read(config)).on, false);
+  assert.deepEqual([plug.handshakes, plug.rejected], [2, 1]);
+  // Work that also fails on the new session is not tried again.
+  plug.failing = true;
+  await assert.rejects(tapo.read(config), /HTTP 403/);
+  assert.deepEqual([plug.handshakes, plug.rejected], [3, 3]);
+  plug.failing = false;
+  assert.equal((await tapo.read(config)).on, false);
+  assert.deepEqual([plug.handshakes, plug.rejected], [4, 3], "a session that failed is not tried again");
+});
+
+test("a Tapo session is renewed before the plug's timeout ends it", async () => {
+  const power = loadPower(loadServer().server);
+  const plug = { username: "me@example.com", password: "secret", milliwatts: 5000, on: true, timeout: 1 };
+  const config = { host: await device(fakeTapo(plug)), username: plug.username, password: plug.password };
+  await driver(power, "tapo").read(config);
+  await driver(power, "tapo").read(config);
+  assert.equal(plug.handshakes, 1);
+  await new Promise((resolve) => setTimeout(resolve, 1000));
+  await driver(power, "tapo").read(config);
+  assert.deepEqual([plug.handshakes, plug.rejected], [2, 0]);
+});
+
+test("a kept Tapo session fails with the same messages as a new one", async () => {
+  const power = loadPower(loadServer().server);
+  const plug = { username: "me@example.com", password: "secret", milliwatts: 5000, on: true };
+  const config = { host: await device(fakeTapo(plug)), username: plug.username, password: plug.password };
+  await driver(power, "tapo").read(config);
+  // The account's password changed, and the plug restarted with the new one.
+  plug.password = "changed";
+  plug.restart();
+  await assert.rejects(driver(power, "tapo").read(config), /not accepted/);
+  plug.password = "secret";
+  await driver(power, "tapo").read(config);
+  await stop(config.host);
+  await assert.rejects(driver(power, "tapo").read(config), /Third-Party Compatibility/);
 });
 
 test("one sampling of several devices writes the power state once", async () => {

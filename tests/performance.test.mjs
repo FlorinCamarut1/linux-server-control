@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { loadServer, plain, realHost } from "./harness.mjs";
@@ -58,6 +59,32 @@ test("stored records are parsed once until their file changes", () => {
   assert.deepEqual(plain(server.scripts().map((item) => item.id)), ["c", "d"]);
   rmSync(path.join(data, "scripts.json"));
   assert.deepEqual(plain(server.scripts()), [], "a removed file falls back");
+});
+
+test("a record is not parsed again after this copy of the module saves it", () => {
+  const { server, data } = loadServer();
+  // The background monitor's copy of the module, on the same data folder.
+  const monitor = loadServer({ env: { DATA_DIR: data } }).server;
+  const file = path.join(data, "metrics.json");
+  writeFileSync(file, JSON.stringify([{ at: Date.now() - 600000, cpu: 5, ram: 20, temperature: null, disk: 5 }]));
+  const fs = createRequire(import.meta.url)("node:fs");
+  const original = fs.readFileSync;
+  let parsed = 0;
+  fs.readFileSync = (name, ...rest) => { if (name === file) parsed++; return original(name, ...rest); };
+  try {
+    assert.equal(server.metricSamples().length, 1);
+    assert.equal(server.recordMetricSample({ cpuUsagePercent: 10, memoryUsedBytes: 1, memoryTotalBytes: 4, temperatureC: null, diskUsedPercent: 5 }), true);
+    assert.equal(server.metricsSummary().latest.ram, 25);
+    assert.equal(server.metricHistory("24h").samples.length, 2);
+    assert.equal(parsed, 1, "the saved samples are kept");
+    monitor.save("metrics", [...monitor.metricSamples(), { at: Date.now(), cpu: 50, ram: 30, temperature: null, disk: 5 }], false);
+    assert.equal(parsed, 2);
+    assert.deepEqual(plain(server.metricSamples().map((sample) => sample.cpu)), [5, 10, 50], "a file the other copy replaced is read again");
+    assert.equal(monitor.metricsSummary().count, 3);
+    assert.equal(parsed, 3);
+  } finally {
+    fs.readFileSync = original;
+  }
 });
 
 test("the recent runs are the latest run of each script", () => {

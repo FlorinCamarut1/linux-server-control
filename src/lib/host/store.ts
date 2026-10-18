@@ -15,14 +15,19 @@ export type Session = { device: string; expires: number; created: number; user?:
 export const sessions = new Map<string, Session>();
 // Parsed records are cached per file identity (modification time, size and
 // inode): a refresh reads a dozen records, several of them more than once, and
-// only re-parses those another writer has replaced since. Callers that change a
-// returned record save it afterwards, which replaces the file.
+// only re-parses those another writer has replaced since. A save keeps the
+// value it wrote, so a large record such as the metrics is not parsed again
+// after each write. Callers that change a record, read or saved, save it
+// afterwards.
 const recordCache = new Map<string, { stamp: string; value: unknown }>();
+function fileStamp(file: string) {
+  const { mtimeMs, size, ino } = statSync(file);
+  return `${mtimeMs}:${size}:${ino}`;
+}
 export function read<T>(name: string, fallback: T): T {
   const file = path.join(DATA, name + ".json");
   try {
-    const { mtimeMs, size, ino } = statSync(file);
-    const stamp = `${mtimeMs}:${size}:${ino}`;
+    const stamp = fileStamp(file);
     const cached = recordCache.get(name);
     if (cached?.stamp === stamp) return cached.value as T;
     const value = JSON.parse(readFileSync(file, "utf8"));
@@ -36,7 +41,12 @@ export function save(name: string, value: unknown, pretty = true) {
   const p = path.join(DATA, name + ".json"),
     t = p + ".tmp";
   writeFileSync(t, JSON.stringify(value, null, pretty ? 2 : undefined), { mode: 0o600 });
+  // The renamed file keeps the temporary file's stamp, which cannot be that of
+  // a writer replacing the file right after. Only records already read are
+  // kept, not one-off ones such as the crontab backups.
+  const stamp = recordCache.has(name) ? fileStamp(t) : null;
   renameSync(t, p);
+  if (stamp) recordCache.set(name, { stamp, value });
 }
 export function loadSessions() {
   const stored = read<Record<string, Session>>("sessions", {});
