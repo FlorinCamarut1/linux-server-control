@@ -46,7 +46,7 @@ If no authorized browser is left, or the password is forgotten, see [Locked out]
 
 ## Overview
 
-The landing page: containers, CPU, RAM and disk at a glance, anything that needs attention, and charts for the last 24 hours, 7 days or 30 days. Once you add smart plugs, their power and energy appear here too.
+The landing page: the server's health at the top (temperature, RAM, system disk and each monitored storage path, CPU, uptime and containers, with **Manage storage paths**), anything that needs attention, and charts for the last 24 hours, 7 days or 30 days. Once you add smart plugs, their power and energy appear here too.
 
 **Attention needed** lists what is wrong now, not everything that ever went wrong: stopped containers, alert rules whose value is above their threshold, and scripts and schedules whose latest run failed. A failed script or schedule leaves the list once it runs successfully again; the failure itself stays under **History**.
 
@@ -56,7 +56,7 @@ Every chart has a **Table** button that shows the same numbers as a table. Hover
 
 ## Containers
 
-All Docker containers on the server, running and stopped, with filters, current resource use and storage.
+All Docker containers on the server, running and stopped, with filters and a search.
 
 - The buttons next to a container open its web interface, for example `8096` for Jellyfin. Apps that share a VPN container's network, like Radarr or Sonarr behind Gluetun, link to their usual port when the VPN container publishes it.
 - Open a row for its details, logs, and **Start**, **Stop** or **Restart**. The disk size is read when you open the details. **Logs** shows the last 300 lines of both the output and the error stream, and follows them while live updates are on.

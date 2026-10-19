@@ -256,8 +256,6 @@
  "Use selected script": "استخدام البرنامج النصي المحدد",
  "Language": "اللغة",
  "Saved in this browser. The dashboard and its messages use it; notifications have their own language under Notifications.": "تُحفظ في هذا المتصفح. تستخدمها اللوحة ورسائلها؛ وللإشعارات لغتها الخاصة في قسم الإشعارات.",
- "{count} stopped": "{count} متوقفة",
- "{size} available": "{size} متاحة",
  "{percent}% used": "{percent}% مستخدم",
  "Attention needed": "يحتاج إلى انتباه",
  "The most useful things to check first.": "أهم ما يجب التحقق منه أولًا.",

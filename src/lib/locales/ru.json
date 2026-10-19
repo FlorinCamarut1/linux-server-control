@@ -256,8 +256,6 @@
  "Use selected script": "Использовать выбранный скрипт",
  "Language": "Язык",
  "Saved in this browser. The dashboard and its messages use it; notifications have their own language under Notifications.": "Сохраняется в этом браузере. Его используют панель и её сообщения; у уведомлений свой язык в разделе «Уведомления».",
- "{count} stopped": "остановлено: {count}",
- "{size} available": "доступно {size}",
  "{percent}% used": "занято {percent}%",
  "Attention needed": "Требует внимания",
  "The most useful things to check first.": "Что стоит проверить в первую очередь.",

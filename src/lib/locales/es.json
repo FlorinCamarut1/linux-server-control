@@ -256,8 +256,6 @@
  "Use selected script": "Usar el script seleccionado",
  "Language": "Idioma",
  "Saved in this browser. The dashboard and its messages use it; notifications have their own language under Notifications.": "Se guarda en este navegador. El panel y sus mensajes lo usan; las notificaciones tienen su propio idioma en Notificaciones.",
- "{count} stopped": "{count} detenidos",
- "{size} available": "{size} disponibles",
  "{percent}% used": "{percent}% usado",
  "Attention needed": "Requiere atención",
  "The most useful things to check first.": "Lo más útil para revisar primero.",

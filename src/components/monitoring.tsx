@@ -3,19 +3,18 @@ import { ChartFrame, LineChart, RangeFilter, type Range } from "@/components/cha
 import { PowerPage } from "@/components/power";
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "@/lib/client-api";
-import { Btn, Panel, Metric, formatBytes, formatDuration, formatPercent, Modal, ModalActions, RunBadge } from "@/components/ui";
+import { Btn, Panel, Metric, formatDuration, Modal, ModalActions, RunBadge } from "@/components/ui";
 import type { CronRun, Run, St } from "@/lib/types";
 import { language, locale, msg, t, tn } from "@/lib/i18n";
 import {
   Circle,
   Clock3,
-  Container,
   Gauge,
-  HardDrive,
 } from "lucide-react";
 // show: opens the page where a problem is dealt with ("stopped" opens the
 // stopped containers, "cron" the scheduled runs in History).
-export function Overview({ state, active, stopped, openLogs, show }: { state: St; active: number; stopped: number; openLogs: (title: string, path: string, body: unknown) => void; show: (target: "stopped" | "alerts" | "cron") => void }) {
+// health: the server's cards, which the page builds.
+export function Overview({ health, state, stopped, openLogs, show }: { health: React.ReactNode; state: St; stopped: number; openLogs: (title: string, path: string, body: unknown) => void; show: (target: "stopped" | "alerts" | "cron") => void }) {
   // What still needs attention, not everything that ever went wrong: a script
   // or schedule is listed while its latest run is a failed one, and an alert
   // rule while its value is at or above its threshold.
@@ -26,12 +25,7 @@ export function Overview({ state, active, stopped, openLogs, show }: { state: St
   const activeAlerts = state.alerts.filter((rule) => rule.enabled && values[rule.metric] >= rule.threshold);
   const healthy = !stopped && !failedRuns.length && !failedSchedules.length && !activeAlerts.length;
   return <>
-    <section className="metrics">
-      <Metric label={t("Containers")} value={t("{count} running", { count: active })} note={t("{count} stopped", { count: stopped })} icon={<Container />} />
-      <Metric label={t("CPU usage")} value={`${state.stats.cpuUsagePercent.toLocaleString(locale(), { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`} note={tn("{count} logical core|{count} logical cores", state.stats.cpuCores)} icon={<Gauge />} />
-      <Metric label={t("RAM")} value={formatPercent(state.stats.memoryUsedBytes, state.stats.memoryTotalBytes)} note={t("{size} available", { size: formatBytes(state.stats.memoryAvailableBytes) })} icon={<Gauge />} />
-      <Metric label={t("System disk")} value={t("{percent}% used", { percent: state.stats.diskUsedPercent })} note={t("{size} free", { size: formatBytes(state.stats.diskTotalBytes - state.stats.diskUsedBytes) })} percent={state.stats.diskUsedPercent} icon={<HardDrive />} />
-    </section>
+    {health}
     {/* Each problem has a button to the page where it is dealt with. */}
     <Panel title={t("Attention needed")} note={t("The most useful things to check first.")}>
       {stopped > 0 && <div className="schedule-row"><div className="grow"><b>{tn("{count} stopped container|{count} stopped containers", stopped)}</b><small>{t("Open Containers to start, inspect, or review logs.")}</small></div><div className="row-side"><Btn onClick={() => show("stopped")}>{t("View containers")}</Btn></div></div>}

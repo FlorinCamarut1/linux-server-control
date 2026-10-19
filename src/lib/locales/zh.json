@@ -256,8 +256,6 @@
  "Use selected script": "使用所选脚本",
  "Language": "语言",
  "Saved in this browser. The dashboard and its messages use it; notifications have their own language under Notifications.": "保存在此浏览器中。面板及其消息使用该语言；通知的语言在“通知”中单独设置。",
- "{count} stopped": "{count} 个已停止",
- "{size} available": "可用 {size}",
  "{percent}% used": "已用 {percent}%",
  "Attention needed": "需要关注",
  "The most useful things to check first.": "最值得优先检查的事项。",

@@ -356,6 +356,61 @@ export default function Home() {
   // Files is not among a read-only account's pages, even from the address.
   const page = readOnly && tab === "files" ? "overview" : tab;
   const pageName = t(nav.find(([id]) => id === page)?.[2] ?? "");
+  // The server's health, at the top of Overview.
+  const health = (
+    <>
+      <section className="metrics">
+        <Metric
+          label={t("Temperature")}
+          value={state.stats.temperatureC === null ? t("Unavailable") : `${state.stats.temperatureC.toLocaleString(locale(), { maximumFractionDigits: 1, minimumFractionDigits: 1 })} °C`}
+          icon={<Thermometer />}
+        />
+        <Metric
+          label={t("RAM")}
+          value={`${formatBytes(state.stats.memoryUsedBytes)} / ${formatBytes(state.stats.memoryTotalBytes)}`}
+          note={formatPercent(state.stats.memoryUsedBytes, state.stats.memoryTotalBytes)}
+          percent={state.stats.memoryTotalBytes > 0 ? (state.stats.memoryUsedBytes / state.stats.memoryTotalBytes) * 100 : null}
+          icon={<Gauge />}
+        />
+        <Metric
+          label={t("System disk")}
+          value={t("{size} free", { size: formatBytes(state.stats.diskTotalBytes - state.stats.diskUsedBytes) })}
+          note={t("{percent}% used · {size} total", { percent: state.stats.diskUsedPercent, size: formatBytes(state.stats.diskTotalBytes) })}
+          percent={state.stats.diskUsedPercent}
+          icon={<HardDrive />}
+        />
+        {visibleStorage.map((drive) => (
+          <Metric
+            key={drive.path}
+            label={t("Storage ({path})", { path: drive.path })}
+            value={drive.usedPercent === null || drive.usedBytes === null || drive.totalBytes === null
+              ? t("Unavailable")
+              : t("{size} free", { size: formatBytes(drive.totalBytes - drive.usedBytes) })}
+            note={drive.usedBytes === null || drive.totalBytes === null
+              ? t("Check MONITORED_PATHS")
+              : t("{percent}% used · {size} total", { percent: drive.usedPercent ?? 0, size: formatBytes(drive.totalBytes) })}
+            percent={drive.usedPercent}
+            icon={<HardDrive />}
+          />
+        ))}
+        <Metric
+          label={t("CPU usage")}
+          value={`${state.stats.cpuUsagePercent.toLocaleString(locale(), { maximumFractionDigits: 1, minimumFractionDigits: 1 })}%`}
+          note={tn("{count} logical core|{count} logical cores", state.stats.cpuCores)}
+          icon={<Gauge />}
+        />
+        <Metric label={t("Uptime")} value={formatUptime(state.stats.uptimeSeconds)} icon={<Clock3 />} />
+        <Metric
+          label={t("Containers")}
+          value={t("{count} running", { count: active })}
+          note={t("{total} total · {stopped} stopped", { total: state.containers.length, stopped })}
+          icon={<Container />}
+        />
+      </section>
+      {!readOnly && <div className="actions"><Btn onClick={() => setStorageManager(true)}><HardDrive size={16} />{t("Manage storage paths")}</Btn></div>}
+      {state.stats.storage.length > storagePerPage && <div className="actions"><Btn disabled={storagePage === 0} onClick={() => setStoragePage((current) => current - 1)}>{t("Previous storage")}</Btn><small>{t("Storage {page} of {pages}", { page: storagePage + 1, pages: storagePages })}</small><Btn disabled={storagePage + 1 >= storagePages} onClick={() => setStoragePage((current) => current + 1)}>{t("Next storage")}</Btn></div>}
+    </>
+  );
   return (
     <div className={`shell${menuOpen ? " menu-open" : ""}`}>
       {pendingRequests > 0 && <AppLoading />}
@@ -434,64 +489,13 @@ export default function Home() {
         {state.containerError && (page === "overview" || page === "containers") && (
           <div className="alert">{t("Containers cannot be read: {error}", { error: state.containerError })}</div>
         )}
-        {page === "overview" && <Overview state={state} active={active} stopped={stopped} openLogs={openLogs} show={(target) => {
+        {page === "overview" && <Overview health={health} state={state} stopped={stopped} openLogs={openLogs} show={(target) => {
           if (target === "stopped") setContainerFilter("stopped");
           if (target === "cron") setHistoryKind("cron");
           go(target === "stopped" ? "containers" : target === "cron" ? "history" : target);
         }} />}
         {page === "containers" && (
           <div className="containers-page">
-            <section className="metrics">
-              <Metric
-                label={t("Temperature")}
-                value={state.stats.temperatureC === null ? t("Unavailable") : `${state.stats.temperatureC.toLocaleString(locale(), { maximumFractionDigits: 1, minimumFractionDigits: 1 })} °C`}
-                icon={<Thermometer />}
-              />
-              <Metric
-                label={t("RAM")}
-                value={`${formatBytes(state.stats.memoryUsedBytes)} / ${formatBytes(state.stats.memoryTotalBytes)}`}
-                note={formatPercent(state.stats.memoryUsedBytes, state.stats.memoryTotalBytes)}
-                percent={state.stats.memoryTotalBytes > 0 ? (state.stats.memoryUsedBytes / state.stats.memoryTotalBytes) * 100 : null}
-                icon={<Gauge />}
-              />
-              <Metric
-                label={t("System disk")}
-                value={t("{size} free", { size: formatBytes(state.stats.diskTotalBytes - state.stats.diskUsedBytes) })}
-                note={t("{percent}% used · {size} total", { percent: state.stats.diskUsedPercent, size: formatBytes(state.stats.diskTotalBytes) })}
-                percent={state.stats.diskUsedPercent}
-                icon={<HardDrive />}
-              />
-              {visibleStorage.map((drive) => (
-                <Metric
-                  key={drive.path}
-                  label={t("Storage ({path})", { path: drive.path })}
-                  value={drive.usedPercent === null || drive.usedBytes === null || drive.totalBytes === null
-                    ? t("Unavailable")
-                    : t("{size} free", { size: formatBytes(drive.totalBytes - drive.usedBytes) })}
-                  note={drive.usedBytes === null || drive.totalBytes === null
-                    ? t("Check MONITORED_PATHS")
-                    : t("{percent}% used · {size} total", { percent: drive.usedPercent ?? 0, size: formatBytes(drive.totalBytes) })}
-                  percent={drive.usedPercent}
-                  icon={<HardDrive />}
-                />
-              ))}
-              <Metric
-                label={t("CPU usage")}
-                value={`${state.stats.cpuUsagePercent.toLocaleString(locale(), { maximumFractionDigits: 1, minimumFractionDigits: 1 })}%`}
-                note={tn("{count} logical core|{count} logical cores", state.stats.cpuCores)}
-                icon={<Gauge />}
-              />
-              <Metric label={t("Uptime")} value={formatUptime(state.stats.uptimeSeconds)} icon={<Clock3 />} />
-              <Metric
-                label={t("Containers")}
-                value={t("{count} running", { count: active })}
-                note={t("{total} total · {stopped} stopped", { total: state.containers.length, stopped })}
-                icon={<Container />}
-              />
-            </section>
-            {!readOnly && <div className="actions"><Btn onClick={() => setStorageManager(true)}><HardDrive size={16} />{t("Manage storage paths")}</Btn></div>}
-            {state.stats.storage.length > storagePerPage && <div className="actions"><Btn disabled={storagePage === 0} onClick={() => setStoragePage((current) => current - 1)}>{t("Previous storage")}</Btn><small>{t("Storage {page} of {pages}", { page: storagePage + 1, pages: storagePages })}</small><Btn disabled={storagePage + 1 >= storagePages} onClick={() => setStoragePage((current) => current + 1)}>{t("Next storage")}</Btn></div>}
-            {/* On a phone the list comes first, above the server's health. */}
             <Panel
               title={t("All containers")}
               note={t("Live Docker status and controls")}

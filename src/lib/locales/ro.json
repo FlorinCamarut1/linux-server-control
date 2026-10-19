@@ -256,8 +256,6 @@
  "Use selected script": "Folosește scriptul ales",
  "Language": "Limbă",
  "Saved in this browser. The dashboard and its messages use it; notifications have their own language under Notifications.": "Salvată în acest browser. Dashboard-ul și mesajele lui o folosesc; notificările au limba lor, la Notificări.",
- "{count} stopped": "{count} oprite",
- "{size} available": "{size} disponibil",
  "{percent}% used": "{percent}% folosit",
  "Attention needed": "Necesită atenție",
  "The most useful things to check first.": "Cele mai utile lucruri de verificat întâi.",

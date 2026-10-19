@@ -1309,13 +1309,6 @@ header p,
   flex-direction: column;
   gap: var(--section-gap);
 }
-/* On a phone, held either way, the list comes before the server's health,
-   which Overview also shows. */
-@media (max-width: 800px), (max-height: 500px) {
-  .containers-page > .panel {
-    order: -1;
-  }
-}
 /* A search field above a long list. */
 .list-search input {
   margin: 0;

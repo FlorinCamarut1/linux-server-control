@@ -256,8 +256,6 @@
  "Use selected script": "चुनी हुई स्क्रिप्ट इस्तेमाल करें",
  "Language": "भाषा",
  "Saved in this browser. The dashboard and its messages use it; notifications have their own language under Notifications.": "इस ब्राउज़र में सहेजी जाती है। डैशबोर्ड और उसके संदेश इसका उपयोग करते हैं; सूचनाओं की अपनी भाषा सूचनाएँ में होती है।",
- "{count} stopped": "{count} रुके हुए",
- "{size} available": "{size} उपलब्ध",
  "{percent}% used": "{percent}% उपयोग में",
  "Attention needed": "ध्यान देने की ज़रूरत",
  "The most useful things to check first.": "सबसे पहले जाँचने लायक बातें।",

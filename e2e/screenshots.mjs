@@ -286,7 +286,6 @@ async function main() {
   await open(page, "Containers");
   await page.locator(".container-row summary").first().click();
   await page.getByText("412MB (virtual 1.21GB)").waitFor();
-  await page.locator(".metrics").evaluate((element) => window.scrollTo(0, element.getBoundingClientRect().top + window.scrollY + 100));
   await picture(page, "containers.jpg");
 
   // The menu of one script is left open, to show where its actions are.

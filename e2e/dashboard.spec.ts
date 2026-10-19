@@ -42,6 +42,17 @@ test("every page opens without a script error", async ({ page }) => {
   expect(errors).toEqual([]);
 });
 
+test("Overview starts with the server's health, and Containers with the list", async ({ page }) => {
+  await page.goto("/");
+  await expect(heading(page, "Overview")).toBeVisible();
+  const health = page.locator(".metrics").first();
+  for (const label of ["Temperature", "RAM", "System disk", "CPU usage", "Uptime", "Containers"])
+    await expect(health.getByText(label, { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Manage storage paths" })).toBeVisible();
+  await open(page, "Containers");
+  await expect(page.locator(".metrics")).toHaveCount(0);
+});
+
 test("the dashboard can be added to a home screen as an app", async ({ page, playwright, baseURL }) => {
   await page.goto("/");
   const manifestUrl = await page.locator('link[rel="manifest"]').getAttribute("href");
