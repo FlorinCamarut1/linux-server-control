@@ -370,7 +370,7 @@ test("sign-in rejects a wrong password and a browser that is not enrolled", asyn
 
 test("script folders, browsers and storage paths are edited from their menus", async ({ page }) => {
   await page.goto("/");
-  // The Scripts page lists the folders that hold a script.
+  // The Scripts page lists its folders, with the scripts in them.
   writeFileSync(path.join(FILES, "in-folder.sh"), "#!/usr/bin/env bash\necho in a folder\n", { mode: 0o755 });
   const origin = { origin: new URL(page.url()).origin };
   expect((await page.request.post("/api/folder/create", { data: { name: "Old folder" }, headers: origin })).ok()).toBe(true);
@@ -386,6 +386,11 @@ test("script folders, browsers and storage paths are edited from their menus", a
   await modal(page).getByRole("button", { name: "Save" }).click();
   await expect(page.locator(".script-folder summary", { hasText: "New folder name" })).toBeVisible();
   await expect(page.locator(".script-folder summary", { hasText: "Old folder" })).toHaveCount(0);
+  // A folder without scripts is listed as soon as it is created.
+  await page.getByRole("button", { name: "New folder", exact: true }).click();
+  await modal(page).getByRole("textbox").fill("Empty folder");
+  await modal(page).getByRole("button", { name: "Create folder" }).click();
+  await expect(page.locator(".script-folder summary", { hasText: "Empty folder" })).toContainText("0 scripts");
 
   await open(page, "Settings");
   const browser = page.locator(".device-row", { hasText: "This browser" });

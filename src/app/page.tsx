@@ -268,6 +268,9 @@ export default function Home() {
   }, [containerFilter, containerSearch, state]);
   const scriptFolders = useMemo(() => {
     const groups = new Map<string, S[]>();
+    // Folders without scripts yet, such as one just created, are listed too.
+    for (const folder of state?.folders || [])
+      if (matches(scriptSearch, folder)) groups.set(folder, []);
     for (const script of state?.scripts || []) {
       if (!matches(scriptSearch, script.name, script.path, script.folder)) continue;
       const folder = script.folder || UNFILED;
@@ -605,6 +608,7 @@ export default function Home() {
                     />}
                     <ChevronDown className="chevron" size={18} />
                   </summary>
+                  {!scripts.length && <div className="empty-state"><b>{t("This folder is empty")}</b></div>}
                   {scripts.map((s) => {
                     const { schedule, lastRun } = scriptStatus.get(s.id) || {};
                     const running = lastRun?.status === "running";
