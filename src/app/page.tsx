@@ -86,7 +86,8 @@ function stateScope(tab: string) {
 export default function Home() {
   const [state, setState] = useState<St | null>(null),
     [err, setErr] = useState(""),
-    [busy, setBusy] = useState(""),
+    // The rows with an action on its way; only they wait for it.
+    [busy, setBusy] = useState<ReadonlySet<string>>(new Set()),
     [tab, setTab] = useState("overview"),
     [containerFilter, setContainerFilter] = useState<
       "all" | "running" | "stopped"
@@ -298,21 +299,29 @@ export default function Home() {
   }, [state]);
   // done: what to say when it worked. A failure is said at the bottom of the
   // screen, where it is seen however far down the page the action was.
+  function working(key: string, on: boolean) {
+    setBusy((current) => {
+      const next = new Set(current);
+      if (on) next.add(key);
+      else next.delete(key);
+      return next;
+    });
+  }
   async function action(key: string, path: string, body: unknown, done?: string) {
     try {
-      setBusy(key);
+      working(key, true);
       await api(path, body);
       if (done) notify(done, "success");
       await refresh();
     } catch (e) {
       notify(e instanceof Error ? e.message : t("Error"));
     } finally {
-      setBusy("");
+      working(key, false);
     }
   }
   async function startScript(script: S) {
     try {
-      setBusy(script.id);
+      working(script.id, true);
       const result = await api("script/run", { id: script.id });
       setLogs({
         title: t("{name} logs", { name: script.name }),
@@ -323,7 +332,7 @@ export default function Home() {
     } catch (reason) {
       notify(reason instanceof Error ? reason.message : t("Could not start script"));
     } finally {
-      setBusy("");
+      working(script.id, false);
     }
   }
   function openLogs(title: string, path: string, body: unknown) {
@@ -587,7 +596,7 @@ export default function Home() {
                     </span>
                     {!readOnly && <RowMenu
                       label={t("Actions for the folder {name}", { name: folder === UNFILED ? t("Unfiled") : folder })}
-                      disabled={!!busy}
+                      disabled={busy.has(`folder:${folder}`)}
                       items={[folder !== UNFILED && {
                         label: t("Edit"), icon: <Pencil size={15} />,
                         onSelect: async () => {
@@ -630,7 +639,7 @@ export default function Home() {
                       </div>
                       <div className="actions">
                         {!readOnly && <Btn
-                          disabled={!!busy}
+                          disabled={busy.has(s.id)}
                           onClick={async () => {
                             if (s.runOptions?.length) return setRunPrompt(s);
                             if (s.confirmRun && !await appConfirm(t("Run “{name}”?", { name: s.name }), t("Run script"), t("Run"), true)) return;
@@ -647,7 +656,7 @@ export default function Home() {
                         </Btn>
                         {!readOnly && <RowMenu
                           label={t("Actions for {name}", { name: s.name })}
-                          disabled={!!busy}
+                          disabled={busy.has(s.id)}
                           items={[
                             running && lastRun && {
                               label: t("Stop run"), icon: <Square size={15} />, danger: true,
@@ -734,7 +743,7 @@ export default function Home() {
                     </div>
                     {!readOnly && <RowMenu
                       label={t("Actions for the schedule {name}", { name: script?.name || schedule.command || schedule.label })}
-                      disabled={!!busy}
+                      disabled={busy.has(schedule.id)}
                       items={[
                         { label: t("Edit"), icon: <Pencil size={15} />, onSelect: () => setScheduleEditor(schedule) },
                         {
@@ -788,7 +797,7 @@ export default function Home() {
                 <input type="search" aria-label={t("Search alerts")} placeholder={t("Search by name")} value={alertSearch} onChange={(event) => setAlertSearch(event.target.value)} />
               </div>
             )}
-            {(state.alerts || []).filter((rule) => matches(alertSearch, rule.name, describeAlert(rule.metric, rule.threshold))).map((rule) => <div className="schedule-row" key={rule.id}><div className="grow"><b>{rule.name}</b><small>{describeAlert(rule.metric, rule.threshold)} · {t("cooldown {minutes} min", { minutes: rule.cooldownMinutes })}{rule.lastTriggeredAt ? ` · ${t("last triggered {time}", { time: new Date(rule.lastTriggeredAt).toLocaleString(locale()) })}` : ""}</small></div><div className="row-side"><span className={`badge ${rule.enabled ? "up" : "neutral"}`}>{rule.enabled ? t("Enabled") : t("Paused")}</span></div>{!readOnly && <RowMenu label={t("Actions for the alert {name}", { name: rule.name })} disabled={!!busy} items={[
+            {(state.alerts || []).filter((rule) => matches(alertSearch, rule.name, describeAlert(rule.metric, rule.threshold))).map((rule) => <div className="schedule-row" key={rule.id}><div className="grow"><b>{rule.name}</b><small>{describeAlert(rule.metric, rule.threshold)} · {t("cooldown {minutes} min", { minutes: rule.cooldownMinutes })}{rule.lastTriggeredAt ? ` · ${t("last triggered {time}", { time: new Date(rule.lastTriggeredAt).toLocaleString(locale()) })}` : ""}</small></div><div className="row-side"><span className={`badge ${rule.enabled ? "up" : "neutral"}`}>{rule.enabled ? t("Enabled") : t("Paused")}</span></div>{!readOnly && <RowMenu label={t("Actions for the alert {name}", { name: rule.name })} disabled={busy.has(rule.id)} items={[
               { label: t("Edit"), icon: <Pencil size={15} />, onSelect: () => setAlertEditor(rule) },
               { label: t("Delete"), icon: <Trash2 size={15} />, danger: true, onSelect: async () => { if (await appConfirm(t("Delete the alert rule “{name}”?", { name: rule.name }), t("Delete alert"), t("Delete"), true)) await action(rule.id, "alerts/delete", { id: rule.id }); } },
             ]} />}</div>)}

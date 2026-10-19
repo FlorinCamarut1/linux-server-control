@@ -1,7 +1,7 @@
 "use client";
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { api } from "@/lib/client-api";
+import { api, REQUEST_START } from "@/lib/client-api";
 import type { PreflightCheck, Run } from "@/lib/types";
 import { locale, msg, t } from "@/lib/i18n";
 import {
@@ -40,12 +40,52 @@ export async function appPrompt(message: string, defaultValue = "", title = t("E
 export function rich(text: string, parts: Record<string, React.ReactNode>) {
   return text.split(/\{(\w+)\}/).map((piece, index) => index % 2 ? <span key={index}>{parts[piece] ?? `{${piece}}`}</span> : piece);
 }
-export const Btn = ({
-  className = "",
-  ...p
-}: React.ButtonHTMLAttributes<HTMLButtonElement>) => (
-  <button className={`button ${className}`} {...p} />
-);
+// Whether what a control started is still going: `track(act)` runs act and
+// waits for what it starts at once, the requests it sends and the promise it
+// returns. A submit button's form is submitted just after its click, so the
+// requests are collected until the next task.
+function useWorking() {
+  const [working, setWorking] = useState(false);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
+  const track = useCallback((act: () => unknown) => {
+    const started: unknown[] = [];
+    const collect = (event: Event) => { started.push((event as CustomEvent).detail); };
+    window.addEventListener(REQUEST_START, collect);
+    try {
+      started.push(act());
+    } finally {
+      setTimeout(() => {
+        window.removeEventListener(REQUEST_START, collect);
+        const waiting = started.filter((item): item is Promise<unknown> => item instanceof Promise);
+        if (!waiting.length) return;
+        setWorking(true);
+        void Promise.allSettled(waiting).then(() => { if (mounted.current) setWorking(false); });
+      }, 0);
+    }
+  }, []);
+  return [working, track] as const;
+}
+// A button that, while what it started goes on, shows a spinner and cannot be
+// pressed again; the rest of the page stays usable.
+export function Btn({ className = "", onClick, disabled, children, ...props }: React.ButtonHTMLAttributes<HTMLButtonElement>) {
+  const [working, track] = useWorking();
+  return (
+    <button
+      className={`button ${className}`}
+      {...props}
+      disabled={disabled || working}
+      aria-busy={working || undefined}
+      onClick={(event) => track(() => onClick?.(event))}
+    >
+      {working && <Loader2 className="spin" size={15} />}
+      {children}
+    </button>
+  );
+}
 // What happened after an action, shown at the bottom of the screen where it is
 // seen wherever the page is scrolled: successes go by themselves, errors stay
 // until they are dismissed.
@@ -418,6 +458,8 @@ export type MenuItem = { label: string; icon?: React.ReactNode; onSelect: () => 
 export function RowMenu({ label, items, disabled = false }: { label: string; items: (MenuItem | false | null | undefined)[]; disabled?: boolean }) {
   const [anchor, setAnchor] = useState<HTMLButtonElement | null>(null);
   const close = useCallback(() => setAnchor(null), []);
+  // An item that is still working shows on the menu's button.
+  const [working, track] = useWorking();
   const shown = items.filter((item): item is MenuItem => Boolean(item));
   if (!shown.length) return null;
   return (
@@ -428,7 +470,8 @@ export function RowMenu({ label, items, disabled = false }: { label: string; ite
         aria-label={label}
         aria-haspopup="menu"
         aria-expanded={anchor !== null}
-        disabled={disabled}
+        aria-busy={working || undefined}
+        disabled={disabled || working}
         onClick={(event) => {
           // Inside a <summary> the click must not also open or close its section.
           event.preventDefault();
@@ -437,7 +480,7 @@ export function RowMenu({ label, items, disabled = false }: { label: string; ite
           setAnchor((open) => (open ? null : button));
         }}
       >
-        <MoreHorizontal size={18} />
+        {working ? <Loader2 className="spin" size={18} /> : <MoreHorizontal size={18} />}
       </button>
       {anchor && (
         <ActionMenu anchor={anchor} close={close}>
@@ -452,7 +495,7 @@ export function RowMenu({ label, items, disabled = false }: { label: string; ite
                 close();
                 // A dialog opened by the item returns the focus here when it closes.
                 anchor.focus({ preventScroll: true });
-                item.onSelect();
+                track(item.onSelect);
               }}
             >
               {item.icon}
@@ -638,13 +681,12 @@ export function LiveLogViewer({
     </Modal>
   );
 }
+// A thin bar along the top while requests are on their way. It covers
+// nothing: the control that started one shows its own spinner.
 export function AppLoading() {
   return (
     <div className="app-loading" role="status" aria-live="polite">
-      <div>
-        <Loader2 className="spin" size={22} />
-        <span>{t("Working…")}</span>
-      </div>
+      <span>{t("Working…")}</span>
     </div>
   );
 }

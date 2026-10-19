@@ -209,6 +209,30 @@ test("a running script is stopped from its log and recorded as stopped", async (
   await expect(page.locator(".panel", { hasText: "Attention needed" })).not.toContainText("Long job");
 });
 
+test("an action on its way keeps only its own button busy", async ({ page }) => {
+  await page.goto("/");
+  const created = await page.request.post("/api/script/create-custom", { data: { name: "Quick job", filename: "quick.sh", directory: FILES, content: "echo quick job done\n" } });
+  expect(created.status()).toBe(200);
+  await open(page, "Scripts");
+  await page.locator(".script-folder summary", { hasText: "Unfiled" }).click();
+  // The run is held back on its way to the server.
+  let release = () => {};
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  await page.route("**/api/script/run", async (route) => { await held; await route.continue(); });
+  const row = page.locator(".script-row", { hasText: "Quick job" });
+  await row.getByRole("button", { name: "Run" }).click();
+  await expect(row.getByRole("button", { name: "Run" })).toBeDisabled();
+  await expect(row.getByRole("button", { name: "Run" }).locator(".spin")).toBeVisible();
+  // Nothing covers the page: other scripts and other pages can still be used.
+  await expect(page.locator(".script-row", { hasText: "Long job" }).getByRole("button", { name: "Run" })).toBeEnabled();
+  await open(page, "History");
+  release();
+  const viewer = page.getByRole("dialog", { name: "Quick job logs" });
+  await expect(viewer.locator("pre")).toContainText("quick job done", { timeout: 15000 });
+  await viewer.getByRole("button", { name: "Close" }).click();
+  await page.unrouteAll();
+});
+
 test("run conditions set in the dashboard reach the script", async ({ page }) => {
   await page.goto("/");
   writeFileSync(path.join(FILES, "conditions.sh"), 'echo "keep=$KEEP args=$*"\n');

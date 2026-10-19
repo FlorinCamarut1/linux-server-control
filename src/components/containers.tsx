@@ -10,7 +10,6 @@ import {
   Circle,
   Container,
   ExternalLink,
-  Loader2,
   Play,
   RotateCcw,
   Square,
@@ -26,8 +25,8 @@ export function ContainerRow({
 }: {
   c: C;
   links: ContainerLink[];
-  busy: string;
-  act: (k: string, p: string, b: unknown, done?: string) => void;
+  busy: ReadonlySet<string>;
+  act: (k: string, p: string, b: unknown, done?: string) => Promise<void>;
   logs: (t: string, p: string, b: unknown) => void;
   readOnly?: boolean;
 }) {
@@ -36,7 +35,8 @@ export function ContainerRow({
   // Docker computes sizes slowly, so the size is only read when the row is opened.
   const [size, setSize] = useState<string | null>(null);
   const control = (action: "start" | "stop" | "restart", done: string) => act(key(action), "container", { name: c.Names, action }, done);
-  const working = (action: string) => busy === key(action) ? <Loader2 className="spin" size={15} /> : null;
+  // While one of its actions goes on, the others wait; other containers do not.
+  const working = ["start", "stop", "restart"].some((action) => busy.has(key(action)));
   return (
     <details
       className="container-row"
@@ -88,25 +88,25 @@ export function ContainerRow({
           </Btn>
           {readOnly ? null : up ? (
             <>
-              <Btn disabled={!!busy} onClick={() => control("restart", t("{name} restarted", { name: c.Names }))}>
-                {working("restart") ?? <RotateCcw size={15} />}
+              <Btn disabled={working} onClick={() => control("restart", t("{name} restarted", { name: c.Names }))}>
+                <RotateCcw size={15} />
                 {t("Restart")}
               </Btn>
               <Btn
                 className="danger"
-                disabled={!!busy}
+                disabled={working}
                 onClick={async () => {
                   if (await appConfirm(t("Stop {name}? What it serves is unavailable until it is started again.", { name: c.Names }), t("Stop container"), t("Stop"), true))
-                    control("stop", t("{name} stopped", { name: c.Names }));
+                    await control("stop", t("{name} stopped", { name: c.Names }));
                 }}
               >
-                {working("stop") ?? <Square size={15} />}
+                <Square size={15} />
                 {t("Stop")}
               </Btn>
             </>
           ) : (
-            <Btn className="primary" disabled={!!busy} onClick={() => control("start", t("{name} started", { name: c.Names }))}>
-              {working("start") ?? <Play size={15} />}
+            <Btn className="primary" disabled={working} onClick={() => control("start", t("{name} started", { name: c.Names }))}>
+              <Play size={15} />
               {t("Start")}
             </Btn>
           )}
