@@ -521,6 +521,7 @@ type Measurement = {
   waiting: number;
   wanted: number;
   wake: Set<() => void>;
+  timer?: ReturnType<typeof setTimeout>;
   stop: () => void;
 };
 // The latest measurement of each folder, as requested and as resolved, and those running.
@@ -549,10 +550,17 @@ const news = (measurement: Measurement, ms: number) => new Promise<void>((resolv
   }
   measurement.wake.add(done);
 });
-function abandonLater(measurement: Measurement) {
-  setTimeout(() => {
-    if (measurement.running && !measurement.waiting && Date.now() - measurement.wanted >= MEASUREMENT_ABANDONED_MS) measurement.stop();
-  }, MEASUREMENT_ABANDONED_MS).unref?.();
+// One timer per measurement; a timer that fires before the time is up, by the
+// clock, waits for the rest instead of letting the measurement run on.
+function abandonLater(measurement: Measurement, ms = MEASUREMENT_ABANDONED_MS) {
+  clearTimeout(measurement.timer);
+  measurement.timer = setTimeout(() => {
+    if (!measurement.running || measurement.waiting) return;
+    const left = measurement.wanted + MEASUREMENT_ABANDONED_MS - Date.now();
+    if (left > 0) abandonLater(measurement, left);
+    else measurement.stop();
+  }, ms);
+  measurement.timer.unref?.();
 }
 // Measures the folders in a folder: all of them, those in `only`, or those
 // without a fresh size.

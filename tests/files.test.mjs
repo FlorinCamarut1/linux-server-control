@@ -297,7 +297,7 @@ test("a measurement nobody waits for is stopped, and keeps the sizes it printed"
   const host = () => ({ stdout: [printed("/srv/media", { "/srv/media/films": 42 }).split("\n").slice(0, 2).join("\n") + "\n", ...Array(20).fill("")] });
   const { server, commands } = loadServer({ host, delay: 300, env: { ALLOWED_PATHS: "/srv/media" } });
   server.startFolderSizes("/srv/media");
-  await pause(3500);
+  await pause(4000);
   assert.ok(commands[0].killed);
   assert.deepEqual(plain(await server.folderSizes("/srv/media", false, false, ["/srv/media/films"])).sizes, { "/srv/media/films": 42 });
   assert.deepEqual(plain(JSON.parse(commands[1].input).skip), ["/srv/media/films"]);
