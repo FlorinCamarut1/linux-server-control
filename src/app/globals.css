@@ -826,6 +826,10 @@ header p,
 .button[aria-busy="true"] > svg:not(.spin) {
   display: none;
 }
+/* Only the button's own spinner, should its content bring one too. */
+.button[aria-busy="true"] > svg.spin ~ svg.spin {
+  display: none;
+}
 .loading-screen {
   min-height: 100vh;
   min-height: 100dvh;
