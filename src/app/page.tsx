@@ -47,6 +47,7 @@ const pages = {
   schedules: () => import("@/components/schedules"),
   scripts: () => import("@/components/scripts"),
   settings: () => import("@/components/settings"),
+  cloud: () => import("@/components/cloud"),
 };
 const loadRest = () => { for (const load of Object.values(pages)) void load().catch(() => {}); };
 const PageLoading = () => <div className="empty-state" role="status"><Loader2 className="spin" size={22} /></div>;
@@ -65,6 +66,7 @@ const ServerSettings = dynamic(() => pages.settings().then((module) => module.Se
 const ConfigurationPanel = dynamic(() => pages.settings().then((module) => module.ConfigurationPanel), { ssr: false });
 const StorageManager = dynamic(() => pages.settings().then((module) => module.StorageManager), { ssr: false });
 const UsersPanel = dynamic(() => pages.settings().then((module) => module.UsersPanel), { ssr: false });
+const CloudBackupPanel = dynamic(() => pages.cloud().then((module) => module.CloudBackupPanel), { ssr: false });
 const nav = [
   ["overview", LayoutGrid, msg("Overview")],
   ["containers", Container, msg("Containers")],
@@ -93,6 +95,7 @@ const SETTINGS_SECTIONS = [
   ["settings-accounts", msg("Accounts")],
   ["settings-password", msg("Change password")],
   ["settings-backup", msg("Dashboard settings backup")],
+  ["settings-cloud", msg("Cloud backup")],
 ] as const;
 // Lists longer than this get a search field.
 const SEARCHABLE = 6;
@@ -885,6 +888,7 @@ export default function Home() {
           <div id="settings-accounts" className="settings-section"><UsersPanel current={state.user?.name || ""} /></div>
           <div id="settings-password" className="settings-section"><PasswordForm /></div>
           <div id="settings-backup" className="settings-section"><ConfigurationPanel refresh={refresh} /></div>
+          <div id="settings-cloud" className="settings-section"><CloudBackupPanel /></div>
         </>}
       </main>
       {logs && (

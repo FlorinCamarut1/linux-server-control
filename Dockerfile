@@ -5,7 +5,11 @@ RUN npm ci
 COPY . .
 RUN npm run build
 FROM node:22-bookworm-slim
-RUN apt-get update && apt-get install -y --no-install-recommends openssh-client && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends openssh-client ca-certificates && rm -rf /var/lib/apt/lists/*
+# rclone uploads the cloud backups (OneDrive, Google Drive, Proton Drive). Its
+# official image has a static binary; ca-certificates lets it check the
+# services' certificates.
+COPY --from=rclone/rclone:1.69.1 /usr/local/bin/rclone /usr/local/bin/rclone
 WORKDIR /app
 ENV NODE_ENV=production PORT=3000 HOSTNAME=0.0.0.0
 COPY --from=build /app/.next/standalone ./
