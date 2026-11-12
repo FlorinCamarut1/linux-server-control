@@ -57,7 +57,7 @@ export function CloudBackupPanel() {
       )}
       {data?.destinations.map((destination) => (
         <div className="schedule-row" key={destination.id}>
-          <span className="service-icon">{backingUp === destination.id ? <Loader2 className="spin" size={18} /> : <Cloud size={18} />}</span>
+          <span className="service-icon"><Cloud size={18} /></span>
           <div className="grow">
             <b>{destination.name}</b>
             <small>{[SERVICES[destination.type], destination.account, destination.folder].filter(Boolean).join(" · ")}</small>
@@ -190,7 +190,7 @@ function DestinationForm({ destination, close, saved }: { destination: Destinati
           <small>{t("rclone's Proton Drive support is in beta. The password stays on the server, obscured in rclone's configuration.")}</small>
         </>}
         {error && <div className="alert">{error}</div>}
-        <ModalActions cancel={close}><Btn className="primary" disabled={saving}>{saving && <Loader2 className="spin" size={15} />}{destination ? t("Save") : t("Connect")}</Btn></ModalActions>
+        <ModalActions cancel={close}><Btn className="primary" disabled={saving}>{destination ? t("Save") : t("Connect")}</Btn></ModalActions>
       </form>
     </Modal>
   );
@@ -209,7 +209,6 @@ function BackupList({ destination, close }: { destination: Destination; close: (
       {backups?.map((backup) => (
         <div className="schedule-row" key={backup.name}>
           <div className="grow"><b>{when(backup.at)}</b><small>{formatBytes(backup.bytes)} · {backup.name}</small></div>
-          {working === backup.name && <Loader2 className="spin" size={16} />}
           <RowMenu label={t("Actions for {name}", { name: backup.name })} disabled={!!working} items={[
             {
               label: t("Restore"), icon: <RotateCcw size={15} />, danger: true,

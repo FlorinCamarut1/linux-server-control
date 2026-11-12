@@ -15,6 +15,14 @@ async function open(page: Page, name: string) {
 }
 // The topmost dialog: a confirmation opens above the dialog that asked for it.
 const modal = (page: Page) => page.locator(".modal").last();
+// Keeps requests to `url` waiting until the returned function is called, to
+// see the page while it waits.
+async function holdRequests(page: Page, url: string) {
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  await page.route(url, async (route) => { await held; await route.continue(); });
+  return release;
+}
 // Opens the "⋯" menu of a row and chooses one of its items.
 async function choose(page: Page, row: Locator, item: string) {
   await row.getByRole("button", { name: /^Actions for/ }).click();
@@ -740,11 +748,18 @@ test("the dashboard is backed up to the cloud, restored from there, and old back
   await expect(form.getByRole("link", { name: "open the sign-in page" })).toHaveAttribute("href", url);
   const state = new URL(url).searchParams.get("state");
   await form.getByLabel("Address of that page").fill(`http://127.0.0.1:53682/?state=${state}&code=good&scope=https://www.googleapis.com/auth/drive.file`);
+  // While the server answers, the button shows one spinner, not two.
+  const releaseFinish = await holdRequests(page, "**/api/cloud/sign-in/finish");
   await form.getByRole("button", { name: "Connect" }).click();
+  await expect(form.locator(".spin:visible")).toHaveCount(1);
+  releaseFinish();
   await expect(form).toBeHidden();
   const row = panel.locator(".schedule-row", { hasText: "Google Drive" });
   await expect(row).toContainText("LinuxServerControl");
+  const releaseBackup = await holdRequests(page, "**/api/cloud/backup");
   await panel.getByRole("button", { name: "Back up now" }).click();
+  await expect(panel.locator(".spin:visible")).toHaveCount(1);
+  releaseBackup();
   await expect(row).toContainText("Last backup", { timeout: 30000 });
   // Restoring brings back what was backed up, and the browser stays signed in.
   await row.getByRole("button", { name: /^Actions for/ }).click();

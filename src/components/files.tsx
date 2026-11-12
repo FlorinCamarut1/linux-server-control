@@ -474,7 +474,7 @@ function SudoPassword({ close, shown }: { close: () => void; shown: () => void }
         {error && <div className="alert">{error}</div>}
         <ModalActions cancel={close}>
           <Btn className="primary" disabled={checking || !password}>
-            {checking ? <Loader2 className="spin" size={15} /> : <Eye size={15} />} {t("Show hidden files")}
+            <Eye size={15} /> {t("Show hidden files")}
           </Btn>
         </ModalActions>
       </form>
@@ -530,7 +530,7 @@ export function FileEditor({
         {error && <div className="alert">{error}</div>}
         <div className="actions">
           <Btn className="primary" disabled={saving} onClick={saveFile}>
-            {saving ? <Loader2 className="spin" size={15} /> : null} {t("Save changes")}
+            {t("Save changes")}
           </Btn>
           <RowMenu label={t("More actions for this file")} disabled={saving} items={[{ label: t("Delete file"), icon: <Trash2 size={15} />, danger: true, onSelect: deleteFile }]} />
         </div>

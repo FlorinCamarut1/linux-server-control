@@ -7,9 +7,6 @@ import { Btn, PreflightList, rich } from "@/components/ui";
 import { LanguageSelect } from "@/components/language";
 import { t } from "@/lib/i18n";
 import type { PreflightCheck } from "@/lib/types";
-import {
-  Loader2,
-} from "lucide-react";
 // Only the setup screen has the connection form, which comes with Settings.
 const ServerSettingsForm = dynamic(() => import("@/components/settings").then((module) => module.ServerSettingsForm), { ssr: false });
 export function Login({
@@ -67,7 +64,6 @@ export function Login({
             </label>
           </details>
           <Btn className="primary full" disabled={loading}>
-            {loading && <Loader2 className="spin" size={16} />}
             {loading ? t("Signing in…") : t("Sign in")}
           </Btn>
         </form>
