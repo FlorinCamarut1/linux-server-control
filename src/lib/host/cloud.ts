@@ -76,13 +76,25 @@ function setSection(name: string, entries: [string, string][] | undefined) {
 const remote = (destination: Destination, file = "") => `${destination.id}:${[destination.folder, file].filter(Boolean).join("/")}`;
 
 // ---- destinations ----
-// What `rclone authorize` prints ends with the token, a JSON object, between
-// "--->" and "<---End paste"; the whole output or the object alone may be pasted.
+// What `rclone authorize` prints ends with the token between "--->" and
+// "<---End paste"; the whole output or that part alone may be pasted. Given
+// only the service, rclone prints the token, a JSON object. Given settings as
+// well (Google Drive's scope), it prints settings back: JSON such as
+// {"token":"{…}"}, in unpadded URL-safe base64.
+type Token = { access_token: string; refresh_token: string; [key: string]: unknown };
+const isToken = (value: unknown): value is Token =>
+  !!value && typeof (value as Token).access_token === "string" && typeof (value as Token).refresh_token === "string";
 export function tokenFrom(pasted: string) {
-  const start = pasted.indexOf("{"), end = pasted.lastIndexOf("}");
+  const between = /--->\s*([\s\S]*?)\s*<---End paste/.exec(pasted)?.[1] ?? pasted.trim();
+  const start = between.indexOf("{"), end = between.lastIndexOf("}");
   try {
-    const token = JSON.parse(pasted.slice(start, end + 1));
-    if (token && typeof token.access_token === "string" && typeof token.refresh_token === "string") return token as { access_token: string; refresh_token: string; [key: string]: unknown };
+    const token = JSON.parse(between.slice(start, end + 1));
+    if (isToken(token)) return token;
+  } catch {}
+  try {
+    const settings = JSON.parse(Buffer.from(between.replace(/\s+/g, ""), "base64url").toString("utf8"));
+    const token = typeof settings?.token === "string" ? JSON.parse(settings.token) : settings?.token;
+    if (isToken(token)) return token;
   } catch {}
   throw Error(t("Paste what rclone authorize printed: the text between ---> and <---End paste"));
 }

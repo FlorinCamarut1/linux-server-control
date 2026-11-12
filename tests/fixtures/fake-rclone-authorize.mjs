@@ -24,7 +24,12 @@ const server = createServer((req, res) => {
     log(`Fatal error: failed to get token: oauth2: "invalid_grant" "Malformed auth code."`);
     process.exit(2);
   }
-  process.stdout.write(`Paste the following into your remote machine --->\n{"access_token":"${service}-access","token_type":"Bearer","refresh_token":"${service}-refresh","expiry":"2026-11-12T18:28:20Z"}\n<---End paste\n`);
+  // Given settings after the service (Google Drive's scope), rclone prints
+  // settings back, base64-encoded; otherwise the token itself.
+  const token = `{"access_token":"${service}-access","token_type":"Bearer","refresh_token":"${service}-refresh","expiry":"2026-11-12T18:28:20Z"}`;
+  const settings = process.argv.slice(process.argv[2] === "authorize" ? 4 : 3).find((value) => !value.startsWith("--"));
+  const printed = settings ? Buffer.from(JSON.stringify({ token })).toString("base64url") : token;
+  process.stdout.write(`Paste the following into your remote machine --->\n${printed}\n<---End paste\n`);
   server.close(() => process.exit(0));
 });
 server.listen(53682, "127.0.0.1", () => {
