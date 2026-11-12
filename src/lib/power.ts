@@ -35,7 +35,7 @@ export function connectionError(error: unknown, target: string) {
 }
 // Each driver reads and checks the fields it needs from its device's JSON.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-type DeviceResponse = { status: number; cookie: string; body: Buffer; json(): any };
+type DeviceResponse = { status: number; cookies: string; body: Buffer; json(): any };
 // Devices are called with node:http rather than fetch: fetch sends header
 // names in lower case, and Tapo plugs answer such requests with HTTP 400.
 function request(url: string, init: { method?: string; headers?: Record<string, string>; body?: Buffer } = {}) {
@@ -54,8 +54,8 @@ function request(url: string, init: { method?: string; headers?: Record<string, 
         const status = res.statusCode ?? 0;
         if (status < 200 || status >= 300) return reject(Error(t("The device answered HTTP {status}", { status })));
         const body = Buffer.concat(chunks);
-        const cookie = (res.headers["set-cookie"]?.[0] ?? "").split(";")[0];
-        resolve({ status, cookie, body, json: () => JSON.parse(body.toString("utf8")) });
+        const cookies = (res.headers["set-cookie"] ?? []).join(";");
+        resolve({ status, cookies, body, json: () => JSON.parse(body.toString("utf8")) });
       });
     });
     req.on("timeout", () => req.destroy(Object.assign(Error(t("timed out")), { name: "TimeoutError" })));
@@ -84,14 +84,19 @@ export class KlapSession {
   private signature!: Buffer;
   private seq = 0;
   private cookie = "";
-  constructor(private base: string, private auth: Buffer) {}
+  // When to shake hands again, before the plug ends the session.
+  renewAt = 0;
+  constructor(private base: string, readonly auth: Buffer) {}
   static authHash(username: string, password: string) {
     return sha256(sha1(username), sha1(password));
   }
   async handshake() {
     const localSeed = randomBytes(16);
     const first = await request(`${this.base}/app/handshake1`, { method: "POST", body: localSeed });
-    this.cookie = first.cookie;
+    // The cookie names the session and gives its lifetime in seconds as
+    // TIMEOUT, a day on current firmware.
+    this.cookie = first.cookies.split(";")[0];
+    const lifetime = Number(/(?:^|;)\s*TIMEOUT=(\d+)/.exec(first.cookies)?.[1]);
     const reply = first.body;
     const remoteSeed = reply.subarray(0, 16);
     if (reply.length < 48 || !sha256(localSeed, remoteSeed, this.auth).equals(reply.subarray(16, 48)))
@@ -103,6 +108,8 @@ export class KlapSession {
     this.ivPrefix = iv.subarray(0, 12);
     this.seq = iv.readInt32BE(28);
     this.signature = derive("ldk").subarray(0, 28);
+    // Somewhat early, in case the plug's clock runs fast.
+    this.renewAt = Date.now() + (lifetime > 0 ? lifetime : 86400) * 1000 * 0.9;
   }
   private iv(seq: number) {
     const counter = Buffer.alloc(4);
@@ -123,17 +130,46 @@ export class KlapSession {
     return result.result;
   }
 }
-async function tapoSession(config: Config) {
-  const session = new KlapSession(`http://${host(config.host)}`, KlapSession.authHash(config.username.trim(), config.password));
+async function tapoSession(base: string, auth: Buffer, target: string) {
+  const session = new KlapSession(base, auth);
   try {
     await session.handshake();
   } catch (error) {
     // Newer firmware closes the local API until it is allowed in the app.
     if (error instanceof Error && error.message.includes("refused the connection"))
-      throw Error(t("{target} refused the connection. In the Tapo app, turn on Me > Third-Party Services > Third-Party Compatibility, then try again.", { target: config.host.trim() }));
+      throw Error(t("{target} refused the connection. In the Tapo app, turn on Me > Third-Party Services > Third-Party Compatibility, then try again.", { target }));
     throw error;
   }
   return session;
+}
+// Each plug's session is kept until it is due for renewal or a request on it
+// fails, instead of a handshake (two more requests) for every reading. Work
+// that fails on a kept session shakes hands again, once: the plug may have
+// restarted or ended the session. Work for one plug runs one at a time, as
+// its session numbers the requests.
+const tapoSessions = new Map<string, KlapSession>();
+const tapoQueues = new Map<string, Promise<unknown>>();
+function withTapo<T>(config: Config, work: (session: KlapSession) => Promise<T>) {
+  const base = `http://${host(config.host)}`, auth = KlapSession.authHash(config.username.trim(), config.password);
+  const job = (tapoQueues.get(base) ?? Promise.resolve()).then(async () => {
+    const kept = tapoSessions.get(base);
+    tapoSessions.delete(base);
+    if (kept?.auth.equals(auth) && Date.now() < kept.renewAt) {
+      try {
+        const result = await work(kept);
+        tapoSessions.set(base, kept);
+        return result;
+      } catch {
+        // A new session below either works or explains the failure.
+      }
+    }
+    const session = await tapoSession(base, auth, config.host.trim());
+    const result = await work(session);
+    tapoSessions.set(base, session);
+    return result;
+  });
+  tapoQueues.set(base, job.catch(() => {}));
+  return job;
 }
 const tapo: Driver = {
   id: "tapo",
@@ -145,14 +181,13 @@ const tapo: Driver = {
     { key: "password", label: msg("Tapo account password"), secret: true, required: true },
   ],
   async read(config) {
-    const session = await tapoSession(config);
-    const energy = await session.call("get_energy_usage");
-    const info = await session.call("get_device_info").catch(() => null);
+    const [energy, info] = await withTapo(config, async (session) =>
+      [await session.call("get_energy_usage"), await session.call("get_device_info").catch(() => null)]);
     // get_energy_usage reports current_power in milliwatts.
     return { powerW: watts(energy?.current_power) / 1000, on: typeof info?.device_on === "boolean" ? info.device_on : null };
   },
   async switch(config, on) {
-    await (await tapoSession(config)).call("set_device_info", { device_on: on });
+    await withTapo(config, (session) => session.call("set_device_info", { device_on: on }));
   },
 };
 

@@ -1,7 +1,7 @@
 "use client";
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { api, REQUEST_START } from "@/lib/client-api";
+import { api, apiStream, REQUEST_START } from "@/lib/client-api";
 import type { PreflightCheck, Run } from "@/lib/types";
 import { locale, msg, t } from "@/lib/i18n";
 import {
@@ -575,15 +575,18 @@ function describeRun(run: Run) {
   const code = run.exitCode ?? t("unknown");
   return duration ? t("Failed with exit code {code} after {duration}", { code, duration }) : t("Failed with exit code {code}", { code });
 }
-// A log that follows its source every 2 seconds. A script's log also shows its
-// run: whether it still runs, how it ended, and, with canStop, a way to stop
-// it. A finished run's log no longer changes, so it is not read again.
+// A log that follows its source: read again every 2 seconds or, with `follow`
+// (a container's log), sent by the server line by line as it is written. A
+// script's log also shows its run: whether it still runs, how it ended, and,
+// with canStop, a way to stop it. A finished run's log no longer changes, so
+// it is not read again.
+const FOLLOWED_LOG_CHARACTERS = 400000, FOLLOW_AGAIN_MS = 5000;
 export function LiveLogViewer({
   logs,
   close,
   canStop = false,
 }: {
-  logs: { title: string; path: string; request: unknown };
+  logs: { title: string; path: string; request: unknown; follow?: string };
   close: () => void;
   canStop?: boolean;
 }) {
@@ -613,8 +616,42 @@ export function LiveLogViewer({
       setLoading(false);
     }
   }, [logs]);
+  // A followed log: its end arrives first, then each new line. When the server
+  // ends it (the container stopped, or the connection did), it is asked for
+  // again a little later, from its end.
   useEffect(() => {
-    if (!following) return;
+    if (!following || !logs.follow) return;
+    const path = logs.follow, reader = new AbortController();
+    let text = "", fresh = true, frame = 0, again = 0;
+    const draw = (value: string) => {
+      setBody(value);
+      setLoading(false);
+    };
+    const read = () => {
+      fresh = true;
+      apiStream(path, reader.signal, (piece) => {
+        text = (fresh ? "" : text) + piece;
+        fresh = false;
+        // A long session keeps the end of the log, from a whole line.
+        if (text.length > FOLLOWED_LOG_CHARACTERS) text = text.slice(text.indexOf("\n", text.length - FOLLOWED_LOG_CHARACTERS) + 1);
+        // Many lines at once are drawn once.
+        frame ||= requestAnimationFrame(() => { frame = 0; draw(text); });
+      }).then(
+        () => { if (fresh) draw(t("No logs available.")); },
+        (reason) => { if (!reader.signal.aborted) draw(reason instanceof Error ? reason.message : t("Could not load logs")); },
+      ).finally(() => {
+        if (!reader.signal.aborted) again = window.setTimeout(read, FOLLOW_AGAIN_MS);
+      });
+    };
+    read();
+    return () => {
+      reader.abort();
+      cancelAnimationFrame(frame);
+      window.clearTimeout(again);
+    };
+  }, [following, logs.follow]);
+  useEffect(() => {
+    if (!following || logs.follow) return;
     // Waits for each response before scheduling the next, so a slow server never
     // gets overlapping requests, and skips reads while the tab is hidden.
     let timer = 0, stopped = false;
@@ -634,7 +671,7 @@ export function LiveLogViewer({
       stopped = true;
       window.clearTimeout(timer);
     };
-  }, [following, refreshLogs]);
+  }, [following, logs.follow, refreshLogs]);
   async function stopRun() {
     if (!run || !await appConfirm(t("Stop this run of {name}? The script and every process it started are ended, and the run is recorded as stopped.", { name: run.scriptName }), t("Stop run"), t("Stop run"), true)) return;
     setError("");
@@ -653,7 +690,7 @@ export function LiveLogViewer({
         <span className={following ? "live-status" : ""}>
           {loading && <Loader2 className="spin" size={14} />}
           {run && <RunBadge run={run} />}
-          {run ? describeRun(run) : following ? t("Live updates every 2 seconds") : t("Live updates paused")}
+          {run ? describeRun(run) : following ? (logs.follow ? t("Live: new lines appear as they are written") : t("Live updates every 2 seconds")) : t("Live updates paused")}
         </span>
         <div className="actions">
           {!finished && (

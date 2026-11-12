@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import path from "node:path";
 import { msg, t } from "../i18n";
 import { audit } from "./store";
-import { allowedRoots, run, runInput, serverSettings, ssh } from "./ssh";
+import { allowedRoots, resolvePath, run, runInput, serverSettings, ssh } from "./ssh";
 export function isAllowedPath(value: string) {
   return allowedRoots().some((root) => value === root || value.startsWith(root + "/"));
 }
@@ -19,41 +19,70 @@ function refuseHidden(requested: string, resolved: string, hidden: boolean) {
     throw Error(t("Hidden files are shown only after Show hidden files"));
 }
 export async function resolveAllowedDirectory(requested: string, hidden = false) {
-  let directory = allowedRoots()[0];
-  if (requested) {
-    try { directory = (await run(["realpath", "-e", "--", requested])).trim(); }
-    catch { throw Error(t("Folder not found")); }
-  }
-  if (!directory || !isAllowedPath(directory))
+  // The first allowed location is checked as it is, like a requested one.
+  const first = allowedRoots()[0];
+  if (!requested && !first) throw Error(t("This folder is outside the allowed locations"));
+  // What is at the path is only said once the path is known to be allowed.
+  const found = await resolvePath(requested || first).catch(() => undefined);
+  if (!found) throw Error(requested ? t("Folder not found") : t("Choose a folder"));
+  const directory = requested ? found.path : first;
+  if (!isAllowedPath(directory))
     throw Error(t("This folder is outside the allowed locations"));
   refuseHidden(requested || directory, directory, hidden);
-  try { await run(["test", "-d", directory]); }
-  catch { throw Error(t("Choose a folder")); }
+  if (found.kind !== "folder") throw Error(t("Choose a folder"));
   return directory;
 }
 export async function resolveSelectedFile(requested: string, hidden = false) {
-  let resolved: string;
-  try { resolved = (await run(["realpath", "-e", "--", requested])).trim(); }
-  catch { throw Error(t("File not found")); }
-  if (!isAllowedPath(resolved))
+  // The path is whole: a name may end in a space, and the editor saves to the
+  // path readEditableFile found.
+  const found = await resolvePath(requested).catch(() => undefined);
+  if (!found) throw Error(t("File not found"));
+  if (!isAllowedPath(found.path))
     throw Error(t("The selected file must be inside an allowed location"));
-  refuseHidden(requested, resolved, hidden);
-  try { await run(["test", "-f", resolved]); }
-  catch { throw Error(t("Choose a regular file")); }
-  return resolved;
+  refuseHidden(requested, found.path, hidden);
+  if (found.kind !== "file") throw Error(t("Choose a regular file"));
+  return found.path;
 }
 const MAX_EDITABLE_FILE_BYTES = 512 * 1024;
 const SAVE_SCRIPT = 'temporary=$(mktemp) || exit 1; trap \'rm -f "$temporary"\' EXIT HUP INT TERM; cat > "$temporary" && [ "$(($(wc -c < "$temporary")))" -eq "$2" ] && cat "$temporary" > "$1"';
-export async function readEditableFile(requested: string, hidden = false) {
-  const resolved = await resolveSelectedFile(requested, hidden);
-  const size = Number((await run(["stat", "-c", "%s", resolved])).trim());
-  if (!Number.isFinite(size) || size > MAX_EDITABLE_FILE_BYTES)
-    throw Error(t("Only text files up to 512 KB can be edited here"));
+// Opening a file in the editor is one host command. The script prints the
+// file's resolved path and then, after a NUL, what it found: "special" for one
+// that is not a regular file, "large" for one over $2 bytes, "binary" for one
+// that is not text, or "text", another NUL and the content. It reads nothing
+// outside the allowed locations ($4 onwards), nor hidden in them unless $3 is
+// 1: for those it prints the path alone, which readEditableFile refuses.
+const READ_SCRIPT = [
+  'file=$(realpath -e -- "$1" && echo .) || exit 0',
+  // Only realpath's own newline is cut off, as in resolveSelectedFile.
+  'file=${file%?.}',
+  'printf %s "$file"',
+  'limit=$2 shown=$3',
+  'shift 3',
+  // The longest allowed location holding the file, as in isHiddenPath.
+  'root=',
+  'for item; do case $file in "$item" | "$item"/*) [ ${#item} -gt ${#root} ] && root=$item ;; esac; done',
+  '[ -n "$root" ] || exit 0',
+  '[ "$shown" = 1 ] || case ${file#"$root"} in */.*) exit 0 ;; esac',
+  '[ -f "$file" ] || { printf "\\000special"; exit 0; }',
+  'size=$(stat -c %s "$file") || exit 1',
+  '[ "$size" -le "$limit" ] 2>/dev/null || { printf "\\000large"; exit 0; }',
   // An empty file has no content type yet; it opens so that it can be written.
-  const mime = size ? (await run(["file", "--brief", "--mime-type", resolved])).trim() : "text/plain";
-  if (!mime.startsWith("text/") && !mime.endsWith("json") && !mime.endsWith("xml"))
-    throw Error(t("This file is not a supported text file"));
-  return { path: resolved, content: await run(["cat", resolved]) };
+  'mime=text/plain',
+  '[ "$size" -eq 0 ] || mime=$(file --brief --mime-type "$file") || exit 1',
+  'case $mime in text/* | *json | *xml) printf "\\000text\\000"; exec cat "$file" ;; esac',
+  'printf "\\000binary"',
+].join("; ");
+export async function readEditableFile(requested: string, hidden = false) {
+  const output = await run(["sh", "-c", READ_SCRIPT, "sh", requested, String(MAX_EDITABLE_FILE_BYTES), hidden ? "1" : "0", ...allowedRoots()]);
+  const [resolved, found, ...content] = output.split("\0");
+  if (!resolved) throw Error(t("File not found"));
+  if (!isAllowedPath(resolved))
+    throw Error(t("The selected file must be inside an allowed location"));
+  refuseHidden(requested, resolved, hidden);
+  if (found === "special") throw Error(t("Choose a regular file"));
+  if (found === "large") throw Error(t("Only text files up to 512 KB can be edited here"));
+  if (found !== "text") throw Error(t("This file is not a supported text file"));
+  return { path: resolved, content: content.join("\0") };
 }
 export async function saveEditableFile(requested: string, content: string, hidden = false) {
   const resolved = await resolveSelectedFile(requested, hidden);

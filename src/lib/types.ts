@@ -79,6 +79,9 @@ export type St = {
   alerts: { id: string; name: string; metric: string; threshold: number; enabled: boolean; cooldownMinutes: number; lastTriggeredAt?: number }[];
   // The value each alert metric had at the last full refresh.
   alertState?: { values: Record<string, number> };
+  // When the snapshot shown was read, if it is one the dashboard kept rather
+  // than the server as it is now.
+  keptAt?: number;
   metrics?: { latest: { at: number; cpu: number; ram: number; temperature: number | null; disk: number } | null; count: number; intervalMinutes: number };
   // Schedules whose latest finished run failed, newest first.
   cronFailures?: CronRun[];

@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { type Browser, type Locator, type Page, expect, test } from "@playwright/test";
-import { ADMIN_STATE, CRONTAB, DATA, FILES, PASSWORD, PLUG, USERNAME, WEBHOOK, WEBHOOKS } from "./paths";
+import { ADMIN_STATE, CRONTAB, DATA, FILES, PASSWORD, PLUG, TMP, USERNAME, WEBHOOK, WEBHOOKS } from "./paths";
 
 const PAGES = ["Overview", "Containers", "Scripts", "Files", "Schedules", "Power", "History", "Alerts", "Settings"];
 const heading = (page: Page, name: string) => page.getByRole("heading", { name, level: 1 });
@@ -654,4 +654,52 @@ test("an administrator corrects the connection from the reconnect screen", async
   } finally {
     writeFileSync(settings, JSON.stringify(saved));
   }
+});
+
+test("an opening page shows the snapshot the dashboard kept, then the server as it is now", async ({ page }) => {
+  // The first visit reads the server, which leaves a snapshot behind.
+  await page.goto("/");
+  await expect(heading(page, "Overview")).toBeVisible();
+  const asked: string[] = [];
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    if (url.pathname === "/api/state") asked.push(url.search);
+  });
+  await page.reload();
+  await expect(heading(page, "Overview")).toBeVisible();
+  await expect(page.getByText("CPU usage")).toBeVisible();
+  await expect.poll(() => asked.slice(0, 2)).toEqual(["?scope=kept", ""]);
+  // A page without live host data refreshes the stored records alone, and is
+  // sent nothing while they are as it holds them.
+  await open(page, "Scripts");
+  const unchanged = page.waitForResponse((response) => response.url().endsWith("/api/state?scope=records") && response.status() === 304);
+  await page.getByRole("button", { name: "Refresh" }).click();
+  await unchanged;
+  await expect(heading(page, "Scripts")).toBeVisible();
+});
+
+test("a container's log is followed as it is written, until it is closed", async ({ page }) => {
+  const following = () => {
+    try { process.kill(Number(readFileSync(path.join(TMP, "docker-logs.pid"), "utf8")), 0); return true; } catch { return false; }
+  };
+  await page.goto("/#containers");
+  await expect(heading(page, "Containers")).toBeVisible();
+  const row = page.locator("details", { hasText: "jellyfin" });
+  await row.locator("summary").click();
+  await row.getByRole("button", { name: "Logs" }).click();
+  const viewer = page.getByRole("dialog", { name: "jellyfin" });
+  await expect(viewer.getByText("Live: new lines appear as they are written")).toBeVisible();
+  await expect(viewer.locator("pre")).toContainText("earlier line 3");
+  // New lines arrive without the log being asked for again.
+  await expect(viewer.locator("pre")).toContainText("new line 6", { timeout: 15000 });
+  expect(following()).toBe(true);
+  // Paused, the log is no longer read on the server either; resumed, it is again.
+  await viewer.getByRole("button", { name: "Pause updates" }).click();
+  await expect(viewer.getByText("Live updates paused")).toBeVisible();
+  await expect.poll(following).toBe(false);
+  await viewer.getByRole("button", { name: "Resume updates" }).click();
+  await expect.poll(following).toBe(true);
+  await viewer.getByRole("button", { name: "Close" }).click();
+  await expect(viewer).toBeHidden();
+  await expect.poll(following).toBe(false);
 });

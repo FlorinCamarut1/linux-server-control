@@ -112,7 +112,7 @@ export function loadServer({ env = {}, host = () => ({ stdout: "" }), delay = 0,
     },
   };
   const server = loadModule("../src/lib/server.ts", {
-    Buffer, setTimeout, clearTimeout, setInterval, clearInterval,
+    Buffer, setTimeout, clearTimeout, setInterval, clearInterval, ReadableStream,
     ...(now && { Date: class extends Date { static now() { return now(); } } }),
     console: { ...console, error() {} },
     process: { env: { DATA_DIR: data, SSH_TARGET: "", ALLOWED_PATHS: "/srv/scripts", SCRIPT_ROOT: "/srv/scripts", MONITORED_PATHS: "/srv/example", ...env } },
@@ -129,6 +129,22 @@ export function loadServer({ env = {}, host = () => ({ stdout: "" }), delay = 0,
 export function loadPower(server) {
   return loadModule("../src/lib/power.ts", { Buffer, fetch, AbortSignal, URL, URLSearchParams, setTimeout, console },
     (name) => (name === "./server" ? server : undefined));
+}
+
+// Answers the command that reads the whole server at once (a refresh): the
+// output of each part after the line that names it, as the snapshot script
+// prints them. Null for any other command. A part of the root helpers that is
+// left out failed, as on a server without them.
+export function snapshotAnswer(argv, { stats = "", cron = "", markers = "", docker = "", dockerStatus = 0, rootCron, rootSystem, rootScript } = {}) {
+  if (argv[0] !== "bash" || argv[3] !== "snapshot") return null;
+  const mark = argv[4];
+  const part = (name, content = "") => `\n${mark} ${name}\n${content}`;
+  const helper = (name, content) => part(name, content ?? "") + part(`${name}-status ${content === undefined ? 1 : 0}`);
+  return {
+    stdout: part("stats", stats) + part("cron", cron) + part("markers", markers)
+      + (argv[6] === "root" ? helper("root-cron", rootCron) + helper("root-system", rootSystem) + helper("root-script", rootScript) : "")
+      + part("docker", docker) + part(`docker-status ${dockerStatus}`) + part("end"),
+  };
 }
 
 // Runs host commands for real, for tests that work on a temporary directory.

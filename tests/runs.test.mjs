@@ -246,3 +246,58 @@ test("a script set to announce its successful runs does, with its last line of o
   assert.equal(events[0].type, "script-succeeded");
   assert.match(events[0].message, /^The run took \d+ s\. Last output: 3 files saved, 1\.2 GB$/);
 });
+
+// A `docker` whose `logs` prints two lines, the second a moment later, and then
+// waits like a container that writes nothing more. It records its process ID.
+function followedDocker() {
+  const bin = mkdtempSync(path.join(tmpdir(), "lsc-docker-")), pid = path.join(bin, "pid");
+  writeFileSync(path.join(bin, "docker"), `#!/bin/sh\necho $$ > '${pid}'\necho "first line"\nsleep 0.3\necho "second line"\nexec sleep 300\n`, { mode: 0o755 });
+  return { bin, pid: () => Number(readFileSync(pid, "utf8")) };
+}
+
+test("a followed container log arrives as it is written, and stops with its reader", async () => {
+  const docker = followedDocker(), PATH = process.env.PATH;
+  process.env.PATH = `${docker.bin}${path.delimiter}${PATH}`;
+  try {
+    const { server } = loadServer({ realProcesses: true });
+    assert.throws(() => server.followContainerLogs("--help"), /Invalid container name/);
+    const reader = server.followContainerLogs("example").getReader(), decoder = new TextDecoder();
+    let text = "";
+    const first = await reader.read();
+    text += decoder.decode(first.value, { stream: true });
+    assert.match(text, /^first line\n/, "the first line does not wait for the second");
+    while (!text.includes("second line")) {
+      const part = await reader.read();
+      assert.ok(!part.done, "the log has not ended");
+      text += decoder.decode(part.value, { stream: true });
+    }
+    assert.ok(alive(docker.pid()), "the log is still being followed");
+    await reader.cancel();
+    await until(() => !alive(docker.pid()), "docker logs to end once nobody reads");
+    // Only a few logs are followed at a time; a reader that left makes room.
+    const readers = Array.from({ length: 6 }, () => server.followContainerLogs("example").getReader());
+    try {
+      assert.throws(() => server.followContainerLogs("example"), /Too many logs/);
+    } finally {
+      await Promise.all(readers.map((item) => item.cancel()));
+    }
+    await server.followContainerLogs("example").getReader().cancel();
+  } finally {
+    process.env.PATH = PATH;
+  }
+});
+
+test("a log that ends on the server ends for its reader", async () => {
+  const bin = mkdtempSync(path.join(tmpdir(), "lsc-docker-")), PATH = process.env.PATH;
+  writeFileSync(path.join(bin, "docker"), '#!/bin/sh\necho "Error response from daemon: No such container: example" >&2\nexit 1\n', { mode: 0o755 });
+  process.env.PATH = `${bin}${path.delimiter}${PATH}`;
+  try {
+    const { server } = loadServer({ realProcesses: true });
+    const reader = server.followContainerLogs("example").getReader(), decoder = new TextDecoder();
+    let text = "";
+    for (let part = await reader.read(); !part.done; part = await reader.read()) text += decoder.decode(part.value, { stream: true });
+    assert.match(text, /No such container: example/, "what Docker said is the log");
+  } finally {
+    process.env.PATH = PATH;
+  }
+});

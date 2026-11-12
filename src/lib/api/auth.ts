@@ -104,7 +104,7 @@ function sessionAccount(user?: string) {
 const VIEWER_ROUTES = new Set([
   "GET state", "GET history/runs", "GET history/metrics",
   "GET power/drivers", "GET power/devices", "GET power/history",
-  "POST script/log", "POST container/size", "POST logout", "POST account/password",
+  "POST script/log", "POST container/size", "GET container/logs", "POST logout", "POST account/password",
 ]);
 export function permitted(route: string, role: Role, body: Body) {
   if (role === "admin") return true;

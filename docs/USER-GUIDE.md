@@ -59,7 +59,7 @@ Every chart has a **Table** button that shows the same numbers as a table. Hover
 All Docker containers on the server, running and stopped, with filters and a search.
 
 - The buttons next to a container open its web interface, for example `8096` for Jellyfin. Apps that share a VPN container's network, like Radarr or Sonarr behind Gluetun, link to their usual port when the VPN container publishes it.
-- Open a row for its details, logs, and **Start**, **Stop** or **Restart**. The disk size is read when you open the details. **Logs** shows the last 300 lines of both the output and the error stream, and follows them while live updates are on.
+- Open a row for its details, logs, and **Start**, **Stop** or **Restart**. The disk size is read when you open the details. **Logs** shows the last 300 lines of both the output and the error stream, then each new line as the container writes it, while live updates are on.
 
 ![Containers with links to their web interfaces](screenshots/containers.jpg)
 

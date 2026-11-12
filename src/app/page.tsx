@@ -1,15 +1,12 @@
 "use client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ApiError, api } from "@/lib/client-api";
+import dynamic from "next/dynamic";
+import { ApiError, api, stateIfChanged } from "@/lib/client-api";
 import { Login, ConnectionUnavailable, Setup, type SetupServer } from "@/components/auth";
 import { ContainerRow } from "@/components/containers";
 import { PowerPage } from "@/components/power";
 import { containerLinks } from "@/lib/container-links";
-import { FileExplorer } from "@/components/files";
 import { Overview, HistoryPanel, AlertForm, describeAlert } from "@/components/monitoring";
-import { ScheduleForm } from "@/components/schedules";
-import { ScriptForm, CustomScriptForm, RunScriptForm, FolderForm } from "@/components/scripts";
-import { AppearancePanel, CertificatePanel, NotificationsPanel, PasswordForm, DevicePanel, ServerSettings, ConfigurationPanel, StorageManager, UsersPanel } from "@/components/settings";
 import { appConfirm, appPrompt, Btn, copyText, Panel, Metric, formatBytes, formatPercent, formatUptime, Modal, DialogHost, LiveLogViewer, AppLoading, LoadingScreen, notify, PAGE_REFRESH, RowMenu, runStatusLabel, ToastHost } from "@/components/ui";
 import { applyTheme, savedTheme } from "@/lib/theme";
 import { LANGUAGE_CHANGED, applyLanguage, savedLanguage } from "@/lib/language";
@@ -42,6 +39,32 @@ import {
   Trash2,
   X,
 } from "lucide-react";
+// Overview and what it shows come with the page. The other pages and the
+// dialogs are downloaded apart from it: each when it is first opened or, before
+// that, once the page is idle (loadRest), so that opening one does not wait.
+const pages = {
+  files: () => import("@/components/files"),
+  schedules: () => import("@/components/schedules"),
+  scripts: () => import("@/components/scripts"),
+  settings: () => import("@/components/settings"),
+};
+const loadRest = () => { for (const load of Object.values(pages)) void load().catch(() => {}); };
+const PageLoading = () => <div className="empty-state" role="status"><Loader2 className="spin" size={22} /></div>;
+const FileExplorer = dynamic(() => pages.files().then((module) => module.FileExplorer), { ssr: false, loading: PageLoading });
+const ScheduleForm = dynamic(() => pages.schedules().then((module) => module.ScheduleForm), { ssr: false });
+const ScriptForm = dynamic(() => pages.scripts().then((module) => module.ScriptForm), { ssr: false });
+const CustomScriptForm = dynamic(() => pages.scripts().then((module) => module.CustomScriptForm), { ssr: false });
+const RunScriptForm = dynamic(() => pages.scripts().then((module) => module.RunScriptForm), { ssr: false });
+const FolderForm = dynamic(() => pages.scripts().then((module) => module.FolderForm), { ssr: false });
+const AppearancePanel = dynamic(() => pages.settings().then((module) => module.AppearancePanel), { ssr: false, loading: PageLoading });
+const CertificatePanel = dynamic(() => pages.settings().then((module) => module.CertificatePanel), { ssr: false });
+const NotificationsPanel = dynamic(() => pages.settings().then((module) => module.NotificationsPanel), { ssr: false });
+const PasswordForm = dynamic(() => pages.settings().then((module) => module.PasswordForm), { ssr: false });
+const DevicePanel = dynamic(() => pages.settings().then((module) => module.DevicePanel), { ssr: false });
+const ServerSettings = dynamic(() => pages.settings().then((module) => module.ServerSettings), { ssr: false });
+const ConfigurationPanel = dynamic(() => pages.settings().then((module) => module.ConfigurationPanel), { ssr: false });
+const StorageManager = dynamic(() => pages.settings().then((module) => module.StorageManager), { ssr: false });
+const UsersPanel = dynamic(() => pages.settings().then((module) => module.UsersPanel), { ssr: false });
 const nav = [
   ["overview", LayoutGrid, msg("Overview")],
   ["containers", Container, msg("Containers")],
@@ -83,6 +106,16 @@ const UNFILED = "Unfiled";
 function stateScope(tab: string) {
   return tab === "overview" || tab === "containers" || tab === "cron" ? "full" : "records";
 }
+// A refresh brings the whole state again, most of it as it was. The parts that
+// did not change stay the objects they were, so what is worked out from them
+// (the lists, the container links) is not worked out again.
+function keepUnchanged(previous: St | null, next: St): St {
+  if (!previous) return next;
+  const before = previous as Record<string, unknown>, result = { ...next } as Record<string, unknown>;
+  for (const key of Object.keys(result))
+    if (result[key] !== before[key] && JSON.stringify(result[key]) === JSON.stringify(before[key])) result[key] = before[key];
+  return result as St;
+}
 export default function Home() {
   const [state, setState] = useState<St | null>(null),
     [err, setErr] = useState(""),
@@ -92,7 +125,7 @@ export default function Home() {
     [containerFilter, setContainerFilter] = useState<
       "all" | "running" | "stopped"
     >("all"),
-    [logs, setLogs] = useState<{ title: string; path: string; request: unknown } | null>(null),
+    [logs, setLogs] = useState<{ title: string; path: string; request: unknown; follow?: string } | null>(null),
     [edit, setEdit] = useState<S | null | undefined>(),
     [customScriptEditor, setCustomScriptEditor] = useState(false),
     [runPrompt, setRunPrompt] = useState<S | null>(null),
@@ -146,34 +179,46 @@ export default function Home() {
   // no SSH; the first load and the host pages read everything.
   const tabRef = useRef("overview");
   const hostLoaded = useRef(false);
+  // The version of the stored records the page holds; a refresh that would
+  // bring the same again brings nothing, and nothing is drawn again.
+  const recordsVersion = useRef<string | undefined>(undefined);
   const refresh = useCallback(async (silent = false) => {
-    const scope = hostLoaded.current ? stateScope(tabRef.current) : "full";
-    try {
-      const data = await api(scope === "full" ? "state" : `state?scope=${scope}`, undefined, silent);
-      if (scope === "full") {
-        hostLoaded.current = true;
-        setState(data);
-      } else setState((previous) => (previous ? { ...previous, ...data } : previous));
-      setErr("");
-      setHostDown(false);
-    } catch (e) {
-      // Not being signed in is no error on a first visit; it is worth saying
-      // only when it ends a session that was open.
-      const signedOut = e instanceof ApiError && e.status === 401;
-      setErr(signedOut ? (hostLoaded.current ? t("Your session has ended. Sign in again.") : "") : e instanceof Error ? e.message : t("Error"));
-      setHostDown(e instanceof ApiError && e.code === "HOST_UNAVAILABLE");
-      if (!(e instanceof ApiError) || e.code !== "HOST_UNAVAILABLE") {
-        hostLoaded.current = false;
-        setState(null);
-      }
+    const load = async (scope: "full" | "records" | "kept", silent: boolean): Promise<void> => {
       try {
-        const setup = await api("setup/status", undefined, true);
-        setNeedsSetup(!setup.configured);
-        setSetupServer(setup.server);
-      } catch {}
-    } finally {
-      setInitializing(false);
-    }
+        const { data, version } = await stateIfChanged(scope === "full" ? "state" : `state?scope=${scope}`, scope === "records" ? recordsVersion.current : undefined, silent);
+        if (data && scope === "records") {
+          recordsVersion.current = version;
+          setState((previous) => (previous ? keepUnchanged(previous, { ...previous, ...data }) : previous));
+        } else if (data) {
+          hostLoaded.current = true;
+          recordsVersion.current = undefined;
+          setState((previous) => keepUnchanged(previous, data));
+        }
+        setErr("");
+        setHostDown(false);
+        if (scope === "kept" && data?.keptAt) void load("full", false);
+      } catch (e) {
+        // Not being signed in is no error on a first visit; it is worth saying
+        // only when it ends a session that was open.
+        const signedOut = e instanceof ApiError && e.status === 401;
+        setErr(signedOut ? (hostLoaded.current ? t("Your session has ended. Sign in again.") : "") : e instanceof Error ? e.message : t("Error"));
+        setHostDown(e instanceof ApiError && e.code === "HOST_UNAVAILABLE");
+        if (!(e instanceof ApiError) || e.code !== "HOST_UNAVAILABLE") {
+          hostLoaded.current = false;
+          setState(null);
+        }
+        try {
+          const setup = await api("setup/status", undefined, true);
+          setNeedsSetup(!setup.configured);
+          setSetupServer(setup.server);
+        } catch {}
+      } finally {
+        setInitializing(false);
+      }
+    };
+    // A page that is just opening asks for the latest snapshot the dashboard
+    // kept, which needs no SSH, and for the server as it is now right after.
+    await load(hostLoaded.current ? stateScope(tabRef.current) : "kept", silent);
   }, []);
   useEffect(() => {
     let polling = false;
@@ -193,6 +238,18 @@ export default function Home() {
       document.removeEventListener("visibilitychange", scheduled);
     };
   }, [refresh]);
+  // Once the dashboard is shown and the browser has nothing to do, the rest
+  // of it is downloaded.
+  const shown = state !== null;
+  useEffect(() => {
+    if (!shown) return;
+    if (typeof window.requestIdleCallback !== "function") {
+      const timer = window.setTimeout(loadRest, 1500);
+      return () => window.clearTimeout(timer);
+    }
+    const idle = window.requestIdleCallback(loadRest, { timeout: 5000 });
+    return () => window.cancelIdleCallback(idle);
+  }, [shown]);
   // The saved theme is applied before the first paint by the script in the
   // document head; this also gives the phone's browser bar the theme's color.
   useEffect(() => applyTheme(savedTheme()), []);
@@ -256,7 +313,7 @@ export default function Home() {
   }, [menuOpen]);
   const active = useMemo(
     () => state?.containers.filter((c) => c.State === "running").length || 0,
-    [state],
+    [state?.containers],
   );
   const stopped = (state?.containers.length || 0) - active;
   const storagePerPage = 4;
@@ -266,7 +323,7 @@ export default function Home() {
     return (state?.containers || []).filter((container) =>
       (containerFilter === "all" || (containerFilter === "running") === (container.State === "running"))
       && matches(containerSearch, container.Names, container.Image));
-  }, [containerFilter, containerSearch, state]);
+  }, [containerFilter, containerSearch, state?.containers]);
   const scriptFolders = useMemo(() => {
     const groups = new Map<string, S[]>();
     // Folders without scripts yet, such as one just created, are listed too.
@@ -284,7 +341,7 @@ export default function Home() {
       if (b === UNFILED) return -1;
       return a.localeCompare(b);
     });
-  }, [scriptSearch, state]);
+  }, [scriptSearch, state?.folders, state?.scripts]);
   // Looked up once per refresh instead of once per script row on every render.
   const scriptStatus = useMemo(() => {
     const status = new Map<string, { schedule?: Schedule; lastRun?: Run }>();
@@ -292,11 +349,12 @@ export default function Home() {
     for (const schedule of state?.schedules || []) entry(schedule.scriptId).schedule ??= schedule;
     for (const run of state?.recentRuns || []) entry(run.scriptId).lastRun ??= run;
     return status;
-  }, [state]);
+  }, [state?.schedules, state?.recentRuns]);
   const links = useMemo(() => {
     const hostname = typeof window === "undefined" ? "" : window.location.hostname;
-    return new Map((state?.containers || []).map((c) => [c.ID, containerLinks(c, state!.containers, hostname)]));
-  }, [state]);
+    const containers = state?.containers || [];
+    return new Map(containers.map((c) => [c.ID, containerLinks(c, containers, hostname)]));
+  }, [state?.containers]);
   // done: what to say when it worked. A failure is said at the bottom of the
   // screen, where it is seen however far down the page the action was.
   function working(key: string, on: boolean) {
@@ -335,8 +393,9 @@ export default function Home() {
       working(script.id, false);
     }
   }
-  function openLogs(title: string, path: string, body: unknown) {
-    setLogs({ title, path, request: body });
+  // follow: where the log is sent from as it is written, if it is.
+  function openLogs(title: string, path: string, body: unknown, follow?: string) {
+    setLogs({ title, path, request: body, follow });
   }
   async function signOut() {
     try { await api("logout", {}); } catch {}

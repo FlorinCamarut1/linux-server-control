@@ -1,4 +1,5 @@
 // The connection settings and the one way commands reach the managed server.
+import { AsyncLocalStorage } from "node:async_hooks";
 import { execFile } from "node:child_process";
 import { read, save } from "./store";
 import { t } from "../i18n";
@@ -123,10 +124,22 @@ export class CommandError extends Error {}
 // The last failure logged per command, so a command that fails on every refresh
 // (Docker on a server without it) is logged once, not every 15 seconds.
 const loggedFailures = new Map<string, string>();
+// How long each host command of a request took, for its Server-Timing header:
+// the browser's network panel then shows where a slow answer spent its time.
+// Kept on globalThis because Next.js loads this module more than once.
+export type HostTiming = { name: string; ms: number };
+const hostTimings = ((globalThis as { lscHostTimings?: AsyncLocalStorage<HostTiming[]> }).lscHostTimings ??= new AsyncLocalStorage<HostTiming[]>());
+export function withHostTimings<T>(timings: HostTiming[], work: () => T) {
+  return hostTimings.run(timings, work);
+}
+// A script is named by its $0 ("snapshot"), any other command by itself.
+const commandName = (args: string[]) => (args[1] === "-c" && args[3]) || args[0];
 export function runAsync(args: string[], timeout = 30000, input?: string, shared = true) {
   const [command, arguments_] = ssh(args, shared);
+  const timings = hostTimings.getStore(), started = Date.now();
   return new Promise<string>((resolve, reject) => {
     const child = execFile(command, arguments_, { encoding: "utf8", timeout, maxBuffer: 4e6 }, (error, stdout, stderr) => {
+      timings?.push({ name: commandName(args), ms: Date.now() - started });
       if (!error) {
         loggedFailures.delete(args[0]);
         return resolve(stdout);
@@ -157,6 +170,15 @@ export async function verifySudoPassword(password: string) {
   } finally {
     await runAsync(["sudo", "-k"], 10000).catch(() => "");
   }
+}
+// A path as the server resolves it, links followed, and what is there: one
+// host command instead of a realpath and a test. Fails when nothing is there.
+// The newline separates the two; the path itself may hold others.
+const RESOLVE_SCRIPT = 'resolved=$(realpath -e -- "$1" && echo .) || exit 1; resolved=${resolved%?.}; if [ -d "$resolved" ]; then kind=folder; elif [ -f "$resolved" ]; then kind=file; else kind=other; fi; printf "%s\\n%s" "$kind" "$resolved"';
+export async function resolvePath(requested: string): Promise<{ path: string; kind: "folder" | "file" | "other" }> {
+  const output = await runAsync(["sh", "-c", RESOLVE_SCRIPT, "resolve", requested]);
+  const at = output.indexOf("\n");
+  return { kind: output.slice(0, at) as "folder" | "file" | "other", path: output.slice(at + 1) };
 }
 export function runInput(args: string[], input: string, timeout = 30000) {
   return runAsync(args, timeout, input);

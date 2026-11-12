@@ -72,10 +72,11 @@ function cachedRootStatus() {
 export function invalidateRootStatus() {
   rootStatus = undefined;
 }
-export async function rootHelperStatus() {
-  const cached = cachedRootStatus();
-  if (cached) return cached;
-  const [root, rootScript] = await Promise.all([rootCronStatus(), rootScriptStatus()]);
+// The snapshot reads the status along with everything else, when it is due.
+export function knownRootStatus() {
+  return cachedRootStatus();
+}
+export function keepRootStatus(root: RootStatus["root"], rootScript: RootStatus["rootScript"]) {
   return (rootStatus = { target: serverSettings().sshTarget, at: Date.now(), root, rootScript });
 }
 // Reads a crontab. Only a missing crontab counts as empty: any other failure
@@ -217,7 +218,7 @@ export function trimScheduleLog() {
 // logs' ends. The leading empty line tells a log without markers from a missing
 // log. The folder is created here as well, so that root's schedules, which do
 // not create it, are logged again soon after a restart emptied /tmp.
-const SCHEDULE_MARKERS_SCRIPT = 'mkdir -p -- "$1" 2>/dev/null; shift; found=; for log in "$@"; do [ -f "$log" ] || continue; [ -n "$found" ] || echo; found=1; grep -a "^MEDIA_DASHBOARD_" -- "$log" | tail -n 4000; done; exit 0';
+export const SCHEDULE_MARKERS_SCRIPT = 'mkdir -p -- "$1" 2>/dev/null; shift; found=; for log in "$@"; do [ -f "$log" ] || continue; [ -n "$found" ] || echo; found=1; grep -a "^MEDIA_DASHBOARD_" -- "$log" | tail -n 4000; done; exit 0';
 export function readScheduleLog() {
   return run(["sh", "-c", SCHEDULE_MARKERS_SCRIPT, "sh", serverSettings().remoteLogs, ...CRON_USERS.map(scheduleLog)]).then((output) => output || null, () => null);
 }

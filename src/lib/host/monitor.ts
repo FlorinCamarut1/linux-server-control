@@ -1,10 +1,11 @@
 // Server health: statistics, the host snapshot, metric history, alert rules,
 // the requirement checks and the background monitor.
+import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { audit, emitDashboardEvent, read, save } from "./store";
-import { ROOT_CRON_HELPER, ROOT_SCRIPT_HELPER, run, runAsync, serverSettings, testServerConnection } from "./ssh";
+import { CommandError, ROOT_CRON_HELPER, ROOT_SCRIPT_HELPER, resolvePath, run, runAsync, serverSettings, ssh, testServerConnection } from "./ssh";
 import { type AlertRule, type MetricSample, RECORD_ID, alertRules, oneLine, scriptRuns } from "./records";
-import { collectCronRuns, readScheduleLog, rootHelperStatus, trimScheduleLog } from "./cron";
+import { SCHEDULE_MARKERS_SCRIPT, collectCronRuns, keepRootStatus, knownRootStatus, scheduleLog, trimScheduleLog } from "./cron";
 import { locale, msg, t } from "../i18n";
 export function metricSamples() {
   return read<MetricSample[]>("metrics", []);
@@ -54,13 +55,9 @@ export function monitoredPaths() {
 export async function addMonitoredPath(input: string) {
   const requested = cleanStoragePath(input);
   if (!requested.startsWith("/") || /[\r\n\0]/.test(requested)) throw Error(t("Enter an absolute storage path"));
-  let resolved: string;
-  try {
-    resolved = (await run(["realpath", "-e", "--", requested])).trim();
-    await run(["test", "-d", resolved]);
-  } catch {
-    throw Error(t("This storage path does not exist or is not a folder"));
-  }
+  const found = await resolvePath(requested).catch(() => undefined);
+  if (found?.kind !== "folder") throw Error(t("This storage path does not exist or is not a folder"));
+  const resolved = found.path;
   const all = monitoredPaths(); if (!all.includes(resolved)) save("monitored-paths", [...all, resolved]);
   audit("monitor storage path " + resolved); return resolved;
 }
@@ -87,7 +84,8 @@ export function recordMetricSample(stats: SystemStats) {
 export const FAILED_RUN_WINDOW_MS = 24 * 60 * 60 * 1000;
 const ALERT_LABELS: Record<AlertRule["metric"], string> = { temperature: msg("CPU temperature"), cpu: msg("CPU use"), ram: msg("RAM use"), disk: msg("System disk use"), storage: msg("Storage use"), failedScripts: msg("Failed script runs in the last 24 hours"), stoppedContainers: msg("Stopped containers") };
 const ALERT_UNITS: Record<AlertRule["metric"], string> = { temperature: " °C", cpu: "%", ram: "%", disk: "%", storage: "%", failedScripts: "", stoppedContainers: "" };
-export function evaluateAlerts(snapshot: { stats: SystemStats; containers: { State: string }[] }) {
+// What each alert metric is in a snapshot, and the fullest monitored path.
+function alertReadings(snapshot: { stats: SystemStats; containers: { State: string }[] }) {
   const since = Date.now() - FAILED_RUN_WINDOW_MS;
   const failed = scriptRuns().filter((item) => item.status === "failed" && Date.parse(item.startedAt) >= since).length;
   const stopped = snapshot.containers.filter((item) => item.State !== "running").length;
@@ -100,6 +98,14 @@ export function evaluateAlerts(snapshot: { stats: SystemStats; containers: { Sta
     ram: snapshot.stats.memoryTotalBytes ? snapshot.stats.memoryUsedBytes / snapshot.stats.memoryTotalBytes * 100 : 0,
     disk: snapshot.stats.diskUsedPercent, storage: fullest?.usedPercent ?? 0, failedScripts: failed, stoppedContainers: stopped,
   };
+  return { values, fullest };
+}
+// The readings alone, for a kept snapshot: its alerts were evaluated when it was read.
+export function alertValues(snapshot: { stats: SystemStats; containers: { State: string }[] }) {
+  return alertReadings(snapshot).values;
+}
+export function evaluateAlerts(snapshot: { stats: SystemStats; containers: { State: string }[] }) {
+  const { values, fullest } = alertReadings(snapshot);
   const now = Date.now();
   const triggered: AlertRule[] = [];
   let changed = false;
@@ -272,11 +278,60 @@ const STATS_SCRIPT = [
 // are not used, so a long pause does not produce a long average.
 const CPU_READING_MAX_AGE_MS = 10 * 60 * 1000;
 let cpuReading: { target: string; at: number; total: number; idle: number } | undefined;
-async function systemStats(): Promise<{ stats: SystemStats; time: string }> {
-  const target = serverSettings().sshTarget;
+// A refresh is one host command. Over SSH each command is a process here and a
+// session and a login shell on the server, so the four reads a refresh needs,
+// and the root helpers' status when it is due ($3 is "root"), share one. Docker
+// answers slowest: it starts first and is read last, while the rest runs. Each
+// part follows a line of its own that starts with $1, which is different for
+// every refresh, so nothing a crontab or a log holds can pass for such a line.
+const SNAPSHOT_SCRIPT = [
+  'mark=$1; sample=$2; root=$3; logs=$4; user_log=$5; root_log=$6; shift 6',
+  `stats() { ${STATS_SCRIPT}; }`,
+  `markers() ( ${SCHEDULE_MARKERS_SCRIPT} )`,
+  'part() { printf "\\n%s %s\\n" "$mark" "$*"; }',
+  // A Docker daemon that stopped answering must not stall the refresh.
+  'exec 3< <(if command -v timeout >/dev/null 2>&1; then timeout 20 docker ps -a --format "{{json .}}"; else docker ps -a --format "{{json .}}"; fi 2>&1; part docker-status "$?")',
+  'part stats; stats "$sample" "$@"',
+  'part cron; crontab -l 2>/dev/null',
+  'part markers; markers "$logs" "$user_log" "$root_log"',
+  `if [ "$root" = root ]; then part root-cron; sudo -n ${ROOT_CRON_HELPER} list 2>/dev/null; part root-cron-status "$?"; part root-system; sudo -n ${ROOT_CRON_HELPER} system-list 2>/dev/null; part root-system-status "$?"; part root-script; sudo -n ${ROOT_SCRIPT_HELPER} status 2>/dev/null; part root-script-status "$?"; fi`,
+  'part docker; cat <&3',
+  'part end',
+].join("; ");
+// The parts of a snapshot's output by name; a part's status is its only word.
+function snapshotParts(output: string, mark: string) {
+  const parts = new Map<string, string>();
+  for (const piece of output.split(`\n${mark} `).slice(1)) {
+    const at = piece.indexOf("\n");
+    const [name, status] = (at < 0 ? piece : piece.slice(0, at)).split(" ");
+    parts.set(name, status ?? (at < 0 ? "" : piece.slice(at + 1)));
+  }
+  return parts;
+}
+async function readHost() {
+  const settings = serverSettings(), target = settings.sshTarget;
   const previous = cpuReading?.target === target && Date.now() - cpuReading.at < CPU_READING_MAX_AGE_MS ? cpuReading : undefined;
   const paths = monitoredPaths();
-  const output = await runAsync(["bash", "-c", STATS_SCRIPT, "stats", previous ? "" : "sample", ...paths]);
+  const knownRoot = knownRootStatus();
+  const mark = `lsc-${randomBytes(8).toString("hex")}`;
+  const parts = snapshotParts(await runAsync(["bash", "-c", SNAPSHOT_SCRIPT, "snapshot", mark, previous ? "" : "sample", knownRoot ? "" : "root", settings.remoteLogs, scheduleLog("user"), scheduleLog("root"), ...paths]), mark);
+  // Cut short, the output would pass for a server without containers or schedules.
+  if (!parts.has("end")) throw new CommandError(t("The server command failed"));
+  const part = (name: string) => parts.get(name) ?? "";
+  // Docker may be missing or forbidden while the server itself is fine, so its
+  // failure empties the container list instead of failing the whole snapshot.
+  const dockerLines = part("docker").split("\n").filter(Boolean);
+  const docker = part("docker-status") === "0"
+    ? { containers: dockerLines.filter((line) => line.startsWith("{")).map((line) => JSON.parse(line)), error: null as string | null }
+    : { containers: [], error: dockerProblem(dockerLines.at(-1) ?? "") };
+  const status = knownRoot ?? keepRootStatus(
+    part("root-cron-status") === "0" && part("root-system-status") === "0" ? { available: true, cron: part("root-cron"), system: part("root-system") } : { available: false, cron: "", system: "" },
+    part("root-script-status") === "0" ? { available: true, stop: /^stop$/m.test(part("root-script")) } : { available: false, stop: false },
+  );
+  const { stats, time } = systemStats(part("stats"), paths, target, previous);
+  return { containers: docker.containers, containerError: docker.error, cron: part("cron"), root: status.root, rootScript: status.rootScript, time, stats, cronLog: part("markers") || null };
+}
+function systemStats(output: string, paths: string[], target: string, previous: typeof cpuReading): { stats: SystemStats; time: string } {
   const lines = output.trim().split("\n");
   const storageLines = lines.filter((line) => line.startsWith("storage=")).map((line) => line.slice("storage=".length));
   const values = parseValues(lines.filter((line) => !line.startsWith("storage=")));
@@ -328,20 +383,18 @@ function parseStorage(storagePath: string, line: string) {
 // Share only concurrent read requests. Completed snapshots are never cached,
 // so a refresh after a mutation always reads current host state.
 let pendingSnapshot: ReturnType<typeof collectSnapshot> | undefined;
+export type HostSnapshot = Awaited<ReturnType<typeof readHost>>;
+// The latest snapshot stays, with its time, for a page that is just opening: it
+// shows that at once and the server as it is now a moment later. On globalThis,
+// so the background monitor's snapshots, read by its own copy of this module,
+// are there for the API.
+const SNAPSHOT_KEPT_MS = 10 * 60 * 1000;
+const kept = globalThis as { lscSnapshot?: { target: string; at: number; snapshot: HostSnapshot } };
 async function collectSnapshot() {
-  // Docker may be missing or forbidden while the server itself is fine, so its
-  // failure empties the container list instead of failing the whole snapshot.
-  // An unreachable server still fails through the statistics below.
-  const [docker, userCron, status, { stats, time }, cronLog] = await Promise.all([
-    runAsync(["docker", "ps", "-a", "--format", "{{json .}}"]).then(
-      (output) => ({ containers: output.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line)), error: null as string | null }),
-      (error) => ({ containers: [], error: dockerProblem(error instanceof Error ? error.message : "") })),
-    runAsync(["crontab", "-l"]).catch(() => ""),
-    rootHelperStatus(),
-    systemStats(),
-    readScheduleLog(),
-  ]);
-  return { containers: docker.containers, containerError: docker.error, cron: userCron, root: status.root, rootScript: status.rootScript, time, stats, cronLog };
+  const target = serverSettings().sshTarget;
+  const snapshot = await readHost();
+  kept.lscSnapshot = { target, at: Date.now(), snapshot };
+  return snapshot;
 }
 export function hostSnapshot() {
   if (!pendingSnapshot) {
@@ -350,11 +403,19 @@ export function hostSnapshot() {
   }
   return pendingSnapshot;
 }
+export function keptSnapshot() {
+  const last = kept.lscSnapshot;
+  return last && last.target === serverSettings().sshTarget && Date.now() - last.at < SNAPSHOT_KEPT_MS ? last : undefined;
+}
 // After a change made through the dashboard, such as a container stopped, the
 // next request reads the server again instead of joining a snapshot that began
 // before the change.
 export function forgetPendingSnapshot() {
   pendingSnapshot = undefined;
+}
+// And a change to what a snapshot holds must not be shown as it was before.
+export function forgetKeptSnapshot() {
+  kept.lscSnapshot = undefined;
 }
 // A leading dash would be read by Docker as an option, not as a name.
 export const CONTAINER_NAME = /^\w[\w.-]*$/;
@@ -367,6 +428,70 @@ export async function containerLogs(name: string) {
   if (!CONTAINER_NAME.test(name)) throw Error(t("Invalid container name"));
   const output = await run(["sh", "-c", CONTAINER_LOGS_SCRIPT, "sh", name]);
   return output.trim() ? output : "";
+}
+// A container's log as it is written: its end, then each new line when it
+// comes, instead of the same end read again every 2 seconds. Docker ends the
+// log itself when the container stops. The script also ends when its input
+// does, which is how it learns that the reader left: over SSH, ending the
+// connection alone would leave `docker logs` running on the server until the
+// container next wrote something.
+// A background command's input is /dev/null, so the script's own is kept as 3.
+const FOLLOW_LOGS_SCRIPT = 'exec 3<&0; docker logs --tail 300 --timestamps --follow "$1" 2>&1 3<&- & logs=$!; ( cat <&3 >/dev/null 2>&1; kill "$logs" 2>/dev/null ) & reader=$!; exec 3<&-; wait "$logs"; code=$?; kill "$reader" 2>/dev/null; exit "$code"';
+// A log is followed for half an hour at most, and only a few at a time: each
+// is a process here and a connection of its own to the server, since the
+// shared connection has a limited number of sessions (sshd's MaxSessions).
+const FOLLOW_LOGS_MS = 30 * 60 * 1000, FOLLOW_LOGS_END_MS = 5000, FOLLOWED_LOGS = 6;
+const followed = globalThis as { lscFollowedLogs?: number };
+export function followContainerLogs(name: string, signal?: AbortSignal) {
+  if (!CONTAINER_NAME.test(name)) throw Error(t("Invalid container name"));
+  if ((followed.lscFollowedLogs ?? 0) >= FOLLOWED_LOGS) throw Error(t("Too many logs are being followed. Close one first."));
+  const [command, args] = ssh(["sh", "-c", FOLLOW_LOGS_SCRIPT, "follow", name], false);
+  const child = spawn(command, args, { stdio: ["pipe", "pipe", "pipe"] });
+  followed.lscFollowedLogs = (followed.lscFollowedLogs ?? 0) + 1;
+  let ended = false, counted = true;
+  // A reader that left makes room at once, before its process has ended.
+  const release = () => {
+    if (counted) followed.lscFollowedLogs = Math.max(0, (followed.lscFollowedLogs ?? 1) - 1);
+    counted = false;
+  };
+  // The script ends by itself once its input has: ending it with a signal
+  // could catch it before it watches its input, and leave `docker logs` behind.
+  // A script that does not end is ended.
+  let lastResort: ReturnType<typeof setTimeout> | undefined;
+  const stop = () => {
+    release();
+    child.stdin?.end();
+    lastResort ??= setTimeout(() => child.kill("SIGKILL"), FOLLOW_LOGS_END_MS);
+  };
+  const timer = setTimeout(stop, FOLLOW_LOGS_MS);
+  child.stdin?.on("error", () => {});
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      const end = () => {
+        if (ended) return;
+        ended = true;
+        clearTimeout(timer);
+        clearTimeout(lastResort);
+        release();
+        signal?.removeEventListener("abort", stop);
+        try { controller.close(); } catch {}
+        child.stdout?.destroy();
+        child.stderr?.destroy();
+      };
+      const write = (chunk: Uint8Array) => { if (!ended) try { controller.enqueue(chunk); } catch {} };
+      child.stdout?.on("data", write);
+      // What SSH itself says, such as a server that cannot be reached.
+      child.stderr?.on("data", write);
+      child.on("error", end);
+      child.on("close", end);
+      // Its last output normally arrives before "close"; a process it left
+      // behind, still holding the output open, must not keep the log open.
+      child.on("exit", () => setTimeout(end, FOLLOW_LOGS_END_MS));
+      if (signal?.aborted) stop();
+      else signal?.addEventListener("abort", stop);
+    },
+    cancel: stop,
+  });
 }
 // Container sizes are expensive for Docker to compute, so they are only read
 // when a container's details are opened.
