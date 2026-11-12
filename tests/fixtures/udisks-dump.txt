@@ -1,0 +1,376 @@
+/org/freedesktop/UDisks2/block_devices/loop0:
+  org.freedesktop.UDisks2.Block:
+    Configuration:              []
+    CryptoBackingDevice:        '/'
+    Device:                     /dev/loop0
+    DeviceNumber:               1792
+    Drive:                      '/'
+    HintAuto:                   false
+    HintIconName:               
+    HintIgnore:                 false
+    HintName:                   
+    HintPartitionable:          true
+    HintSymbolicIconName:       
+    HintSystem:                 true
+    Id:                         
+    IdLabel:                    
+    IdType:                     
+    IdUUID:                     
+    IdUsage:                    
+    IdVersion:                  
+    MDRaid:                     '/'
+    MDRaidMember:               '/'
+    PreferredDevice:            /dev/loop0
+    ReadOnly:                   false
+    Size:                       0
+    Symlinks:                   /dev/disk/by-diskseq/13
+    UserspaceMountOptions:      
+  org.freedesktop.UDisks2.Loop:
+    Autoclear:          false
+    BackingFile:        
+    SetupByUID:         0
+
+/org/freedesktop/UDisks2/block_devices/nvme0n1:
+  org.freedesktop.UDisks2.Block:
+    Configuration:              []
+    CryptoBackingDevice:        '/'
+    Device:                     /dev/nvme0n1
+    DeviceNumber:               66304
+    Drive:                      '/org/freedesktop/UDisks2/drives/INTEL_SSDPEKKF256G8L_BTHH0000000000AB'
+    HintAuto:                   false
+    HintIconName:               
+    HintIgnore:                 false
+    HintName:                   
+    HintPartitionable:          true
+    HintSymbolicIconName:       
+    HintSystem:                 true
+    Id:                         by-id-nvme-INTEL_SSDPEKKF256G8L_BTHH0000000000AB
+    IdLabel:                    
+    IdType:                     
+    IdUUID:                     
+    IdUsage:                    
+    IdVersion:                  
+    MDRaid:                     '/'
+    MDRaidMember:               '/'
+    PreferredDevice:            /dev/nvme0n1
+    ReadOnly:                   false
+    Size:                       256060514304
+    Symlinks:                   /dev/disk/by-diskseq/9
+                                /dev/disk/by-id/nvme-INTEL_SSDPEKKF256G8L_BTHH0000000000AB
+                                /dev/disk/by-id/nvme-INTEL_SSDPEKKF256G8L_BTHH0000000000AB_1
+                                /dev/disk/by-id/nvme-eui.0000000000000001
+                                /dev/disk/by-path/pci-0000:01:00.0-nvme-1
+    UserspaceMountOptions:      
+  org.freedesktop.UDisks2.NVMe.Namespace:
+    EUI64:                      0000000000000001
+    FormatPercentRemaining:     0
+    FormattedLBASize:           (512, 0, 0x01)
+    LBAFormats:                 [(512, 0, 0x01)]
+    NGUID:                      
+    NSID:                       1
+    NamespaceCapacity:          500118192
+    NamespaceSize:              500118192
+    NamespaceUtilization:       500118192
+    UUID:                       
+    WWN:                        eui.0000000000000001
+  org.freedesktop.UDisks2.PartitionTable:
+    Partitions:         /org/freedesktop/UDisks2/block_devices/nvme0n1p2
+                        /org/freedesktop/UDisks2/block_devices/nvme0n1p1
+    Type:               gpt
+
+/org/freedesktop/UDisks2/block_devices/sda:
+  org.freedesktop.UDisks2.Block:
+    Configuration:              []
+    CryptoBackingDevice:        '/'
+    Device:                     /dev/sda
+    DeviceNumber:               2048
+    Drive:                      '/org/freedesktop/UDisks2/drives/SD_Ultra_3D_4TB_24000FD00000'
+    HintAuto:                   false
+    HintIconName:               
+    HintIgnore:                 false
+    HintName:                   
+    HintPartitionable:          true
+    HintSymbolicIconName:       
+    HintSystem:                 true
+    Id:                         by-id-ata-SD_Ultra_3D_4TB_24000FD00000
+    IdLabel:                    
+    IdType:                     
+    IdUUID:                     
+    IdUsage:                    
+    IdVersion:                  
+    MDRaid:                     '/'
+    MDRaidMember:               '/'
+    PreferredDevice:            /dev/sda
+    ReadOnly:                   false
+    Size:                       4000787030016
+    Symlinks:                   /dev/disk/by-diskseq/12
+                                /dev/disk/by-id/ata-SD_Ultra_3D_4TB_24000FD00000
+                                /dev/disk/by-id/scsi-0ATA_SD_Ultra_3D_4TB_24000FD00000
+                                /dev/disk/by-id/scsi-1ATA_SD_Ultra_3D_4TB_24000FD00000
+                                /dev/disk/by-id/scsi-35000000000000002
+                                /dev/disk/by-id/scsi-SATA_SD_Ultra_3D_4TB_24000FD00000
+                                /dev/disk/by-id/wwn-0x5000000000000002
+                                /dev/disk/by-path/pci-0000:00:17.0-ata-3
+                                /dev/disk/by-path/pci-0000:00:17.0-ata-3.0
+    UserspaceMountOptions:      
+  org.freedesktop.UDisks2.PartitionTable:
+    Partitions:         /org/freedesktop/UDisks2/block_devices/sda1
+    Type:               gpt
+
+/org/freedesktop/UDisks2/block_devices/sda1:
+  org.freedesktop.UDisks2.Block:
+    Configuration:              [('fstab', {'fsname': <b'UUID=00000000-1111-2222-3333-444444444444'>, 'dir': <b'/mnt/storage'>, 'type': <b'ext4'>, 'opts': <b'defaults'>, 'freq': <0>, 'passno': <2>})]
+    CryptoBackingDevice:        '/'
+    Device:                     /dev/sda1
+    DeviceNumber:               2049
+    Drive:                      '/org/freedesktop/UDisks2/drives/SD_Ultra_3D_4TB_24000FD00000'
+    HintAuto:                   false
+    HintIconName:               
+    HintIgnore:                 false
+    HintName:                   
+    HintPartitionable:          true
+    HintSymbolicIconName:       
+    HintSystem:                 true
+    Id:                         by-id-ata-SD_Ultra_3D_4TB_24000FD00000-part1
+    IdLabel:                    
+    IdType:                     ext4
+    IdUUID:                     00000000-1111-2222-3333-444444444444
+    IdUsage:                    filesystem
+    IdVersion:                  1.0
+    MDRaid:                     '/'
+    MDRaidMember:               '/'
+    PreferredDevice:            /dev/sda1
+    ReadOnly:                   false
+    Size:                       4000785104896
+    Symlinks:                   /dev/disk/by-diskseq/12-part1
+                                /dev/disk/by-id/ata-SD_Ultra_3D_4TB_24000FD00000-part1
+                                /dev/disk/by-id/scsi-0ATA_SD_Ultra_3D_4TB_24000FD00000-part1
+                                /dev/disk/by-id/scsi-1ATA_SD_Ultra_3D_4TB_24000FD00000-part1
+                                /dev/disk/by-id/scsi-35000000000000002-part1
+                                /dev/disk/by-id/scsi-SATA_SD_Ultra_3D_4TB_24000FD00000-part1
+                                /dev/disk/by-id/wwn-0x5000000000000002-part1
+                                /dev/disk/by-partlabel/primary
+                                /dev/disk/by-partuuid/00000000-5555-6666-7777-888888888888
+                                /dev/disk/by-path/pci-0000:00:17.0-ata-3-part1
+                                /dev/disk/by-path/pci-0000:00:17.0-ata-3.0-part1
+                                /dev/disk/by-uuid/00000000-1111-2222-3333-444444444444
+    UserspaceMountOptions:      
+  org.freedesktop.UDisks2.Filesystem:
+    MountPoints:        /mnt/storage
+    Size:               4000785104896
+  org.freedesktop.UDisks2.Partition:
+    Flags:              0
+    IsContained:        false
+    IsContainer:        false
+    Name:               primary
+    Number:             1
+    Offset:             1048576
+    Size:               4000785104896
+    Table:              '/org/freedesktop/UDisks2/block_devices/sda'
+    Type:               0fc63daf-8483-4772-8e79-3d69d8477de4
+    UUID:               00000000-5555-6666-7777-888888888888
+
+/org/freedesktop/UDisks2/block_devices/sr0:
+  org.freedesktop.UDisks2.Block:
+    Configuration:              []
+    CryptoBackingDevice:        '/'
+    Device:                     /dev/sr0
+    DeviceNumber:               2816
+    Drive:                      '/org/freedesktop/UDisks2/drives/HL_DT_ST_DVDRAM_GUE1N_KVBJ0000000'
+    HintAuto:                   true
+    HintIconName:               
+    HintIgnore:                 false
+    HintName:                   
+    HintPartitionable:          false
+    HintSymbolicIconName:       
+    HintSystem:                 false
+    Id:                         
+    IdLabel:                    
+    IdType:                     
+    IdUUID:                     
+    IdUsage:                    
+    IdVersion:                  
+    MDRaid:                     '/'
+    MDRaidMember:               '/'
+    PreferredDevice:            /dev/sr0
+    ReadOnly:                   true
+    Size:                       0
+    Symlinks:                   /dev/cdrom
+                                /dev/disk/by-diskseq/11
+                                /dev/disk/by-id/ata-HL-DT-ST_DVDRAM_GUE1N_KVBJ0000000
+                                /dev/disk/by-id/wwn-0x5001480000000000
+                                /dev/disk/by-path/pci-0000:00:17.0-ata-2
+                                /dev/disk/by-path/pci-0000:00:17.0-ata-2.0
+    UserspaceMountOptions:      
+
+/org/freedesktop/UDisks2/drives/HL_DT_ST_DVDRAM_GUE1N_KVBJ0000000:
+  org.freedesktop.UDisks2.Drive:
+    CanPowerOff:                false
+    Configuration:              {}
+    ConnectionBus:              
+    Ejectable:                  true
+    Id:                         HL-DT-ST-DVDRAM-GUE1N-KVBJ0000000
+    Media:                      
+    MediaAvailable:             false
+    MediaChangeDetected:        true
+    MediaCompatibility:         optical_cd
+                                optical_cd_r
+                                optical_cd_rw
+                                optical_dvd
+                                optical_dvd_plus_r
+                                optical_dvd_plus_r_dl
+                                optical_dvd_plus_rw
+                                optical_dvd_r
+                                optical_dvd_ram
+                                optical_dvd_rw
+    MediaRemovable:             true
+    Model:                      HL-DT-ST DVDRAM GUE1N
+    Optical:                    false
+    OpticalBlank:               false
+    OpticalNumAudioTracks:      0
+    OpticalNumDataTracks:       0
+    OpticalNumSessions:         0
+    OpticalNumTracks:           0
+    Removable:                  true
+    Revision:                   ME03
+    RotationRate:               0
+    Seat:                       seat0
+    Serial:                     KVBJ0000000
+    SiblingId:                  
+    Size:                       0
+    SortKey:                    00coldplug/11removable/sr0
+    TimeDetected:               1794456026420059
+    TimeMediaDetected:          0
+    Vendor:                     
+    WWN:                        0x5001480000000000
+  org.freedesktop.UDisks2.Drive.Ata:
+    AamEnabled:                                 false
+    AamSupported:                               false
+    AamVendorRecommendedValue:                  0
+    ApmEnabled:                                 false
+    ApmSupported:                               false
+    PmEnabled:                                  false
+    PmSupported:                                false
+    ReadLookaheadEnabled:                       false
+    ReadLookaheadSupported:                     false
+    SecurityEnhancedEraseUnitMinutes:           0
+    SecurityEraseUnitMinutes:                   0
+    SecurityFrozen:                             false
+    SmartEnabled:                               false
+    SmartFailing:                               false
+    SmartNumAttributesFailedInThePast:          -1
+    SmartNumAttributesFailing:                  -1
+    SmartNumBadSectors:                         1
+    SmartPowerOnSeconds:                        0
+    SmartSelftestPercentRemaining:              -1
+    SmartSelftestStatus:                        
+    SmartSupported:                             false
+    SmartTemperature:                           0.0
+    SmartUpdated:                               0
+    WriteCacheEnabled:                          false
+    WriteCacheSupported:                        false
+
+/org/freedesktop/UDisks2/drives/INTEL_SSDPEKKF256G8L_BTHH0000000000AB:
+  org.freedesktop.UDisks2.Drive:
+    CanPowerOff:                false
+    Configuration:              {}
+    ConnectionBus:              
+    Ejectable:                  false
+    Id:                         INTEL-SSDPEKKF256G8L-BTHH0000000000AB
+    Media:                      
+    MediaAvailable:             true
+    MediaChangeDetected:        true
+    MediaCompatibility:         
+    MediaRemovable:             false
+    Model:                      INTEL SSDPEKKF256G8L
+    Optical:                    false
+    OpticalBlank:               false
+    OpticalNumAudioTracks:      0
+    OpticalNumDataTracks:       0
+    OpticalNumSessions:         0
+    OpticalNumTracks:           0
+    Removable:                  false
+    Revision:                   L05P
+    RotationRate:               0
+    Seat:                       seat0
+    Serial:                     BTHH0000000000AB
+    SiblingId:                  
+    Size:                       256060514304
+    SortKey:                    00coldplug/00fixed/nvme0
+    TimeDetected:               1794459607963891
+    TimeMediaDetected:          1794459607963891
+    Vendor:                     
+    WWN:                        
+  org.freedesktop.UDisks2.NVMe.Controller:
+    ControllerID:                       1
+    FGUID:                              
+    NVMeRevision:                       1.3
+    SanitizePercentRemaining:           -1
+    SanitizeStatus:                     
+    SmartCriticalWarning:               
+    SmartPowerOnHours:                  18470
+    SmartSelftestPercentRemaining:      -1
+    SmartSelftestStatus:                success
+    SmartTemperature:                   326
+    SmartUpdated:                       1794498608
+    State:                              live
+    SubsystemNQN:                       nqn.2014.08.org.nvmexpress:80868086BTHH0000000000AB    INTEL SSDPEKKF256G8L
+    UnallocatedCapacity:                0
+
+/org/freedesktop/UDisks2/drives/SD_Ultra_3D_4TB_24000FD00000:
+  org.freedesktop.UDisks2.Drive:
+    CanPowerOff:                false
+    Configuration:              {}
+    ConnectionBus:              
+    Ejectable:                  false
+    Id:                         SD-Ultra-3D-4TB-24000FD00000
+    Media:                      
+    MediaAvailable:             true
+    MediaChangeDetected:        true
+    MediaCompatibility:         
+    MediaRemovable:             false
+    Model:                      SD Ultra 3D 4TB
+    Optical:                    false
+    OpticalBlank:               false
+    OpticalNumAudioTracks:      0
+    OpticalNumDataTracks:       0
+    OpticalNumSessions:         0
+    OpticalNumTracks:           0
+    Removable:                  false
+    Revision:                   00WD
+    RotationRate:               0
+    Seat:                       seat0
+    Serial:                     24000FD00000
+    SiblingId:                  
+    Size:                       4000787030016
+    SortKey:                    00coldplug/00fixed/sd____a
+    TimeDetected:               1794456026439337
+    TimeMediaDetected:          1794456026439337
+    Vendor:                     
+    WWN:                        0x5000000000000002
+  org.freedesktop.UDisks2.Drive.Ata:
+    AamEnabled:                                 false
+    AamSupported:                               false
+    AamVendorRecommendedValue:                  0
+    ApmEnabled:                                 true
+    ApmSupported:                               true
+    PmEnabled:                                  true
+    PmSupported:                                true
+    ReadLookaheadEnabled:                       true
+    ReadLookaheadSupported:                     true
+    SecurityEnhancedEraseUnitMinutes:           2
+    SecurityEraseUnitMinutes:                   2
+    SecurityFrozen:                             true
+    SmartEnabled:                               true
+    SmartFailing:                               false
+    SmartNumAttributesFailedInThePast:          0
+    SmartNumAttributesFailing:                  0
+    SmartNumBadSectors:                         0
+    SmartPowerOnSeconds:                        11962800
+    SmartSelftestPercentRemaining:              0
+    SmartSelftestStatus:                        success
+    SmartSupported:                             true
+    SmartTemperature:                           292.15000000000003
+    SmartUpdated:                               1794498608
+    WriteCacheEnabled:                          true
+    WriteCacheSupported:                        true

@@ -48,7 +48,9 @@ If no authorized browser is left, or the password is forgotten, see [Locked out]
 
 The landing page: the server's health at the top (temperature, RAM, system disk and each monitored storage path, CPU, uptime and containers, with **Manage storage paths**), anything that needs attention, and charts for the last 24 hours, 7 days or 30 days. Once you add smart plugs, their power and energy appear here too.
 
-**Attention needed** lists what is wrong now, not everything that ever went wrong: stopped containers, alert rules whose value is above their threshold, and scripts and schedules whose latest run failed. A failed script or schedule leaves the list once it runs successfully again; the failure itself stays under **History**.
+**Attention needed** lists what is wrong now, not everything that ever went wrong: stopped containers, alert rules whose value is above their threshold, disks that report a problem, and scripts and schedules whose latest run failed. A failed script or schedule leaves the list once it runs successfully again; the failure itself stays under **History**.
+
+**Disks** shows the SMART health of each disk that has it: its model, device, size and type, its temperature, how many hours it has been powered on, and whether it is **Healthy**, **Needs attention** (bad sectors, SMART attributes below their threshold, a failed self-test, little spare capacity left on an NVMe disk) or **Failing** (the disk itself says it is about to fail, or an NVMe disk became read-only). The dashboard reads what udisks found, which it reads every 10 minutes without waking a disk that sleeps; it needs no root, only the `udisks2` package on the server. **Check now** reads it again. The dashboard checks every 5 minutes, also while no browser is open, and a disk that starts to report a problem, a worse one, or none any more is announced on the notification channels that have **Disk reports a problem, or is healthy again** ticked.
 
 ![Overview with health tiles and charts](screenshots/overview.jpg)
 
@@ -135,7 +137,7 @@ Every script run from the dashboard, with its status (running, success, failed o
 
 ## Alerts
 
-Rules that fire when a value reaches a threshold: CPU temperature, CPU, RAM or system disk use, the use of the monitored storage paths, failed script runs in the last 24 hours, or stopped containers. The storage rule watches all the monitored paths at once and fires for the fullest. The cooldown stops an alert from repeating too often, and a rule that announced its threshold also announces, once, when the value is back below it. Rules are checked every 5 minutes, also while no browser is open; triggered alerts go to your notification channels, and a rule that is above its threshold is listed on Overview.
+Rules that fire when a value reaches a threshold: CPU temperature, CPU, RAM or system disk use, the use of the monitored storage paths, failed script runs in the last 24 hours, stopped containers, or the temperature of the hottest disk. The storage rule watches all the monitored paths at once and fires for the fullest. The cooldown stops an alert from repeating too often, and a rule that announced its threshold also announces, once, when the value is back below it. Rules are checked every 5 minutes, also while no browser is open; triggered alerts go to your notification channels, and a rule that is above its threshold is listed on Overview.
 
 ![Alert rules](screenshots/alerts.jpg)
 

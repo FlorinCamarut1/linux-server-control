@@ -63,6 +63,14 @@ case "$1" in
 esac
 `, { mode: 0o755 });
 
+// A `udisksctl` that prints what udisks printed on a real server: a SATA SSD
+// and an NVMe SSD, both healthy.
+cpSync(path.join(root, "tests", "fixtures", "udisks-dump.txt"), path.join(tmp, "udisks-dump.txt"));
+writeFileSync(path.join(bin, "udisksctl"), `#!/bin/sh
+[ "$1" = dump ] && exec cat '${path.join(tmp, "udisks-dump.txt")}'
+exit 1
+`, { mode: 0o755 });
+
 writeFileSync(path.join(bin, "sudo"), `#!/bin/sh
 case "$*" in
   "-S -k -p  -v") read -r password; [ "$password" = sudo-test-password ]; exit ;;

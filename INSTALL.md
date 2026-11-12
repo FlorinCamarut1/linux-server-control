@@ -52,6 +52,7 @@ curl -fsSL https://raw.githubusercontent.com/FlorinCamarut1/linux-server-control
 | `python3` | The Files page, its folder sizes, and the script picker | `python3` |
 | `file` | The file editor | `file` |
 | `crontab` | Schedules | `cron` (Debian, Ubuntu) or `cronie` (Arch, Fedora) |
+| `udisksctl` | Disk health (SMART) on Overview | `udisks2` |
 | Docker, usable by your account | Running the dashboard, and the Containers page | Step 1 |
 
 Only the first two rows are strictly required. If something else is missing, the dashboard still starts, tells you during setup what is missing, and only the matching page is affected. Systems that have BusyBox instead of GNU coreutils, such as Alpine, are not supported.
@@ -61,9 +62,10 @@ The login shell of the account does not matter: bash, zsh and fish all work.
 To install the optional tools in one go:
 
 ```bash
-sudo apt install python3 file cron          # Debian, Ubuntu
-sudo dnf install python3 file cronie        # Fedora
-sudo pacman -S python file cronie           # Arch
+sudo apt install python3 file cron udisks2          # Debian, Ubuntu
+sudo dnf install python3 file cronie udisks2        # Fedora
+sudo pacman -S python file cronie udisks2           # Arch
+sudo zypper install python3 file cronie udisks2     # openSUSE
 ```
 
 On Fedora and Arch, also start cron: `sudo systemctl enable --now crond` (Fedora) or `cronie` (Arch).

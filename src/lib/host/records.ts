@@ -56,7 +56,7 @@ export type ScriptRun = {
 // active: the rule has announced that its value reached the threshold, and
 // has not yet announced that it is back below.
 export type AlertRule = {
-  id: string; name: string; metric: "temperature" | "cpu" | "ram" | "disk" | "storage" | "failedScripts" | "stoppedContainers";
+  id: string; name: string; metric: "temperature" | "cpu" | "ram" | "disk" | "storage" | "failedScripts" | "stoppedContainers" | "diskTemperature";
   threshold: number; enabled: boolean; cooldownMinutes: number; lastTriggeredAt?: number; active?: boolean;
 };
 // storage maps each monitored path to its used percentage (absent in older samples).

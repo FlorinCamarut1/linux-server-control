@@ -12,6 +12,7 @@ It is intended for people comfortable administering their own server. It runs en
 - Browse and edit files only inside paths you explicitly allow.
 - Chart CPU, RAM, temperature, and storage over the last day, week, or month.
 - Record power use and cost from Tapo, Shelly, Tasmota, or Home Assistant smart plugs.
+- See the SMART health of the server's disks, and get told when one starts to fail.
 - Set alert rules for temperature, CPU, RAM, disks and failed runs, and see on one page what needs attention.
 - Get alerts, failed runs, and power device changes on Discord, Slack, ntfy, or any webhook.
 - Add it to a phone's home screen, or install it on a computer, to open it as an app.
@@ -34,7 +35,7 @@ curl -fsSL https://raw.githubusercontent.com/FlorinCamarut1/linux-server-control
 
 The installer checks the server, shows the few commands it needs `sudo` for (installing Docker or the SSH server, for example) and asks before running them, asks for the server's address and the folders to manage, and starts the dashboard. It ends with the address to open and the one-time setup token. See [what it does](INSTALL.md#install-with-one-command), or **[INSTALL.md](INSTALL.md)** for the same installation in six steps by hand.
 
-The server needs an SSH account, `bash`, and the usual GNU tools; `python3`, `file`, `cron` and Docker each enable one page. The account's login shell may be bash, zsh or fish. See [What you need](INSTALL.md#what-you-need); the dashboard also checks them for you during setup.
+The server needs an SSH account, `bash`, and the usual GNU tools; `python3`, `file`, `cron`, `udisks2` and Docker each enable one page or panel. The account's login shell may be bash, zsh or fish. See [What you need](INSTALL.md#what-you-need); the dashboard also checks them for you during setup.
 
 ## Update
 

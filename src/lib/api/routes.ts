@@ -21,6 +21,8 @@ import {
   exportConfiguration,
   failingCronRuns,
   folderSizes,
+  describeProblem,
+  diskHealth,
   followContainerLogs,
   folders,
   historyPage,
@@ -63,7 +65,7 @@ import { DRIVERS, deletePowerDevice, powerHistory, publicDevices, savePowerDevic
 import { CHANNEL_TYPES, deleteChannel, publicChannels, saveChannel, testChannel } from "@/lib/notify";
 import { EVENT_TYPES } from "@/lib/server";
 import { accountRoutes } from "./auth";
-import { demoState } from "./demo";
+import { demoDisks, demoState } from "./demo";
 import { type Body, type Context, type Routes, ok } from "./http";
 import { digest, isLanguage, t } from "@/lib/server";
 
@@ -205,6 +207,12 @@ const hostRoutes: Routes<Context> = {
     }
   },
   "GET preflight": async () => NextResponse.json(await preflight()),
+  // The disks' health, from the latest reading or, with ?fresh=true, read now;
+  // their problems in the language of the request.
+  "GET disks": async ({ req, session }) => {
+    const reading = session.device === "demo" ? demoDisks() : await diskHealth(req.nextUrl.searchParams.get("fresh") === "true");
+    return NextResponse.json({ ...reading, disks: reading.disks.map((disk) => ({ ...disk, problems: disk.problems.map(describeProblem) })) });
+  },
   "POST container": async ({ body }) => {
     if (
       !["start", "stop", "restart", "logs"].includes(body.action) ||

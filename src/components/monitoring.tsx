@@ -1,6 +1,7 @@
 "use client";
 import { ChartFrame, LineChart, RangeFilter, type Range } from "@/components/charts";
 import { PowerPage } from "@/components/power";
+import { DisksPanel, diskName, useDisks } from "@/components/disks";
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "@/lib/client-api";
 import { Btn, Panel, Metric, formatDuration, Modal, ModalActions, RunBadge } from "@/components/ui";
@@ -23,7 +24,11 @@ export function Overview({ health, state, stopped, openLogs, show }: { health: R
   const failedSchedules = state.cronFailures ?? [];
   const values = state.alertState?.values ?? {};
   const activeAlerts = state.alerts.filter((rule) => rule.enabled && values[rule.metric] >= rule.threshold);
-  const healthy = !stopped && !failedRuns.length && !failedSchedules.length && !activeAlerts.length;
+  // Disks that report a problem, worst first.
+  const disks = useDisks();
+  const troubledDisks = (disks.report?.disks ?? []).filter((disk) => disk.status === "attention" || disk.status === "failing")
+    .sort((a, b) => (a.status === "failing" ? 0 : 1) - (b.status === "failing" ? 0 : 1));
+  const healthy = !stopped && !failedRuns.length && !failedSchedules.length && !activeAlerts.length && !troubledDisks.length;
   return <>
     {health}
     {/* Each problem has a button to the page where it is dealt with. */}
@@ -32,8 +37,10 @@ export function Overview({ health, state, stopped, openLogs, show }: { health: R
       {activeAlerts.map((rule) => <div className="schedule-row" key={rule.id}><div className="grow"><b>{t("Alert: {name}", { name: rule.name })}</b><small>{describeAlert(rule.metric, rule.threshold)} · {t("now {value}", { value: alertValue(rule.metric, values[rule.metric]) })}</small></div><div className="row-side"><span className="badge down">{t("Above threshold")}</span><Btn onClick={() => show("alerts")}>{t("View alerts")}</Btn></div></div>)}
       {failedRuns.map((run) => <div className="schedule-row" key={run.id}><div className="grow"><b>{t("Failed script: {name}", { name: run.scriptName })}</b><small>{new Date(run.startedAt).toLocaleString(locale())} · {t("exit code {code}", { code: run.exitCode ?? t("unknown") })}</small></div><div className="row-side"><Btn onClick={() => openLogs(t("{name} run", { name: run.scriptName }), "script/log", { id: run.scriptId, runId: run.id })}>{t("View log")}</Btn></div></div>)}
       {failedSchedules.map((run) => <div className="schedule-row" key={`${run.scheduleId}-${run.startedAt}`}><div className="grow"><b>{t("Failed schedule: {name}", { name: run.label })}</b><small>{new Date(run.startedAt).toLocaleString(locale())} · {t("exit code {code}", { code: run.exitCode ?? t("unknown") })}</small></div><div className="row-side"><Btn onClick={() => show("cron")}>{t("View history")}</Btn></div></div>)}
+      {troubledDisks.map((disk) => <div className="schedule-row" key={`disk-${disk.id}`}><div className="grow"><b>{t("Disk problem: {name}", { name: diskName(disk) })}</b><small>{disk.problems.join(" · ")}</small></div><div className="row-side"><span className="badge down">{disk.status === "failing" ? t("Failing") : t("Needs attention")}</span></div></div>)}
       {healthy && <div className="empty-state"><Circle size={22}/><b>{t("Everything looks healthy")}</b><p>{t("No stopped containers, failing runs or alerts above their threshold.")}</p></div>}
     </Panel>
+    <DisksPanel {...disks} />
     <OverviewCharts language={language()} />
     <Panel title={t("Next steps")} note={t("Common admin tasks")}><div className="schedule-row"><div className="grow"><b>{tn("{count} approved script|{count} approved scripts", state.scripts.length)}</b><small>{tn("{count} active schedule|{count} active schedules", state.schedules.filter((item) => item.enabled).length)} · {t("manage runs in Scripts and Schedules.")}</small></div></div></Panel>
   </>;
@@ -58,6 +65,7 @@ const ALERT_METRICS: Record<string, [string, string]> = {
   storage: [msg("Use of the fullest monitored storage path"), "%"],
   failedScripts: [msg("Failed script runs in 24 hours"), ""],
   stoppedContainers: [msg("Stopped containers"), ""],
+  diskTemperature: [msg("Hottest disk temperature"), " °C"],
 };
 export function describeAlert(metric: string, threshold: number) {
   const [label, unit] = ALERT_METRICS[metric] ?? [metric, ""];
@@ -138,7 +146,7 @@ export function AlertForm({ initial, close, done }: { initial: St["alerts"][numb
   return <Modal title={initial ? t("Edit alert") : t("New alert")} close={close} guard><form onSubmit={async (event) => { event.preventDefault(); try { await api("alerts/save", Object.fromEntries(new FormData(event.currentTarget))); done(); } catch (reason) { setError(reason instanceof Error ? reason.message : t("Error")); } }}>
     <input type="hidden" name="id" defaultValue={initial?.id} />
     <label>{t("Name")}<input name="name" defaultValue={initial?.name} required maxLength={80} /></label>
-    <label>{t("Metric")}<select name="metric" defaultValue={initial?.metric || "temperature"}><option value="temperature">{t("CPU temperature (°C)")}</option><option value="cpu">{t("CPU use (%)")}</option><option value="ram">{t("RAM use (%)")}</option><option value="disk">{t("System disk use (%)")}</option><option value="storage">{t("Monitored storage use, fullest path (%)")}</option><option value="failedScripts">{t("Failed script runs (last 24 hours)")}</option><option value="stoppedContainers">{t("Stopped containers")}</option></select></label>
+    <label>{t("Metric")}<select name="metric" defaultValue={initial?.metric || "temperature"}><option value="temperature">{t("CPU temperature (°C)")}</option><option value="cpu">{t("CPU use (%)")}</option><option value="ram">{t("RAM use (%)")}</option><option value="disk">{t("System disk use (%)")}</option><option value="storage">{t("Monitored storage use, fullest path (%)")}</option><option value="failedScripts">{t("Failed script runs (last 24 hours)")}</option><option value="stoppedContainers">{t("Stopped containers")}</option><option value="diskTemperature">{t("Hottest disk temperature (°C)")}</option></select></label>
     <label>{t("Trigger at or above")}<input name="threshold" type="number" min="0" step="0.1" defaultValue={initial?.threshold ?? 80} required /></label>
     <label>{t("Cooldown (minutes)")}<input name="cooldownMinutes" type="number" min="1" max="10080" defaultValue={initial?.cooldownMinutes ?? 30} required /></label>
     <label><input name="enabled" type="checkbox" value="true" defaultChecked={initial?.enabled !== false} /> {t("Enabled")}</label>
