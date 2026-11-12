@@ -1039,5 +1039,19 @@
  "Backup not found": "Копия не найдена",
  "The data was restored, but the schedules could not be written to the server: {error}": "Данные восстановлены, но расписания не удалось записать на сервер: {error}",
  "Cloud backup failed": "Ошибка копирования в облако",
- "The backup could not be uploaded to {count} destination|The backup could not be uploaded to {count} destinations": { "one": "Не удалось загрузить копию в {count} хранилище", "few": "Не удалось загрузить копию в {count} хранилища", "many": "Не удалось загрузить копию в {count} хранилищ", "other": "Не удалось загрузить копию в {count} хранилища" }
+ "The backup could not be uploaded to {count} destination|The backup could not be uploaded to {count} destinations": { "one": "Не удалось загрузить копию в {count} хранилище", "few": "Не удалось загрузить копию в {count} хранилища", "many": "Не удалось загрузить копию в {count} хранилищ", "other": "Не удалось загрузить копию в {count} хранилища" },
+ "Sign in and allow access:": "Войдите и разрешите доступ:",
+ "Sign in with {service}": "Войти через {service}",
+ "If no tab opened, {link}.": "Если вкладка не открылась, {link}.",
+ "open the sign-in page": "откройте страницу входа",
+ "After you allow access, that tab shows that the page cannot be reached. That is expected: copy the whole address from its address bar.": "После того как вы разрешите доступ, эта вкладка покажет, что страница недоступна. Так и должно быть: скопируйте полный адрес из её адресной строки.",
+ "Address of that page": "Адрес этой страницы",
+ "Or run rclone on your own computer": "Или запустите rclone на своём компьютере",
+ "The sign-in could not be started: {error}": "Не удалось начать вход: {error}",
+ "rclone did not answer": "rclone не ответил",
+ "Sign in again: this sign-in has ended": "Войдите снова: этот вход завершён",
+ "Paste the whole address of the page that could not be reached": "Вставьте полный адрес недоступной страницы",
+ "This address belongs to an older sign-in. Sign in again and paste the new address.": "Этот адрес относится к прошлому входу. Войдите снова и вставьте новый адрес.",
+ "Access was not allowed ({error})": "Доступ не разрешён ({error})",
+ "{service} did not give access: {error}": "{service} не предоставил доступ: {error}"
 }

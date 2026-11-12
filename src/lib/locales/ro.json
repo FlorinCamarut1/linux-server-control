@@ -1039,5 +1039,19 @@
  "Backup not found": "Backupul nu a fost găsit",
  "The data was restored, but the schedules could not be written to the server: {error}": "Datele au fost restaurate, dar programările nu au putut fi scrise pe server: {error}",
  "Cloud backup failed": "Backup în cloud eșuat",
- "The backup could not be uploaded to {count} destination|The backup could not be uploaded to {count} destinations": { "one": "Backupul nu a putut fi încărcat pe {count} destinație", "few": "Backupul nu a putut fi încărcat pe {count} destinații", "other": "Backupul nu a putut fi încărcat pe {count} de destinații" }
+ "The backup could not be uploaded to {count} destination|The backup could not be uploaded to {count} destinations": { "one": "Backupul nu a putut fi încărcat pe {count} destinație", "few": "Backupul nu a putut fi încărcat pe {count} destinații", "other": "Backupul nu a putut fi încărcat pe {count} de destinații" },
+ "Sign in and allow access:": "Autentifică-te și permite accesul:",
+ "Sign in with {service}": "Autentifică-te cu {service}",
+ "If no tab opened, {link}.": "Dacă nu s-a deschis niciun tab, {link}.",
+ "open the sign-in page": "deschide pagina de autentificare",
+ "After you allow access, that tab shows that the page cannot be reached. That is expected: copy the whole address from its address bar.": "După ce permiți accesul, tab-ul acela arată că pagina nu poate fi accesată. Este normal: copiază toată adresa din bara lui de adrese.",
+ "Address of that page": "Adresa acelei pagini",
+ "Or run rclone on your own computer": "Sau rulează rclone pe calculatorul tău",
+ "The sign-in could not be started: {error}": "Autentificarea nu a putut porni: {error}",
+ "rclone did not answer": "rclone nu a răspuns",
+ "Sign in again: this sign-in has ended": "Autentifică-te din nou: această autentificare s-a încheiat",
+ "Paste the whole address of the page that could not be reached": "Lipește toată adresa paginii care nu a putut fi accesată",
+ "This address belongs to an older sign-in. Sign in again and paste the new address.": "Această adresă ține de o autentificare mai veche. Autentifică-te din nou și lipește adresa nouă.",
+ "Access was not allowed ({error})": "Accesul nu a fost permis ({error})",
+ "{service} did not give access: {error}": "{service} nu a dat acces: {error}"
 }

@@ -29,6 +29,8 @@ import {
   restoreBackup,
   saveBackupSettings,
   saveDestination,
+  finishSignIn,
+  startSignIn,
   describeProblem,
   diskHealth,
   followContainerLogs,
@@ -409,6 +411,10 @@ const cloudRoutes: Routes<Context> = {
     return ok();
   },
   "POST cloud/destination/save": async ({ body }) => ok({ destination: await saveDestination(body) }),
+  // Signing in to OneDrive or Google Drive from the page: the service's sign-in
+  // page to open, then the address the browser came back to.
+  "POST cloud/sign-in/start": async ({ body }) => ok({ url: await startSignIn(body.type) }),
+  "POST cloud/sign-in/finish": async ({ body }) => ok({ destination: await finishSignIn(body) }),
   "POST cloud/destination/delete": ({ body }) => {
     deleteDestination(body.id || "");
     return ok();

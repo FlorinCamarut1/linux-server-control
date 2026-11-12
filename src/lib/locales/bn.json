@@ -1039,5 +1039,19 @@
  "Backup not found": "ব্যাকআপ পাওয়া যায়নি",
  "The data was restored, but the schedules could not be written to the server: {error}": "ডেটা ফেরানো হয়েছে, কিন্তু শিডিউলগুলো সার্ভারে লেখা যায়নি: {error}",
  "Cloud backup failed": "ক্লাউড ব্যাকআপ ব্যর্থ",
- "The backup could not be uploaded to {count} destination|The backup could not be uploaded to {count} destinations": { "one": "ব্যাকআপ {count}টি গন্তব্যে আপলোড করা যায়নি", "other": "ব্যাকআপ {count}টি গন্তব্যে আপলোড করা যায়নি" }
+ "The backup could not be uploaded to {count} destination|The backup could not be uploaded to {count} destinations": { "one": "ব্যাকআপ {count}টি গন্তব্যে আপলোড করা যায়নি", "other": "ব্যাকআপ {count}টি গন্তব্যে আপলোড করা যায়নি" },
+ "Sign in and allow access:": "সাইন ইন করে অনুমতি দিন:",
+ "Sign in with {service}": "{service} দিয়ে সাইন ইন করুন",
+ "If no tab opened, {link}.": "কোনো ট্যাব না খুললে, {link}।",
+ "open the sign-in page": "সাইন-ইন পেজ খুলুন",
+ "After you allow access, that tab shows that the page cannot be reached. That is expected: copy the whole address from its address bar.": "অনুমতি দেওয়ার পর সেই ট্যাব দেখাবে যে পেজে পৌঁছানো যাচ্ছে না। এটাই প্রত্যাশিত: এর অ্যাড্রেস বার থেকে পুরো ঠিকানা কপি করুন।",
+ "Address of that page": "সেই পেজের ঠিকানা",
+ "Or run rclone on your own computer": "অথবা নিজের কম্পিউটারে rclone চালান",
+ "The sign-in could not be started: {error}": "সাইন ইন শুরু করা যায়নি: {error}",
+ "rclone did not answer": "rclone সাড়া দেয়নি",
+ "Sign in again: this sign-in has ended": "আবার সাইন ইন করুন: এই সাইন ইন শেষ হয়ে গেছে",
+ "Paste the whole address of the page that could not be reached": "যে পেজে পৌঁছানো যায়নি তার পুরো ঠিকানা পেস্ট করুন",
+ "This address belongs to an older sign-in. Sign in again and paste the new address.": "এই ঠিকানা আগের একটি সাইন ইনের। আবার সাইন ইন করে নতুন ঠিকানা পেস্ট করুন।",
+ "Access was not allowed ({error})": "অনুমতি দেওয়া হয়নি ({error})",
+ "{service} did not give access: {error}": "{service} অ্যাক্সেস দেয়নি: {error}"
 }

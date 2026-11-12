@@ -1039,5 +1039,19 @@
  "Backup not found": "لم يتم العثور على النسخة",
  "The data was restored, but the schedules could not be written to the server: {error}": "تمت استعادة البيانات، لكن تعذرت كتابة الجداول على الخادم: {error}",
  "Cloud backup failed": "فشل النسخ الاحتياطي السحابي",
- "The backup could not be uploaded to {count} destination|The backup could not be uploaded to {count} destinations": { "zero": "تعذر رفع النسخة إلى {count} وجهة", "one": "تعذر رفع النسخة إلى وجهة واحدة", "two": "تعذر رفع النسخة إلى وجهتين", "few": "تعذر رفع النسخة إلى {count} وجهات", "many": "تعذر رفع النسخة إلى {count} وجهة", "other": "تعذر رفع النسخة إلى {count} وجهة" }
+ "The backup could not be uploaded to {count} destination|The backup could not be uploaded to {count} destinations": { "zero": "تعذر رفع النسخة إلى {count} وجهة", "one": "تعذر رفع النسخة إلى وجهة واحدة", "two": "تعذر رفع النسخة إلى وجهتين", "few": "تعذر رفع النسخة إلى {count} وجهات", "many": "تعذر رفع النسخة إلى {count} وجهة", "other": "تعذر رفع النسخة إلى {count} وجهة" },
+ "Sign in and allow access:": "سجّل الدخول واسمح بالوصول:",
+ "Sign in with {service}": "تسجيل الدخول باستخدام {service}",
+ "If no tab opened, {link}.": "إذا لم تُفتح أي علامة تبويب، {link}.",
+ "open the sign-in page": "افتح صفحة تسجيل الدخول",
+ "After you allow access, that tab shows that the page cannot be reached. That is expected: copy the whole address from its address bar.": "بعد السماح بالوصول، تعرض علامة التبويب تلك أن الصفحة غير قابلة للوصول. هذا متوقع: انسخ العنوان كاملًا من شريط العنوان.",
+ "Address of that page": "عنوان تلك الصفحة",
+ "Or run rclone on your own computer": "أو شغّل rclone على حاسوبك",
+ "The sign-in could not be started: {error}": "تعذر بدء تسجيل الدخول: {error}",
+ "rclone did not answer": "لم يستجب rclone",
+ "Sign in again: this sign-in has ended": "سجّل الدخول من جديد: انتهى تسجيل الدخول هذا",
+ "Paste the whole address of the page that could not be reached": "الصق العنوان الكامل للصفحة التي تعذر الوصول إليها",
+ "This address belongs to an older sign-in. Sign in again and paste the new address.": "هذا العنوان يخص تسجيل دخول أقدم. سجّل الدخول من جديد والصق العنوان الجديد.",
+ "Access was not allowed ({error})": "لم يُسمح بالوصول ({error})",
+ "{service} did not give access: {error}": "لم يمنح {service} الوصول: {error}"
 }

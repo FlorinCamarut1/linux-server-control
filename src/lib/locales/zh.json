@@ -1039,5 +1039,19 @@
  "Backup not found": "未找到备份",
  "The data was restored, but the schedules could not be written to the server: {error}": "数据已恢复，但计划任务无法写入服务器：{error}",
  "Cloud backup failed": "云备份失败",
- "The backup could not be uploaded to {count} destination|The backup could not be uploaded to {count} destinations": { "other": "备份无法上传到 {count} 个目标" }
+ "The backup could not be uploaded to {count} destination|The backup could not be uploaded to {count} destinations": { "other": "备份无法上传到 {count} 个目标" },
+ "Sign in and allow access:": "登录并允许访问：",
+ "Sign in with {service}": "使用 {service} 登录",
+ "If no tab opened, {link}.": "如果没有打开新标签页，请{link}。",
+ "open the sign-in page": "打开登录页面",
+ "After you allow access, that tab shows that the page cannot be reached. That is expected: copy the whole address from its address bar.": "允许访问后，该标签页会显示无法访问此页面。这是正常的：请从其地址栏复制完整地址。",
+ "Address of that page": "该页面的地址",
+ "Or run rclone on your own computer": "或在你自己的电脑上运行 rclone",
+ "The sign-in could not be started: {error}": "无法开始登录：{error}",
+ "rclone did not answer": "rclone 没有响应",
+ "Sign in again: this sign-in has ended": "请重新登录：本次登录已结束",
+ "Paste the whole address of the page that could not be reached": "请粘贴无法访问的那个页面的完整地址",
+ "This address belongs to an older sign-in. Sign in again and paste the new address.": "此地址属于之前的一次登录。请重新登录并粘贴新地址。",
+ "Access was not allowed ({error})": "未允许访问（{error}）",
+ "{service} did not give access: {error}": "{service} 未授予访问权限：{error}"
 }

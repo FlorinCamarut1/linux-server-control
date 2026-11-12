@@ -1039,5 +1039,19 @@
  "Backup not found": "Copia no encontrada",
  "The data was restored, but the schedules could not be written to the server: {error}": "Los datos se restauraron, pero las tareas programadas no se pudieron escribir en el servidor: {error}",
  "Cloud backup failed": "Falló la copia en la nube",
- "The backup could not be uploaded to {count} destination|The backup could not be uploaded to {count} destinations": { "one": "No se pudo subir la copia a {count} destino", "many": "No se pudo subir la copia a {count} de destinos", "other": "No se pudo subir la copia a {count} destinos" }
+ "The backup could not be uploaded to {count} destination|The backup could not be uploaded to {count} destinations": { "one": "No se pudo subir la copia a {count} destino", "many": "No se pudo subir la copia a {count} de destinos", "other": "No se pudo subir la copia a {count} destinos" },
+ "Sign in and allow access:": "Inicia sesión y permite el acceso:",
+ "Sign in with {service}": "Iniciar sesión con {service}",
+ "If no tab opened, {link}.": "Si no se abrió ninguna pestaña, {link}.",
+ "open the sign-in page": "abre la página de inicio de sesión",
+ "After you allow access, that tab shows that the page cannot be reached. That is expected: copy the whole address from its address bar.": "Después de permitir el acceso, esa pestaña indica que no se puede acceder a la página. Es lo esperado: copia la dirección completa de su barra de direcciones.",
+ "Address of that page": "Dirección de esa página",
+ "Or run rclone on your own computer": "O ejecuta rclone en tu propio ordenador",
+ "The sign-in could not be started: {error}": "No se pudo iniciar el inicio de sesión: {error}",
+ "rclone did not answer": "rclone no respondió",
+ "Sign in again: this sign-in has ended": "Vuelve a iniciar sesión: este inicio de sesión ha terminado",
+ "Paste the whole address of the page that could not be reached": "Pega la dirección completa de la página a la que no se pudo acceder",
+ "This address belongs to an older sign-in. Sign in again and paste the new address.": "Esta dirección pertenece a un inicio de sesión anterior. Vuelve a iniciar sesión y pega la nueva dirección.",
+ "Access was not allowed ({error})": "No se permitió el acceso ({error})",
+ "{service} did not give access: {error}": "{service} no dio acceso: {error}"
 }

@@ -1039,5 +1039,19 @@
  "Backup not found": "بیک اپ نہیں ملا",
  "The data was restored, but the schedules could not be written to the server: {error}": "ڈیٹا بحال ہو گیا، لیکن شیڈول سرور پر نہیں لکھے جا سکے: {error}",
  "Cloud backup failed": "کلاؤڈ بیک اپ ناکام",
- "The backup could not be uploaded to {count} destination|The backup could not be uploaded to {count} destinations": { "one": "بیک اپ {count} منزل پر اپ لوڈ نہیں ہو سکا", "other": "بیک اپ {count} منزلوں پر اپ لوڈ نہیں ہو سکا" }
+ "The backup could not be uploaded to {count} destination|The backup could not be uploaded to {count} destinations": { "one": "بیک اپ {count} منزل پر اپ لوڈ نہیں ہو سکا", "other": "بیک اپ {count} منزلوں پر اپ لوڈ نہیں ہو سکا" },
+ "Sign in and allow access:": "سائن ان کریں اور اجازت دیں:",
+ "Sign in with {service}": "{service} سے سائن ان کریں",
+ "If no tab opened, {link}.": "اگر کوئی ٹیب نہیں کھلا تو {link}۔",
+ "open the sign-in page": "سائن ان صفحہ کھولیں",
+ "After you allow access, that tab shows that the page cannot be reached. That is expected: copy the whole address from its address bar.": "اجازت دینے کے بعد وہ ٹیب دکھائے گا کہ صفحے تک رسائی نہیں ہو سکتی۔ یہ متوقع ہے: اس کے ایڈریس بار سے پورا پتہ کاپی کریں۔",
+ "Address of that page": "اس صفحے کا پتہ",
+ "Or run rclone on your own computer": "یا اپنے کمپیوٹر پر rclone چلائیں",
+ "The sign-in could not be started: {error}": "سائن ان شروع نہیں ہو سکا: {error}",
+ "rclone did not answer": "rclone نے جواب نہیں دیا",
+ "Sign in again: this sign-in has ended": "دوبارہ سائن ان کریں: یہ سائن ان ختم ہو چکا ہے",
+ "Paste the whole address of the page that could not be reached": "جس صفحے تک رسائی نہیں ہو سکی اس کا پورا پتہ پیسٹ کریں",
+ "This address belongs to an older sign-in. Sign in again and paste the new address.": "یہ پتہ پرانے سائن ان کا ہے۔ دوبارہ سائن ان کریں اور نیا پتہ پیسٹ کریں۔",
+ "Access was not allowed ({error})": "اجازت نہیں دی گئی ({error})",
+ "{service} did not give access: {error}": "{service} نے رسائی نہیں دی: {error}"
 }

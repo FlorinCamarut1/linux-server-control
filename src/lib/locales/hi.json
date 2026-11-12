@@ -1039,5 +1039,19 @@
  "Backup not found": "बैकअप नहीं मिला",
  "The data was restored, but the schedules could not be written to the server: {error}": "डेटा बहाल हो गया, लेकिन शेड्यूल सर्वर पर नहीं लिखे जा सके: {error}",
  "Cloud backup failed": "क्लाउड बैकअप विफल",
- "The backup could not be uploaded to {count} destination|The backup could not be uploaded to {count} destinations": { "one": "बैकअप {count} गंतव्य पर अपलोड नहीं हो सका", "other": "बैकअप {count} गंतव्यों पर अपलोड नहीं हो सका" }
+ "The backup could not be uploaded to {count} destination|The backup could not be uploaded to {count} destinations": { "one": "बैकअप {count} गंतव्य पर अपलोड नहीं हो सका", "other": "बैकअप {count} गंतव्यों पर अपलोड नहीं हो सका" },
+ "Sign in and allow access:": "साइन इन करें और अनुमति दें:",
+ "Sign in with {service}": "{service} से साइन इन करें",
+ "If no tab opened, {link}.": "अगर कोई टैब नहीं खुला, तो {link}।",
+ "open the sign-in page": "साइन-इन पेज खोलें",
+ "After you allow access, that tab shows that the page cannot be reached. That is expected: copy the whole address from its address bar.": "अनुमति देने के बाद वह टैब दिखाएगा कि पेज तक नहीं पहुँचा जा सकता। यह अपेक्षित है: उसके एड्रेस बार से पूरा पता कॉपी करें।",
+ "Address of that page": "उस पेज का पता",
+ "Or run rclone on your own computer": "या अपने कंप्यूटर पर rclone चलाएँ",
+ "The sign-in could not be started: {error}": "साइन इन शुरू नहीं हो सका: {error}",
+ "rclone did not answer": "rclone ने जवाब नहीं दिया",
+ "Sign in again: this sign-in has ended": "फिर से साइन इन करें: यह साइन इन समाप्त हो गया है",
+ "Paste the whole address of the page that could not be reached": "जिस पेज तक नहीं पहुँचा जा सका, उसका पूरा पता चिपकाएँ",
+ "This address belongs to an older sign-in. Sign in again and paste the new address.": "यह पता पुराने साइन इन का है। फिर से साइन इन करें और नया पता चिपकाएँ।",
+ "Access was not allowed ({error})": "अनुमति नहीं दी गई ({error})",
+ "{service} did not give access: {error}": "{service} ने पहुँच नहीं दी: {error}"
 }

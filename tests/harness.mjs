@@ -112,7 +112,7 @@ export function loadServer({ env = {}, host = () => ({ stdout: "" }), delay = 0,
     },
   };
   const server = loadModule("../src/lib/server.ts", {
-    Buffer, setTimeout, clearTimeout, setInterval, clearInterval, ReadableStream, fetch: fetchFor, AbortSignal,
+    Buffer, setTimeout, clearTimeout, setInterval, clearInterval, ReadableStream, fetch: fetchFor, AbortSignal, URL, URLSearchParams,
     ...(now && { Date: class extends Date { static now() { return now(); } } }),
     console: { ...console, error() {} },
     process: { env: { DATA_DIR: data, SSH_TARGET: "", ALLOWED_PATHS: "/srv/scripts", SCRIPT_ROOT: "/srv/scripts", MONITORED_PATHS: "/srv/example", ...env } },
