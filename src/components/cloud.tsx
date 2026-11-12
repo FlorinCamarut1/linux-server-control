@@ -48,7 +48,7 @@ export function CloudBackupPanel() {
     <Panel title={t("Cloud backup")} note={t("Backs up the whole dashboard, encrypted, to OneDrive, Google Drive or Proton Drive, and deletes the oldest backups.")}
       extra={<div className="actions">
         <Btn onClick={() => setAdding(null)} disabled={!data}><Cloud size={16} />{t("Add destination")}</Btn>
-        <Btn className="primary" onClick={() => backUp()} disabled={!ready || !!backingUp}>{backingUp === "all" ? <Loader2 className="spin" size={16} /> : <CloudUpload size={16} />}{t("Back up now")}</Btn>
+        <Btn className="primary" onClick={() => backUp()} disabled={!ready || !!backingUp}><CloudUpload size={16} />{t("Back up now")}</Btn>
       </div>}>
       {error && <div className="panel-body"><div className="alert">{error}</div></div>}
       {data && <ScheduleForm data={data} saved={load} />}
@@ -162,7 +162,7 @@ function DestinationForm({ destination, close, saved }: { destination: Destinati
           <div className="cloud-steps">
             {!manual && <ol>
               <li>{t("Sign in and allow access:")}
-                <div className="actions"><Btn type="button" className="primary" disabled={starting} onClick={signIn}>{starting ? <Loader2 className="spin" size={15} /> : <LogIn size={15} />}{t("Sign in with {service}", { service: SERVICES[type] })}</Btn></div>
+                <div className="actions"><Btn type="button" className="primary" disabled={starting} onClick={signIn}><LogIn size={15} />{t("Sign in with {service}", { service: SERVICES[type] })}</Btn></div>
                 {signInPage && <small>{rich(t("If no tab opened, {link}."), { link: <a href={signInPage} target="_blank" rel="noopener noreferrer">{t("open the sign-in page")}</a> })}</small>}
               </li>
               <li>{t("After you allow access, that tab shows that the page cannot be reached. That is expected: copy the whole address from its address bar.")}</li>

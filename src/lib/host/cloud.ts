@@ -369,7 +369,7 @@ export function backupNow(only?: string) {
     for (const destination of targets) {
       let last: LastBackup;
       try {
-        await rclone(["rcat", remote(destination, file)], sealed);
+        await upload(destination, file, sealed);
         await prune(destination, all.schedule.keep);
         last = { at: Date.now(), ok: true, file, bytes: sealed.length };
         audit(`cloud backup ${file} uploaded to ${destination.name}`);
@@ -388,7 +388,7 @@ export function backupNow(only?: string) {
   return busy.lscBackup;
 }
 type CloudFile = { Name: string; Size: number; ModTime: string; IsDir?: boolean };
-export async function listBackups(id: unknown) {
+export async function listBackups(id: unknown, withEmpty = false) {
   const destination = findDestination(id);
   let files: CloudFile[];
   try {
@@ -398,13 +398,38 @@ export async function listBackups(id: unknown) {
     if (error instanceof Error && /directory not found|not found/i.test(error.message)) return [];
     throw error;
   }
-  return files.filter((item) => !item.IsDir && BACKUP_NAME.test(item.Name))
+  return files.filter((item) => !item.IsDir && BACKUP_NAME.test(item.Name) && (withEmpty || item.Size > 0))
     .map((item) => ({ name: item.Name, bytes: item.Size, at: Date.parse(item.ModTime) || 0 }))
     .sort((a, b) => b.name.localeCompare(a.name));
 }
+// rclone uploads through an upload session, which OneDrive refuses for some
+// personal accounts (401 from my.microsoftpersonalcontent.com) while it takes
+// the same file in one request. So a backup up to the size OneDrive takes in
+// one request goes that way, with the token rclone keeps; rclone renews the
+// token first, as it makes sure the folder is there.
+const ONEDRIVE_SIMPLE_UPLOAD_MAX = 250 * 1024 * 1024;
+async function upload(destination: Destination, file: string, sealed: Buffer) {
+  if (destination.type !== "onedrive" || sealed.length > ONEDRIVE_SIMPLE_UPLOAD_MAX) return void await rclone(["rcat", remote(destination, file)], sealed);
+  await rclone(["mkdir", remote(destination)], undefined, 120000);
+  const section = new Map(readConfig().get(destination.id) ?? []);
+  let token = "";
+  try { token = JSON.parse(section.get("token") ?? "").access_token; } catch {}
+  const drive = section.get("drive_id");
+  if (!token || !drive) throw Error(t("Cloud destination not found"));
+  const where = [...destination.folder.split("/"), file].map(encodeURIComponent).join("/");
+  const answer = await fetch(`https://graph.microsoft.com/v1.0/drives/${encodeURIComponent(drive)}/root:/${where}:/content`, {
+    method: "PUT", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/octet-stream" }, body: new Uint8Array(sealed), signal: AbortSignal.timeout(10 * 60 * 1000),
+  });
+  if (answer.ok) return;
+  let detail = "";
+  try { detail = (await answer.json() as { error?: { message?: string } }).error?.message ?? ""; } catch {}
+  throw Error(`OneDrive: HTTP ${answer.status}${detail ? ` (${detail})` : ""}`);
+}
 async function prune(destination: Destination, keep: number) {
-  const backups = await listBackups(destination.id);
-  for (const old of backups.slice(keep)) await rclone(["deletefile", remote(destination, old.name)], undefined, 120000);
+  // An empty backup is what a failed upload leaves; it goes, and is not counted.
+  const backups = await listBackups(destination.id, true);
+  const empty = backups.filter((item) => item.bytes === 0), kept = backups.filter((item) => item.bytes > 0);
+  for (const old of [...empty, ...kept.slice(keep)]) await rclone(["deletefile", remote(destination, old.name)], undefined, 120000);
 }
 export async function deleteBackup(id: unknown, name: unknown) {
   const destination = findDestination(id);

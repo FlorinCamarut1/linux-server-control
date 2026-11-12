@@ -287,3 +287,37 @@ test("a wrong address leaves the sign-in waiting, and a refused or bad code says
   await server.startSignIn("onedrive");
   await assert.rejects(server.startSignIn("protondrive"), /Choose a cloud service/);
 }));
+
+test("a OneDrive backup goes in one request, and empty backups left by failed uploads are deleted", async () => {
+  const cloud = fakeCloud();
+  const puts = [];
+  let refuse = false;
+  const fetch = async (url, options = {}) => {
+    if (url.endsWith("/me/drive")) return { ok: true, status: 200, json: async () => ({ id: "1FA1EA044EF32604", driveType: "personal", owner: { user: { email: "me@example.com" } } }) };
+    puts.push({ url, method: options.method, authorization: options.headers.Authorization, bytes: options.body.length });
+    if (refuse) return { ok: false, status: 401, json: async () => ({ error: { code: "unauthenticated", message: "Unauthenticated" } }) };
+    // Kept where the fake rclone lists the folder from.
+    const name = decodeURIComponent(/\/([^/]+):\/content$/.exec(url)[1]);
+    writeFileSync(path.join(cloud.cloud, destination.id, "My Backups", name), Buffer.from(options.body));
+    return { ok: true, status: 201, json: async () => ({}) };
+  };
+  const { server, data } = loadServer({ host: cloud.host, fetch });
+  writeFileSync(path.join(data, "config.json"), JSON.stringify({ username: "admin", salt: "00", password: "hash" }));
+  server.saveBackupSettings({ hour: "3", weekday: "0", keep: "14", timeZone: "UTC", passphrase: "correct horse battery" });
+  const destination = plain(await server.saveDestination({ type: "onedrive", name: "OneDrive", folder: "My Backups", token: TOKEN }));
+  // What two failed uploads left behind.
+  for (const name of ["lsc-backup-2026-11-12T18-13-10-110Z.lscb", "lsc-backup-2026-11-12T18-14-45-714Z.lscb"]) writeFileSync(path.join(cloud.cloud, destination.id, "My Backups", name), "");
+  const [result] = plain(await server.backupNow());
+  assert.equal(result.ok, true);
+  assert.equal(puts.length, 1);
+  assert.match(puts[0].url, /^https:\/\/graph\.microsoft\.com\/v1\.0\/drives\/1FA1EA044EF32604\/root:\/My%20Backups\/lsc-backup-[\w-]+\.lscb:\/content$/);
+  assert.equal(puts[0].method, "PUT");
+  assert.equal(puts[0].authorization, "Bearer ya29.access", "the token rclone keeps");
+  assert.ok(!cloud.calls.some((call) => call.command === "rcat"), "not through rclone's upload session");
+  assert.deepEqual(cloud.files(destination), [result.file], "the empty backups are gone");
+  assert.equal(plain(await server.listBackups(destination.id)).length, 1);
+  refuse = true;
+  const [failed] = plain(await server.backupNow());
+  assert.equal(failed.ok, false);
+  assert.equal(failed.error, "OneDrive: HTTP 401 (Unauthenticated)");
+});
