@@ -13,6 +13,7 @@ It is intended for people comfortable administering their own server. It runs en
 - Chart CPU, RAM, temperature, and storage over the last day, week, or month.
 - Record power use and cost from Tapo, Shelly, Tasmota, or Home Assistant smart plugs.
 - See the SMART health of the server's disks, and get told when one starts to fail.
+- Back up the whole dashboard, encrypted, to OneDrive, Google Drive or Proton Drive on a schedule, keeping the latest few.
 - Set alert rules for temperature, CPU, RAM, disks and failed runs, and see on one page what needs attention.
 - Get alerts, failed runs, and power device changes on Discord, Slack, ntfy, or any webhook.
 - Add it to a phone's home screen, or install it on a computer, to open it as an app.

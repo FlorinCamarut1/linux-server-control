@@ -47,7 +47,7 @@ function loadModule(entry, globals, modules = () => undefined) {
 // its stdout in parts, an array of them `delay` apart, and a process that was
 // ended is marked `killed`. With realProcesses, commands run for real instead,
 // for tests of running scripts. `now` replaces Date.now().
-export function loadServer({ env = {}, host = () => ({ stdout: "" }), delay = 0, realProcesses = false, now } = {}) {
+export function loadServer({ env = {}, host = () => ({ stdout: "" }), delay = 0, realProcesses = false, now, fetch: fetchFor = fetch } = {}) {
   const data = mkdtempSync(path.join(tmpdir(), "lsc-test-"));
   const commands = [];
   const childProcess = {
@@ -112,7 +112,7 @@ export function loadServer({ env = {}, host = () => ({ stdout: "" }), delay = 0,
     },
   };
   const server = loadModule("../src/lib/server.ts", {
-    Buffer, setTimeout, clearTimeout, setInterval, clearInterval, ReadableStream,
+    Buffer, setTimeout, clearTimeout, setInterval, clearInterval, ReadableStream, fetch: fetchFor, AbortSignal,
     ...(now && { Date: class extends Date { static now() { return now(); } } }),
     console: { ...console, error() {} },
     process: { env: { DATA_DIR: data, SSH_TARGET: "", ALLOWED_PATHS: "/srv/scripts", SCRIPT_ROOT: "/srv/scripts", MONITORED_PATHS: "/srv/example", ...env } },

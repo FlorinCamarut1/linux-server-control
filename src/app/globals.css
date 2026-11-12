@@ -1369,6 +1369,37 @@ a.button {
 .badge svg {
   flex: 0 0 auto;
 }
+/* Cloud backup: the schedule's fields side by side, and the steps to connect. */
+.cloud-schedule .form-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 16px;
+}
+.cloud-schedule .form-row label {
+  flex: 1 1 140px;
+}
+.cloud-steps ol {
+  margin: 0 0 12px;
+  padding-inline-start: 20px;
+  color: var(--text-soft);
+}
+.cloud-steps li {
+  margin-bottom: 8px;
+}
+.command-copy {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+.command-copy code {
+  flex: 1;
+  overflow-x: auto;
+  white-space: nowrap;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm, 6px);
+  background: var(--hover);
+}
 /* What a disk reports, under its details. */
 .disk-problems {
   color: var(--danger-text);

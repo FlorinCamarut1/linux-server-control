@@ -717,3 +717,45 @@ test("a container's log is followed as it is written, until it is closed", async
   await expect(viewer).toBeHidden();
   await expect.poll(following).toBe(false);
 });
+
+test("the dashboard is backed up to the cloud, restored from there, and old backups deleted", async ({ page }) => {
+  await page.goto("/#settings");
+  const panel = page.locator("section.panel", { has: page.getByRole("heading", { name: "Cloud backup", exact: true }) });
+  await expect(panel.getByText("Set an encryption passphrase first.", { exact: false })).toBeVisible();
+  await panel.getByLabel("Encryption passphrase").fill("browser test passphrase");
+  await panel.getByRole("button", { name: "Save backup settings" }).click();
+  await expect(panel.getByText("Backup settings saved.")).toBeVisible();
+  // Google Drive, with what `rclone authorize` prints.
+  await panel.getByRole("button", { name: "Add destination" }).click();
+  const form = page.getByRole("dialog", { name: "Add cloud destination" });
+  await form.getByLabel("Service").selectOption("drive");
+  await expect(form.getByText('rclone authorize "drive"', { exact: false })).toBeVisible();
+  await form.getByLabel("Code from rclone").fill('Paste the following into your remote machine --->\n{"access_token":"a","token_type":"Bearer","refresh_token":"r","expiry":"2026-11-12T17:00:00Z"}\n<---End paste');
+  await form.getByRole("button", { name: "Connect" }).click();
+  await expect(form).toBeHidden();
+  const row = panel.locator(".schedule-row", { hasText: "Google Drive" });
+  await expect(row).toContainText("LinuxServerControl");
+  await panel.getByRole("button", { name: "Back up now" }).click();
+  await expect(row).toContainText("Last backup", { timeout: 30000 });
+  // Restoring brings back what was backed up, and the browser stays signed in.
+  await row.getByRole("button", { name: /^Actions for/ }).click();
+  await page.getByRole("menu").getByRole("menuitem", { name: "Backups" }).click();
+  const list = page.getByRole("dialog", { name: "Backups in Google Drive" });
+  const backup = list.locator(".schedule-row");
+  await expect(backup).toHaveCount(1);
+  await backup.getByRole("button", { name: /^Actions for/ }).click();
+  await page.getByRole("menu").getByRole("menuitem", { name: "Restore" }).click();
+  await modal(page).getByRole("button", { name: "Restore", exact: true }).click();
+  await expect(page.getByText("Backup restored. The page reloads.")).toBeVisible({ timeout: 30000 });
+  await page.waitForLoadState("load");
+  await expect(heading(page, "Settings")).toBeVisible({ timeout: 30000 });
+  // Deleting a backup leaves none.
+  const again = page.locator("section.panel", { has: page.getByRole("heading", { name: "Cloud backup", exact: true }) }).locator(".schedule-row", { hasText: "Google Drive" });
+  await again.getByRole("button", { name: /^Actions for/ }).click();
+  await page.getByRole("menu").getByRole("menuitem", { name: "Backups" }).click();
+  const reopened = page.getByRole("dialog", { name: "Backups in Google Drive" });
+  await reopened.locator(".schedule-row").getByRole("button", { name: /^Actions for/ }).click();
+  await page.getByRole("menu").getByRole("menuitem", { name: "Delete" }).click();
+  await modal(page).getByRole("button", { name: "Delete", exact: true }).click();
+  await expect(reopened.getByText("No backups here yet")).toBeVisible();
+});

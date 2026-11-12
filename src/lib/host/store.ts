@@ -70,6 +70,7 @@ export const EVENT_TYPES = {
   "power-offline": msg("Power device stopped responding"),
   "power-online": msg("Power device responding again"),
   "disk-health": msg("Disk reports a problem, or is healthy again"),
+  "backup-failed": msg("Cloud backup failed"),
 };
 export type EventType = keyof typeof EVENT_TYPES;
 export type DashboardEvent = { type: EventType; title: string; message: string; severity: "info" | "warning" | "critical" | "success" };

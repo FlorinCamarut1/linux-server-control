@@ -71,6 +71,10 @@ writeFileSync(path.join(bin, "udisksctl"), `#!/bin/sh
 exit 1
 `, { mode: 0o755 });
 
+// An `rclone` that keeps the cloud backups in e2e/.tmp/cloud.
+mkdirSync(path.join(tmp, "cloud"));
+writeFileSync(path.join(bin, "rclone"), "#!/bin/sh\n# An rclone whose remotes are folders under CLOUD: \"lscabc:Folder/file\" is CLOUD/lscabc/Folder/file.\nwhile [ \"$1\" = --config ] || [ \"$1\" = --low-level-retries ]; do shift 2; done\ncmd=$1; shift\n[ \"$cmd\" = obscure ] && { cat >/dev/null; echo obscured; exit 0; }\nfor last; do :; done\nwhere=\"CLOUD/${last%%:*}/${last#*:}\"\ncase \"$cmd\" in\n  mkdir) mkdir -p \"$where\" ;;\n  lsjson) [ -d \"$where\" ] || { echo 'ERROR : directory not found' >&2; exit 3; }; printf '['; sep=; for f in \"$where\"/*; do [ -f \"$f\" ] || continue; printf '%s{\"Name\":\"%s\",\"Size\":%s,\"ModTime\":\"%s\",\"IsDir\":false}' \"$sep\" \"$(basename \"$f\")\" \"$(stat -c %s \"$f\")\" \"$(date -u -r \"$f\" +%Y-%m-%dT%H:%M:%SZ)\"; sep=,; done; printf ']' ;;\n  rcat) mkdir -p \"$(dirname \"$where\")\"; cat > \"$where\" ;;\n  cat) cat \"$where\" ;;\n  deletefile) rm -f \"$where\" ;;\n  *) exit 1 ;;\nesac\n".replaceAll("CLOUD", path.join(tmp, "cloud")), { mode: 0o755 });
+
 writeFileSync(path.join(bin, "sudo"), `#!/bin/sh
 case "$*" in
   "-S -k -p  -v") read -r password; [ "$password" = sudo-test-password ]; exit ;;

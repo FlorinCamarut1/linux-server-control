@@ -21,6 +21,14 @@ import {
   exportConfiguration,
   failingCronRuns,
   folderSizes,
+  backupNow,
+  cloudState,
+  deleteBackup,
+  deleteDestination,
+  listBackups,
+  restoreBackup,
+  saveBackupSettings,
+  saveDestination,
   describeProblem,
   diskHealth,
   followContainerLogs,
@@ -393,6 +401,30 @@ const scriptRoutes: Routes<Context> = {
   "POST schedule/toggle": ({ body }) => changeSchedule(body, "toggle"),
 };
 
+// Cloud backup, for administrators only: it reads and replaces everything.
+const cloudRoutes: Routes<Context> = {
+  "GET cloud": () => NextResponse.json(cloudState()),
+  "POST cloud/settings": ({ body }) => {
+    saveBackupSettings(body);
+    return ok();
+  },
+  "POST cloud/destination/save": async ({ body }) => ok({ destination: await saveDestination(body) }),
+  "POST cloud/destination/delete": ({ body }) => {
+    deleteDestination(body.id || "");
+    return ok();
+  },
+  "POST cloud/backup": async ({ body }) => ok({ results: await backupNow(body.id || undefined) }),
+  "POST cloud/backups": async ({ body }) => NextResponse.json({ backups: await listBackups(body.id) }),
+  "POST cloud/backups/delete": async ({ body }) => {
+    await deleteBackup(body.id, body.name);
+    return ok();
+  },
+  "POST cloud/restore": async ({ body }) => {
+    await restoreBackup(body.id, body.name, body.passphrase || undefined);
+    return ok();
+  },
+};
+
 const historyRoutes: Routes<Context> = {
   "GET history/runs": history,
   "GET history/metrics": ({ req }) => {
@@ -474,4 +506,5 @@ export const routes: Routes<Context> = {
   ...fileRoutes,
   ...scriptRoutes,
   ...historyRoutes,
+  ...cloudRoutes,
 };
