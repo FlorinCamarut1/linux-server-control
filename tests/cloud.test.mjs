@@ -321,3 +321,17 @@ test("a OneDrive backup goes in one request, and empty backups left by failed up
   assert.equal(failed.ok, false);
   assert.equal(failed.error, "OneDrive: HTTP 401 (Unauthenticated)");
 });
+
+test("the token is read from rclone authorize's output in both of its forms", () => {
+  const { server } = loadServer();
+  // Given only the service, rclone prints the token itself.
+  assert.equal(server.tokenFrom(AUTHORIZE_OUTPUT).refresh_token, "1//refresh");
+  assert.equal(server.tokenFrom(TOKEN).access_token, "ya29.access");
+  // Given settings as well, as for Google Drive's scope, it prints settings
+  // back as unpadded URL-safe base64 of {"token":"{…}"}.
+  const settings = Buffer.from(JSON.stringify({ token: TOKEN })).toString("base64url");
+  assert.ok(!settings.includes("{") && !settings.endsWith("="));
+  assert.equal(server.tokenFrom(`2026/11/12 NOTICE: Got code\nPaste the following into your remote machine --->\n${settings}\n<---End paste\n`).refresh_token, "1//refresh");
+  assert.equal(server.tokenFrom(settings).access_token, "ya29.access", "that part alone");
+  assert.throws(() => server.tokenFrom(Buffer.from('{"scope":"drive.file"}').toString("base64url")), /Paste what rclone authorize printed/);
+});
