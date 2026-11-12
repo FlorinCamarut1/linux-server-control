@@ -371,7 +371,7 @@ test("the monitored storage paths are part of a backup", async () => {
 test("the root folder can be a monitored storage path", async () => {
   // The installer and the guide use "/" on servers without other disks; a
   // trimmed trailing slash used to leave nothing of it.
-  const { server, readJson } = loadServer({ env: { MONITORED_PATHS: "/, /srv/media//" }, host: (argv) => (argv[0] === "realpath" ? { stdout: argv.at(-1) + "\n" } : {}) });
+  const { server, readJson } = loadServer({ env: { MONITORED_PATHS: "/, /srv/media//" }, host: (argv) => (argv[3] === "resolve" ? { stdout: "folder\n" + argv.at(-1) } : {}) });
   assert.deepEqual(plain(server.monitoredPaths()), ["/", "/srv/media"]);
   server.save("monitored-paths", ["/srv/media"]);
   assert.equal(await server.addMonitoredPath("/"), "/");

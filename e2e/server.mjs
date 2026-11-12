@@ -43,6 +43,26 @@ case "$1" in
 esac
 `, { mode: 0o755 });
 
+// A `docker` with two containers, so the tests do not depend on this machine's
+// Docker. A container's log has three lines and then a new one every half
+// second, for as long as it is read; `docker logs` leaves its process ID in
+// e2e/.tmp/docker-logs.pid, so a test can tell whether a log is still followed.
+const container = (ID, Names, Image, State, Status) => JSON.stringify({ ID, Names, Image, State, Status, Ports: "", Mounts: "", Networks: "bridge", Labels: "" });
+writeFileSync(path.join(bin, "docker"), `#!/bin/sh
+case "$1" in
+  ps)
+    echo '${container("3f1c2a9b7d01", "jellyfin", "example/jellyfin:latest", "running", "Up 3 days")}'
+    echo '${container("a9e1c3f5d708", "backup", "example/backup:latest", "exited", "Exited (0) 5 hours ago")}'
+    ;;
+  logs)
+    echo $$ > '${path.join(tmp, "docker-logs.pid")}'
+    for line in 1 2 3; do echo "2026-09-27T03:00:0\${line}Z earlier line \${line}"; done
+    line=3
+    while :; do sleep 0.5; line=$((line + 1)); echo "2026-09-27T03:00:10Z new line \${line}"; done
+    ;;
+esac
+`, { mode: 0o755 });
+
 writeFileSync(path.join(bin, "sudo"), `#!/bin/sh
 case "$*" in
   "-S -k -p  -v") read -r password; [ "$password" = sudo-test-password ]; exit ;;

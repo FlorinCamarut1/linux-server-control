@@ -1,8 +1,8 @@
 "use client";
 import { useEffect, useState } from "react";
+import dynamic from "next/dynamic";
 import { api } from "@/lib/client-api";
 import { CertificateSignIn } from "@/components/certificate";
-import { ServerSettingsForm } from "@/components/settings";
 import { Btn, PreflightList, rich } from "@/components/ui";
 import { LanguageSelect } from "@/components/language";
 import { t } from "@/lib/i18n";
@@ -10,6 +10,8 @@ import type { PreflightCheck } from "@/lib/types";
 import {
   Loader2,
 } from "lucide-react";
+// Only the setup screen has the connection form, which comes with Settings.
+const ServerSettingsForm = dynamic(() => import("@/components/settings").then((module) => module.ServerSettingsForm), { ssr: false });
 export function Login({
   error,
   done,

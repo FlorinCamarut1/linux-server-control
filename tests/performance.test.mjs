@@ -4,36 +4,37 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { loadServer, plain, realHost } from "./harness.mjs";
+import { loadServer, plain, realHost, snapshotAnswer } from "./harness.mjs";
 
 function snapshotHost({ dockerError = "", failStats = false } = {}) {
   return (argv) => {
-    if (argv[0] === "docker") return dockerError ? { code: 1, stderr: dockerError } : { stdout: '{"Names":"example"}\n' };
-    if (argv[0] === "bash") return failStats ? { code: 255, stderr: "ssh: connect to host server port 22: Connection refused" } : { stdout: "cpuUsagePercent=12.5\nmemoryTotalBytes=1000\ntime=27.09.2026 03:00:00 EEST\nstorage=/dev/example 1000 200 800 20% /srv/example\n" };
-    return { stdout: "" };
+    if (failStats) return { code: 255, stderr: "ssh: connect to host server port 22: Connection refused" };
+    return snapshotAnswer(argv, {
+      stats: "cpuUsagePercent=12.5\nmemoryTotalBytes=1000\ntime=27.09.2026 03:00:00 EEST\nstorage=/dev/example 1000 200 800 20% /srv/example\n",
+      ...(dockerError ? { docker: dockerError + "\n", dockerStatus: 1 } : { docker: '{"Names":"example"}\n' }),
+    }) ?? { stdout: "" };
   };
 }
 
 test("simultaneous snapshots share asynchronous host reads; next refresh reads again", async () => {
   const { server, commands } = loadServer({ host: snapshotHost(), delay: 5 });
-  const count = (name) => commands.filter((item) => item.argv[0] === name).length;
   const first = server.hostSnapshot();
   const second = server.hostSnapshot();
   assert.equal(first, second);
   const snapshot = await first;
-  assert.ok(count("docker") && count("bash"));
   assert.equal(snapshot.stats.cpuUsagePercent, 12.5);
   assert.equal(snapshot.stats.storage[0].usedPercent, 20);
-  assert.equal(count("docker"), 1);
+  assert.equal(snapshot.containers[0].Names, "example");
+  assert.equal(commands.length, 1, "a refresh is one host command");
   await server.hostSnapshot();
-  assert.equal(count("docker"), 2);
+  assert.equal(commands.length, 2);
 });
 
 test("the clock and the storage paths are read by the statistics command", async () => {
   const stdout = "cpuUsagePercent=1.0\ntime=27.09.2026 03:00:00 EEST\nstorage=/dev/a 1000 200 800 20% /srv/a\nstorage=\nstorage=/dev/c 4000 3000 1000 75% /srv/c\n";
   const { server, commands } = loadServer({
     env: { MONITORED_PATHS: "/srv/a,/srv/missing,/srv/c" },
-    host: (argv) => (argv[0] === "bash" ? { stdout } : argv[0] === "docker" ? { stdout: "" } : { stdout: "" }),
+    host: (argv) => snapshotAnswer(argv, { stats: stdout }),
   });
   const snapshot = await server.hostSnapshot();
   assert.equal(snapshot.time, "27.09.2026 03:00:00 EEST");
@@ -42,8 +43,7 @@ test("the clock and the storage paths are read by the statistics command", async
     { path: "/srv/missing", usedBytes: null, totalBytes: null, usedPercent: null },
     { path: "/srv/c", usedBytes: 3000, totalBytes: 4000, usedPercent: 75 },
   ]);
-  const stats = commands.filter((item) => item.argv[0] === "bash");
-  assert.deepEqual(stats[0].argv.slice(-3), ["/srv/a", "/srv/missing", "/srv/c"]);
+  assert.deepEqual(commands[0].argv.slice(-3), ["/srv/a", "/srv/missing", "/srv/c"]);
   assert.ok(!commands.some((item) => item.argv[0] === "df" || item.argv[0] === "date"), "no separate process per path or for the clock");
 });
 
@@ -142,7 +142,7 @@ test("failed reads do not poison later snapshots and do not leak the command lin
     return true;
   });
   await assert.rejects(server.hostSnapshot(), /Connection refused/);
-  assert.equal(commands.filter((item) => item.argv[0] === "bash").length, 2);
+  assert.equal(commands.length, 2);
 });
 
 test("a Docker failure empties the container list instead of failing the snapshot", async () => {
@@ -167,14 +167,9 @@ test("a Docker failure empties the container list instead of failing the snapsho
 function countingHost({ busy = 250 } = {}) {
   let total = 100000, idle = 90000;
   return (argv) => {
-    if (argv[0] === "docker") return { stdout: '{"Names":"example"}\n' };
-    if (argv[0] === "sudo") return { stdout: "" };
-    if (argv[0] === "bash") {
-      const sampled = argv.includes("sample");
-      total += 1000; idle += 1000 - busy;
-      return { stdout: `cpuUsagePercent=${sampled ? "5.0" : ""}\ncpuTotal=${total}\ncpuIdle=${idle}\n` };
-    }
-    return { stdout: "" };
+    const sampled = argv.includes("sample");
+    total += 1000; idle += 1000 - busy;
+    return snapshotAnswer(argv, { docker: '{"Names":"example"}\n', rootCron: "", rootSystem: "", rootScript: "stop\n", stats: `cpuUsagePercent=${sampled ? "5.0" : ""}\ncpuTotal=${total}\ncpuIdle=${idle}\n` }) ?? { stdout: "" };
   };
 }
 
@@ -184,28 +179,29 @@ test("CPU usage comes from the previous refresh instead of a sampling pause", as
   assert.equal(first.stats.cpuUsagePercent, 5, "the first refresh samples on the host");
   const second = await server.hostSnapshot();
   assert.equal(second.stats.cpuUsagePercent, 25);
-  const statsCalls = commands.filter((item) => item.argv[0] === "bash").map((item) => item.argv.includes("sample"));
+  const statsCalls = commands.map((item) => item.argv.includes("sample"));
   assert.deepEqual(statsCalls, [true, false]);
 });
 
 test("container sizes are not computed during refreshes", async () => {
   const { server, commands } = loadServer({ host: countingHost() });
   await server.hostSnapshot();
-  const docker = commands.find((item) => item.argv[0] === "docker");
-  assert.ok(!docker.argv.includes("--size"));
+  assert.ok(commands[0].argv[2].includes("docker ps"));
+  assert.ok(!commands.some((item) => item.argv.join(" ").includes("--size")));
 });
 
 test("root helper status is cached and refreshed after root's crontab changes", async () => {
   const { server, commands } = loadServer({ host: countingHost() });
-  const sudoCalls = () => commands.filter((item) => item.argv[0] === "sudo").length;
+  // The refresh reads the status itself when it is due, which it asks for with "root".
+  const asked = () => commands.map((item) => item.argv[6] === "root");
+  const first = await server.hostSnapshot();
+  assert.deepEqual(plain([first.root, first.rootScript]), [{ available: true, cron: "", system: "" }, { available: true, stop: true }]);
   await server.hostSnapshot();
-  const afterFirst = sudoCalls();
-  assert.ok(afterFirst > 0);
-  await server.hostSnapshot();
-  assert.equal(sudoCalls(), afterFirst, "a second refresh reuses the cached status");
+  assert.deepEqual(asked(), [true, false], "a second refresh reuses the cached status");
   server.invalidateRootStatus();
   await server.hostSnapshot();
-  assert.ok(sudoCalls() > afterFirst);
+  assert.deepEqual(asked(), [true, false, true]);
+  assert.ok(!commands.some((item) => item.argv[0] === "sudo"), "no command of its own");
 });
 
 test("the snapshot's cron log is parsed without another host read", async () => {

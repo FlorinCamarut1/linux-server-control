@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import path from "node:path";
 import { msg, t } from "../i18n";
 import { audit } from "./store";
-import { allowedRoots, run, runInput, serverSettings, ssh } from "./ssh";
+import { allowedRoots, resolvePath, run, runInput, serverSettings, ssh } from "./ssh";
 export function isAllowedPath(value: string) {
   return allowedRoots().some((root) => value === root || value.startsWith(root + "/"));
 }
@@ -19,30 +19,29 @@ function refuseHidden(requested: string, resolved: string, hidden: boolean) {
     throw Error(t("Hidden files are shown only after Show hidden files"));
 }
 export async function resolveAllowedDirectory(requested: string, hidden = false) {
-  let directory = allowedRoots()[0];
-  if (requested) {
-    try { directory = (await run(["realpath", "-e", "--", requested])).trim(); }
-    catch { throw Error(t("Folder not found")); }
-  }
-  if (!directory || !isAllowedPath(directory))
+  // The first allowed location is checked as it is, like a requested one.
+  const first = allowedRoots()[0];
+  if (!requested && !first) throw Error(t("This folder is outside the allowed locations"));
+  // What is at the path is only said once the path is known to be allowed.
+  const found = await resolvePath(requested || first).catch(() => undefined);
+  if (!found) throw Error(requested ? t("Folder not found") : t("Choose a folder"));
+  const directory = requested ? found.path : first;
+  if (!isAllowedPath(directory))
     throw Error(t("This folder is outside the allowed locations"));
   refuseHidden(requested || directory, directory, hidden);
-  try { await run(["test", "-d", directory]); }
-  catch { throw Error(t("Choose a folder")); }
+  if (found.kind !== "folder") throw Error(t("Choose a folder"));
   return directory;
 }
 export async function resolveSelectedFile(requested: string, hidden = false) {
-  let resolved: string;
-  // Only realpath's own newline is cut off: a name may end in a space, and the
-  // editor saves to the path readEditableFile found.
-  try { resolved = (await run(["realpath", "-e", "--", requested])).replace(/\n$/, ""); }
-  catch { throw Error(t("File not found")); }
-  if (!isAllowedPath(resolved))
+  // The path is whole: a name may end in a space, and the editor saves to the
+  // path readEditableFile found.
+  const found = await resolvePath(requested).catch(() => undefined);
+  if (!found) throw Error(t("File not found"));
+  if (!isAllowedPath(found.path))
     throw Error(t("The selected file must be inside an allowed location"));
-  refuseHidden(requested, resolved, hidden);
-  try { await run(["test", "-f", resolved]); }
-  catch { throw Error(t("Choose a regular file")); }
-  return resolved;
+  refuseHidden(requested, found.path, hidden);
+  if (found.kind !== "file") throw Error(t("Choose a regular file"));
+  return found.path;
 }
 const MAX_EDITABLE_FILE_BYTES = 512 * 1024;
 const SAVE_SCRIPT = 'temporary=$(mktemp) || exit 1; trap \'rm -f "$temporary"\' EXIT HUP INT TERM; cat > "$temporary" && [ "$(($(wc -c < "$temporary")))" -eq "$2" ] && cat "$temporary" > "$1"';

@@ -27,7 +27,7 @@ export function ContainerRow({
   links: ContainerLink[];
   busy: ReadonlySet<string>;
   act: (k: string, p: string, b: unknown, done?: string) => Promise<void>;
-  logs: (t: string, p: string, b: unknown) => void;
+  logs: (t: string, p: string, b: unknown, follow?: string) => void;
   readOnly?: boolean;
 }) {
   const up = c.State === "running",
@@ -80,7 +80,7 @@ export function ContainerRow({
         <div className="actions">
           <Btn
             onClick={() =>
-              logs(c.Names, "container", { name: c.Names, action: "logs" })
+              logs(c.Names, "container", { name: c.Names, action: "logs" }, `container/logs?name=${encodeURIComponent(c.Names)}`)
             }
           >
             <Terminal size={15} />

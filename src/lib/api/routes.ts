@@ -4,6 +4,7 @@ import {
   addMonitoredPath,
   addScript,
   alertRules,
+  alertValues,
   audit,
   browseFiles,
   browseScripts,
@@ -20,9 +21,12 @@ import {
   exportConfiguration,
   failingCronRuns,
   folderSizes,
+  followContainerLogs,
   folders,
   historyPage,
   hostSnapshot,
+  type HostSnapshot,
+  keptSnapshot,
   HISTORY_RANGES,
   type HistoryRange,
   metricHistory,
@@ -61,7 +65,7 @@ import { EVENT_TYPES } from "@/lib/server";
 import { accountRoutes } from "./auth";
 import { demoState } from "./demo";
 import { type Body, type Context, type Routes, ok } from "./http";
-import { isLanguage, t } from "@/lib/server";
+import { digest, isLanguage, t } from "@/lib/server";
 
 // Dashboard records stored in DATA_DIR; reading them needs no SSH. A read-only
 // account is not given the scripts' variables, which often hold passwords and
@@ -88,11 +92,37 @@ function records({ devices, user, session }: Context) {
 // The default reads the host as well. Neither carries the run history, only the
 // recent runs and the scheduled runs that are still failing; History asks for
 // its pages.
+// ?scope=kept is for a page that is just opening: the latest snapshot, if one
+// was read in the last minutes, without waiting for the server. The page asks
+// for the server as it is now right after. What is sent carries its version;
+// a refresh that says which version it holds (If-None-Match) and would be sent
+// the same again is answered with 304 and nothing else.
+function answerState(req: Context["req"], body: Record<string, unknown>) {
+  const etag = `"${digest(JSON.stringify(body)).slice(0, 32)}"`;
+  // A proxy that compresses the answer marks its version as weak (W/).
+  if (req.headers?.get("if-none-match")?.replace(/^W\//, "") === etag) return new NextResponse(null, { status: 304, headers: { etag } });
+  return NextResponse.json(body, { headers: { etag } });
+}
+// A snapshot for the browser, without what a read-only account is not sent:
+// the crontabs, whose lines carry the scripts' variables.
+function hostState(context: Context, snapshot: HostSnapshot) {
+  const { cronLog, ...host } = snapshot;
+  void cronLog;
+  return { ...host, ...(context.user.role === "viewer" ? { cron: "", root: { ...host.root, cron: "", system: "" } } : {}) };
+}
 async function state(context: Context) {
   const { req, session } = context;
   if (session.device === "demo") return NextResponse.json({ ...demoState, user: context.user });
   const scope = req.nextUrl.searchParams.get("scope");
-  if (scope === "records") return NextResponse.json({ ...records(context), cronFailures: cronFailures(cronRuns()) });
+  if (scope === "records") return answerState(req, { ...records(context), cronFailures: cronFailures(cronRuns()) });
+  const kept = scope === "kept" ? keptSnapshot() : undefined;
+  if (kept) return answerState(req, {
+    ...hostState(context, kept.snapshot),
+    ...records(context),
+    alertState: { values: alertValues(kept.snapshot) },
+    cronFailures: cronFailures(cronRuns()),
+    keptAt: kept.at,
+  });
   let snapshot;
   try {
     snapshot = await hostSnapshot();
@@ -101,15 +131,11 @@ async function state(context: Context) {
   }
   recordMetricSample(snapshot.stats);
   const alerts = evaluateAlerts(snapshot);
-  const { cronLog, ...host } = snapshot;
-  // Nor the crontabs, whose lines carry the same variables.
-  const crontabs = context.user.role === "viewer" ? { cron: "", root: { ...host.root, cron: "", system: "" } } : {};
-  return NextResponse.json({
-    ...host,
-    ...crontabs,
+  return answerState(req, {
+    ...hostState(context, snapshot),
     ...records(context),
     alertState: alerts,
-    cronFailures: cronFailures(await collectCronRuns(cronLog)),
+    cronFailures: cronFailures(await collectCronRuns(snapshot.cronLog)),
   });
 }
 // A handful is plenty for Overview; History lists every run.
@@ -191,6 +217,12 @@ const hostRoutes: Routes<Context> = {
         : await run(["docker", body.action, body.name], 45000);
     return NextResponse.json({ output });
   },
+  // The log as it is written, until the page stops reading. Sent as it comes:
+  // "no-transform" keeps the answer from being held back to be compressed.
+  "GET container/logs": ({ req }) =>
+    new Response(followContainerLogs(req.nextUrl.searchParams.get("name") || "", req.signal), {
+      headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-cache, no-transform", "x-accel-buffering": "no" },
+    }),
   "POST container/size": async ({ body }) =>
     NextResponse.json({ size: await containerSize(body.name || "") }),
   "POST storage/add": async ({ body }) =>

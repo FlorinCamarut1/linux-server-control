@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { CommandError, asActor, forgetPendingSnapshot, inLanguage, t } from "@/lib/server";
+import { CommandError, type HostTiming, asActor, forgetKeptSnapshot, forgetPendingSnapshot, inLanguage, t, withHostTimings } from "@/lib/server";
 import { authenticate, permitted, publicRoutes } from "@/lib/api/auth";
 import { type Body, fail, sameOrigin } from "@/lib/api/http";
 import { routes } from "@/lib/api/routes";
@@ -21,6 +21,11 @@ export async function POST(req: NextRequest, { params }: Params) {
   return handle(req, `POST ${(await params).path.join("/")}`, body);
 }
 
+// How long the answer took and, of that, each command on the server; the
+// browser's network panel shows both. Only signed-in requests are told.
+function serverTiming(total: number, timings: HostTiming[]) {
+  return [`total;dur=${total}`, ...timings.slice(0, 20).map((item, index) => `host${index};desc="${item.name.replace(/[^\w .:/-]/g, "")}";dur=${item.ms}`)].join(", ");
+}
 // Answers, errors included, are in the language the browser sends.
 function handle(req: NextRequest, route: string, body: Body) {
   return inLanguage(req.headers.get("x-lsc-language"), () => answer(req, route, body));
@@ -36,10 +41,15 @@ async function answer(req: NextRequest, route: string, body: Body) {
     const handler = routes[route];
     if (!handler) return fail(t("Not found"), 404);
     if (!permitted(route, signedIn.user.role, body)) return fail(t("This account is read-only."), 403);
-    const response = await asActor(signedIn.user.name, () => handler({ req, body, ...signedIn }));
+    const started = Date.now(), timings: HostTiming[] = [];
+    const response = await withHostTimings(timings, () => asActor(signedIn.user.name, () => handler({ req, body, ...signedIn })));
     // What only an administrator may call changes something, which the next
-    // refresh must show.
-    if (!permitted(route, "viewer", body)) forgetPendingSnapshot();
+    // refresh must show. Work on files changes nothing a snapshot holds.
+    if (!permitted(route, "viewer", body)) {
+      forgetPendingSnapshot();
+      if (!route.startsWith("POST file/")) forgetKeptSnapshot();
+    }
+    try { response.headers.set("Server-Timing", serverTiming(Date.now() - started, timings)); } catch {}
     return response;
   } catch (error) {
     if (error instanceof CommandError) return fail(error.message, 502);

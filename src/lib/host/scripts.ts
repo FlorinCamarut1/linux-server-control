@@ -6,7 +6,7 @@ import { appendFileSync, closeSync, fstatSync, mkdirSync, openSync, readSync, rm
 import { constants } from "node:os";
 import path from "node:path";
 import { DATA, audit, emitDashboardEvent, read, save } from "./store";
-import { ROOT_SCRIPT_HELPER, run, runInput, serverSettings, ssh } from "./ssh";
+import { ROOT_SCRIPT_HELPER, resolvePath, run, runInput, serverSettings, ssh } from "./ssh";
 import { RECORD_ID, type RunOption, type Script, type ScriptRun, folders, parseArguments, schedules, scriptRuns, scripts } from "./records";
 import { rootScriptStatus, syncCron } from "./cron";
 import { isAllowedPath, resolveAllowedDirectory, resolveSelectedFile } from "./files";
@@ -370,17 +370,16 @@ export async function addScript(input: Record<string, string>) {
     if (timeLimitMinutes && !helper.stop)
       throw Error(t("A time limit on a root script needs the current root script helper: run scripts/install-root-script-access.sh on the server again"));
   }
-  let resolved: string;
-  try { resolved = (await run(["realpath", "-e", "--", requested])).trim(); }
-  catch { throw Error(t("The script file was not found")); }
+  const found = await resolvePath(requested).catch(() => undefined);
+  if (!found) throw Error(t("The script file was not found"));
+  const resolved = found.path;
   if (
     !isAllowedPath(resolved) ||
     !resolved.endsWith(".sh")
   )
     throw Error(t("The script must be an existing .sh file inside an allowed location"),
     );
-  try { await run(["test", "-f", resolved]); }
-  catch { throw Error(t("The script must be a regular file")); }
+  if (found.kind !== "file") throw Error(t("The script must be a regular file"));
   const id = RECORD_ID.test(input.id || "") ? input.id : randomUUID();
   const all = scripts().filter((x) => x.id !== id);
   const flag = (value: unknown) => value === true || value === "true";
