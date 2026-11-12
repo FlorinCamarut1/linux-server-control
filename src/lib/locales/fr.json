@@ -1039,5 +1039,19 @@
  "Backup not found": "Sauvegarde introuvable",
  "The data was restored, but the schedules could not be written to the server: {error}": "Les données ont été restaurées, mais les planifications n'ont pas pu être écrites sur le serveur : {error}",
  "Cloud backup failed": "Échec de la sauvegarde dans le cloud",
- "The backup could not be uploaded to {count} destination|The backup could not be uploaded to {count} destinations": { "one": "La sauvegarde n'a pas pu être envoyée vers {count} destination", "many": "La sauvegarde n'a pas pu être envoyée vers {count} de destinations", "other": "La sauvegarde n'a pas pu être envoyée vers {count} destinations" }
+ "The backup could not be uploaded to {count} destination|The backup could not be uploaded to {count} destinations": { "one": "La sauvegarde n'a pas pu être envoyée vers {count} destination", "many": "La sauvegarde n'a pas pu être envoyée vers {count} de destinations", "other": "La sauvegarde n'a pas pu être envoyée vers {count} destinations" },
+ "Sign in and allow access:": "Connectez-vous et autorisez l'accès :",
+ "Sign in with {service}": "Se connecter avec {service}",
+ "If no tab opened, {link}.": "Si aucun onglet ne s'est ouvert, {link}.",
+ "open the sign-in page": "ouvrez la page de connexion",
+ "After you allow access, that tab shows that the page cannot be reached. That is expected: copy the whole address from its address bar.": "Après avoir autorisé l'accès, cet onglet indique que la page est inaccessible. C'est normal : copiez l'adresse complète depuis sa barre d'adresse.",
+ "Address of that page": "Adresse de cette page",
+ "Or run rclone on your own computer": "Ou lancez rclone sur votre propre ordinateur",
+ "The sign-in could not be started: {error}": "Impossible de lancer la connexion : {error}",
+ "rclone did not answer": "rclone n'a pas répondu",
+ "Sign in again: this sign-in has ended": "Reconnectez-vous : cette connexion est terminée",
+ "Paste the whole address of the page that could not be reached": "Collez l'adresse complète de la page inaccessible",
+ "This address belongs to an older sign-in. Sign in again and paste the new address.": "Cette adresse appartient à une connexion précédente. Reconnectez-vous et collez la nouvelle adresse.",
+ "Access was not allowed ({error})": "L'accès n'a pas été autorisé ({error})",
+ "{service} did not give access: {error}": "{service} n'a pas donné l'accès : {error}"
 }

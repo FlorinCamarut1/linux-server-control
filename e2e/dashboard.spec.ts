@@ -725,12 +725,21 @@ test("the dashboard is backed up to the cloud, restored from there, and old back
   await panel.getByLabel("Encryption passphrase").fill("browser test passphrase");
   await panel.getByRole("button", { name: "Save backup settings" }).click();
   await expect(panel.getByText("Backup settings saved.")).toBeVisible();
-  // Google Drive, with what `rclone authorize` prints.
+  // Google Drive, signed in to from the page: the sign-in opens in a new tab,
+  // which comes back to an address on 127.0.0.1 that is pasted here.
   await panel.getByRole("button", { name: "Add destination" }).click();
   const form = page.getByRole("dialog", { name: "Add cloud destination" });
   await form.getByLabel("Service").selectOption("drive");
-  await expect(form.getByText('rclone authorize "drive"', { exact: false })).toBeVisible();
-  await form.getByLabel("Code from rclone").fill('Paste the following into your remote machine --->\n{"access_token":"a","token_type":"Bearer","refresh_token":"r","expiry":"2026-11-12T17:00:00Z"}\n<---End paste');
+  const opened = page.waitForEvent("popup");
+  const started = page.waitForResponse((response) => response.url().endsWith("/api/cloud/sign-in/start"));
+  await form.getByRole("button", { name: "Sign in with Google Drive" }).click();
+  // The new tab goes to the service's sign-in page, made up here, so it cannot load.
+  const { url } = await (await started).json();
+  expect(url).toContain("accounts.example/drive/auth");
+  await (await opened).close();
+  await expect(form.getByRole("link", { name: "open the sign-in page" })).toHaveAttribute("href", url);
+  const state = new URL(url).searchParams.get("state");
+  await form.getByLabel("Address of that page").fill(`http://127.0.0.1:53682/?state=${state}&code=good&scope=https://www.googleapis.com/auth/drive.file`);
   await form.getByRole("button", { name: "Connect" }).click();
   await expect(form).toBeHidden();
   const row = panel.locator(".schedule-row", { hasText: "Google Drive" });

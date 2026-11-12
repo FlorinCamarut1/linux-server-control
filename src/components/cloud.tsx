@@ -1,6 +1,6 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
-import { Cloud, CloudUpload, Copy, History, Loader2, Pencil, RotateCcw, Trash2 } from "lucide-react";
+import { Cloud, CloudUpload, Copy, History, Loader2, LogIn, Pencil, RotateCcw, Trash2 } from "lucide-react";
 import { api } from "@/lib/client-api";
 import { appConfirm, Btn, copyText, formatBytes, Modal, ModalActions, notify, Panel, RowMenu, rich } from "@/components/ui";
 import { locale, t, tn } from "@/lib/i18n";
@@ -125,18 +125,34 @@ function ScheduleForm({ data, saved }: { data: CloudData; saved: () => void }) {
 function DestinationForm({ destination, close, saved }: { destination: Destination | null; close: () => void; saved: () => void }) {
   const [type, setType] = useState<DestinationType>(destination?.type ?? "onedrive");
   const [error, setError] = useState(""), [saving, setSaving] = useState(false), [copied, setCopied] = useState(false);
+  // Signing in from the page; `manual` when rclone is run on one's own computer instead.
+  const [starting, setStarting] = useState(false), [signInPage, setSignInPage] = useState(""), [manual, setManual] = useState(false);
   const command = type === "protondrive" ? "" : AUTHORIZE[type];
+  async function signIn() {
+    setError(""); setStarting(true);
+    // Opened by the click itself, so that the browser does not block it.
+    const tab = window.open("", "_blank");
+    try {
+      const { url } = await api("cloud/sign-in/start", { type });
+      setSignInPage(url);
+      if (tab) tab.location.href = url;
+    } catch (reason) {
+      tab?.close();
+      setError(reason instanceof Error ? reason.message : t("Error"));
+    } finally { setStarting(false); }
+  }
   return (
     <Modal title={destination ? t("Edit {name}", { name: destination.name }) : t("Add cloud destination")} close={close} guard>
       <form onSubmit={async (event) => {
         event.preventDefault(); setError(""); setSaving(true);
         const form = new FormData(event.currentTarget);
         try {
-          await api("cloud/destination/save", { ...Object.fromEntries(form), id: destination?.id, type, enabled: destination ? form.get("enabled") === "true" : true });
+          const fields = { ...Object.fromEntries(form), id: destination?.id, type, enabled: destination ? form.get("enabled") === "true" : true };
+          await api(!destination && command && !manual ? "cloud/sign-in/finish" : "cloud/destination/save", fields);
           saved();
         } catch (reason) { setError(reason instanceof Error ? reason.message : t("Error")); } finally { setSaving(false); }
       }}>
-        <label>{t("Service")}<select value={type} onChange={(event) => setType(event.target.value as DestinationType)} disabled={!!destination}>
+        <label>{t("Service")}<select value={type} onChange={(event) => { setType(event.target.value as DestinationType); setSignInPage(""); }} disabled={!!destination}>
           {Object.entries(SERVICES).map(([id, name]) => <option key={id} value={id}>{name}</option>)}
         </select></label>
         <label>{t("Name")}<input name="name" defaultValue={destination?.name ?? SERVICES[type]} key={destination ? "name" : type} required maxLength={60} /></label>
@@ -144,15 +160,26 @@ function DestinationForm({ destination, close, saved }: { destination: Destinati
         {destination && <label><input name="enabled" type="checkbox" value="true" defaultChecked={destination.enabled} /> {t("Include in automatic backups")}</label>}
         {!destination && command && (
           <div className="cloud-steps">
-            <ol>
-              <li>{rich(t("Install rclone on your own computer, from {link}."), { link: <a href="https://rclone.org/downloads/" target="_blank" rel="noopener noreferrer">rclone.org/downloads</a> })}</li>
-              <li>{t("Run this command there; a browser opens to sign in and allow access:")}
-                <div className="command-copy"><code>{command}</code><Btn type="button" onClick={async () => setCopied(await copyText(command))}><Copy size={15} />{copied ? t("Copied") : t("Copy")}</Btn></div>
+            {!manual && <ol>
+              <li>{t("Sign in and allow access:")}
+                <div className="actions"><Btn type="button" className="primary" disabled={starting} onClick={signIn}>{starting ? <Loader2 className="spin" size={15} /> : <LogIn size={15} />}{t("Sign in with {service}", { service: SERVICES[type] })}</Btn></div>
+                {signInPage && <small>{rich(t("If no tab opened, {link}."), { link: <a href={signInPage} target="_blank" rel="noopener noreferrer">{t("open the sign-in page")}</a> })}</small>}
               </li>
-              <li>{t("Paste here what rclone printed after signing in.")}</li>
-            </ol>
+              <li>{t("After you allow access, that tab shows that the page cannot be reached. That is expected: copy the whole address from its address bar.")}</li>
+              <li><label>{t("Address of that page")}<input name="address" required spellCheck={false} autoComplete="off" placeholder="http://127.0.0.1:53682/?state=…&code=…" /></label></li>
+            </ol>}
             {type === "drive" && <small>{t("The dashboard sees only the files it uploads, not the rest of your Drive.")}</small>}
-            <label>{t("Code from rclone")}<textarea name="token" rows={4} required spellCheck={false} autoComplete="off" placeholder='{"access_token":"…","refresh_token":"…"}' /></label>
+            <details onToggle={(event) => setManual(event.currentTarget.open)}>
+              <summary>{t("Or run rclone on your own computer")}</summary>
+              <ol>
+                <li>{rich(t("Install rclone on your own computer, from {link}."), { link: <a href="https://rclone.org/downloads/" target="_blank" rel="noopener noreferrer">rclone.org/downloads</a> })}</li>
+                <li>{t("Run this command there; a browser opens to sign in and allow access:")}
+                  <div className="command-copy"><code>{command}</code><Btn type="button" onClick={async () => setCopied(await copyText(command))}><Copy size={15} />{copied ? t("Copied") : t("Copy")}</Btn></div>
+                </li>
+                <li>{t("Paste here what rclone printed after signing in.")}</li>
+              </ol>
+              {manual && <label>{t("Code from rclone")}<textarea name="token" rows={4} required spellCheck={false} autoComplete="off" placeholder='{"access_token":"…","refresh_token":"…"}' /></label>}
+            </details>
           </div>
         )}
         {!destination && type === "protondrive" && <>

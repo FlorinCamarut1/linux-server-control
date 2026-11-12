@@ -3,7 +3,7 @@
 // a schedule, keeping the latest few. rclone runs in the dashboard's container,
 // next to the data; it keeps the cloud accounts' tokens in cloud-rclone.conf in
 // DATA_DIR and renews them there.
-import { execFile } from "node:child_process";
+import { type ChildProcess, execFile, spawn } from "node:child_process";
 import { createCipheriv, createDecipheriv, randomBytes, scrypt } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -160,6 +160,100 @@ export async function saveDestination(input: Record<string, unknown>) {
   saveSettings({ ...settings(), destinations: [...settings().destinations, destination] });
   audit(`cloud destination added ${name} (${DESTINATION_TYPES[type]})`);
   return destination;
+}
+// Signing in to OneDrive or Google Drive from the dashboard. `rclone authorize`
+// runs in the container and waits on 127.0.0.1:53682 for the browser to come
+// back from the sign-in with a code. The browser is on another computer, so it
+// lands on a page that cannot be reached there; its address, with the code, is
+// pasted into the dashboard, which hands it to the waiting rclone. rclone then
+// trades the code for a token with its own app, and prints the token.
+const AUTH_PORT = "127.0.0.1:53682";
+// Google Drive limited to the files rclone makes: {"scope":"drive.file"}.
+const DRIVE_FILE_SCOPE = "eyJzY29wZSI6ImRyaXZlLmZpbGUifQ";
+const AUTH_WAIT_MS = 10 * 60 * 1000;
+type Authorization = { type: "onedrive" | "drive"; state: string; child: ChildProcess; stdout: string; stderr: string; ended: Promise<number | null>; timer: ReturnType<typeof setTimeout> };
+const signIn = globalThis as { lscCloudSignIn?: Authorization };
+export function stopSignIn() {
+  const pending = signIn.lscCloudSignIn;
+  if (!pending) return;
+  clearTimeout(pending.timer);
+  pending.child.kill();
+  signIn.lscCloudSignIn = undefined;
+}
+// A value after a while, without keeping the process alive for it.
+const after = <T,>(ms: number, value: T) => new Promise<T>((resolve) => setTimeout(() => resolve(value), ms).unref?.());
+const reason = (stderr: string) => stderr.split("\n").map((line) => line.replace(/^\d{4}\/\d\d\/\d\d \d\d:\d\d:\d\d \w+ ?: ?/, "").replace(/^Fatal error: /, "").trim()).filter(Boolean).pop() || "";
+// Starts a sign-in and gives the address of the service's sign-in page.
+export async function startSignIn(type: unknown) {
+  if (type !== "onedrive" && type !== "drive") throw Error(t("Choose a cloud service"));
+  stopSignIn();
+  const child = spawn("rclone", ["authorize", type, ...(type === "drive" ? [DRIVE_FILE_SCOPE] : []), "--auth-no-open-browser"], {
+    stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, RCLONE_CACHE_DIR: "/tmp/rclone-cache", RCLONE_CONFIG: "/tmp/rclone-authorize.conf" },
+  });
+  const pending: Authorization = { type, state: "", child, stdout: "", stderr: "", ended: new Promise((resolve) => { child.on("close", resolve); child.on("error", () => resolve(null)); }), timer: setTimeout(stopSignIn, AUTH_WAIT_MS) };
+  pending.timer.unref?.();
+  child.stdout?.on("data", (chunk) => { pending.stdout += chunk; });
+  child.stderr?.on("data", (chunk) => { pending.stderr += chunk; });
+  signIn.lscCloudSignIn = pending;
+  try {
+    return await signInPage(pending);
+  } catch (error) {
+    // A sign-in that could not start must not keep rclone, or its port, busy.
+    stopSignIn();
+    throw error;
+  }
+}
+async function signInPage(pending: Authorization) {
+  const { child } = pending;
+  // rclone names its own address for the sign-in, with the state it expects back.
+  const link = await Promise.race([
+    new Promise<string>((resolve) => {
+      const look = () => {
+        const found = /https?:\/\/127\.0\.0\.1:53682\/auth\?state=([\w-]+)/.exec(pending.stderr);
+        if (found) { child.stderr?.off("data", look); resolve(found[0]); }
+      };
+      child.stderr?.on("data", look);
+      look();
+    }),
+    pending.ended.then(() => ""),
+    after(20000, ""),
+  ]);
+  if (!link) throw Error(t("The sign-in could not be started: {error}", { error: reason(pending.stderr) || t("rclone did not answer") }));
+  pending.state = new URL(link).searchParams.get("state") || "";
+  // That address redirects to the service's sign-in page, which is what the browser opens.
+  const answer = await fetch(link, { redirect: "manual", signal: AbortSignal.timeout(10000) });
+  const target = answer.headers.get("location");
+  if (!target || !/^https:\/\//.test(target)) throw Error(t("The sign-in could not be started: {error}", { error: `HTTP ${answer.status}` }));
+  return target;
+}
+// Finishes a sign-in with the address the browser came back to, and adds the destination.
+export async function finishSignIn(input: Record<string, unknown>) {
+  const pending = signIn.lscCloudSignIn;
+  if (!pending || pending.type !== input.type) throw Error(t("Sign in again: this sign-in has ended"));
+  let address: URL;
+  try {
+    const text = String(input.address ?? "").trim();
+    address = new URL(/^https?:\/\//.test(text) ? text : `http://${text}`);
+  } catch {
+    throw Error(t("Paste the whole address of the page that could not be reached"));
+  }
+  const params = address.searchParams;
+  if (!["127.0.0.1", "localhost"].includes(address.hostname) || address.port !== "53682" || (!params.get("code") && !params.get("error")))
+    throw Error(t("Paste the whole address of the page that could not be reached"));
+  // rclone gives up on an address with another state, so it is not passed on.
+  if (params.get("state") !== pending.state) throw Error(t("This address belongs to an older sign-in. Sign in again and paste the new address."));
+  if (params.get("error")) {
+    stopSignIn();
+    throw Error(t("Access was not allowed ({error})", { error: params.get("error_description") || params.get("error") || "" }));
+  }
+  try {
+    await fetch(`http://${AUTH_PORT}/?${params}`, { signal: AbortSignal.timeout(20000) });
+    const code = await Promise.race([pending.ended, after(60000, null)]);
+    if (code !== 0) throw Error(t("{service} did not give access: {error}", { service: DESTINATION_TYPES[pending.type], error: reason(pending.stderr) || t("rclone did not answer") }));
+    return await saveDestination({ ...input, type: pending.type, token: pending.stdout });
+  } finally {
+    stopSignIn();
+  }
 }
 // The backups stay in the cloud; only the dashboard forgets the account.
 export function deleteDestination(id: string) {

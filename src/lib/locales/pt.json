@@ -1039,5 +1039,19 @@
  "Backup not found": "Cópia não encontrada",
  "The data was restored, but the schedules could not be written to the server: {error}": "Os dados foram restaurados, mas não foi possível escrever os agendamentos no servidor: {error}",
  "Cloud backup failed": "A cópia na nuvem falhou",
- "The backup could not be uploaded to {count} destination|The backup could not be uploaded to {count} destinations": { "one": "Não foi possível enviar a cópia para {count} destino", "many": "Não foi possível enviar a cópia para {count} de destinos", "other": "Não foi possível enviar a cópia para {count} destinos" }
+ "The backup could not be uploaded to {count} destination|The backup could not be uploaded to {count} destinations": { "one": "Não foi possível enviar a cópia para {count} destino", "many": "Não foi possível enviar a cópia para {count} de destinos", "other": "Não foi possível enviar a cópia para {count} destinos" },
+ "Sign in and allow access:": "Inicie sessão e permita o acesso:",
+ "Sign in with {service}": "Iniciar sessão com {service}",
+ "If no tab opened, {link}.": "Se não abriu nenhum separador, {link}.",
+ "open the sign-in page": "abra a página de início de sessão",
+ "After you allow access, that tab shows that the page cannot be reached. That is expected: copy the whole address from its address bar.": "Depois de permitir o acesso, esse separador mostra que a página não está acessível. É o esperado: copie o endereço completo da barra de endereço.",
+ "Address of that page": "Endereço dessa página",
+ "Or run rclone on your own computer": "Ou execute o rclone no seu próprio computador",
+ "The sign-in could not be started: {error}": "Não foi possível iniciar a sessão: {error}",
+ "rclone did not answer": "O rclone não respondeu",
+ "Sign in again: this sign-in has ended": "Inicie sessão de novo: este início de sessão terminou",
+ "Paste the whole address of the page that could not be reached": "Cole o endereço completo da página que não ficou acessível",
+ "This address belongs to an older sign-in. Sign in again and paste the new address.": "Este endereço pertence a um início de sessão anterior. Inicie sessão de novo e cole o novo endereço.",
+ "Access was not allowed ({error})": "O acesso não foi permitido ({error})",
+ "{service} did not give access: {error}": "O {service} não deu acesso: {error}"
 }

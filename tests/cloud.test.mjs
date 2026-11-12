@@ -231,3 +231,59 @@ test("the schedule makes a backup once per time it names, in its time zone", asy
   assert.equal(uploads(), 1);
   assert.equal(await server.runDueBackup(tomorrow + 5 * 60000), false, "once per time");
 });
+
+// An rclone for real processes: `authorize` is the fake above, the rest keeps
+// its remotes in a folder.
+function realFakeRclone() {
+  const bin = mkdtempSync(path.join(tmpdir(), "lsc-rclone-")), cloud = mkdtempSync(path.join(tmpdir(), "lsc-cloud-"));
+  const authorize = new URL("./fixtures/fake-rclone-authorize.mjs", import.meta.url).pathname;
+  writeFileSync(path.join(bin, "rclone"), [
+    "#!/bin/sh",
+    `[ "$1" = authorize ] && exec "${process.execPath}" "${authorize}" "$@"`,
+    'while [ "$1" = --config ] || [ "$1" = --low-level-retries ]; do shift 2; done',
+    'cmd=$1; shift; for last; do :; done',
+    `where="${cloud}/\${last%%:*}/\${last#*:}"`,
+    'case "$cmd" in mkdir) mkdir -p "$where" ;; lsjson) printf "[]" ;; *) exit 1 ;; esac',
+    "",
+  ].join("\n"), { mode: 0o755 });
+  return bin;
+}
+async function signingIn(test) {
+  const PATH = process.env.PATH;
+  process.env.PATH = `${realFakeRclone()}${path.delimiter}${PATH}`;
+  const loaded = loadServer({ realProcesses: true, env: { PATH: process.env.PATH } });
+  try {
+    return await test(loaded);
+  } finally {
+    loaded.server.stopSignIn();
+    process.env.PATH = PATH;
+  }
+}
+const returned = (page, values) => {
+  const state = new URL(page).searchParams.get("state");
+  return `http://127.0.0.1:53682/?${new URLSearchParams({ state, ...values })}`;
+};
+
+test("Google Drive is connected from the page: sign in, then paste the address the browser came back to", () => signingIn(async ({ server, data }) => {
+  await assert.rejects(server.finishSignIn({ type: "drive", address: "http://127.0.0.1:53682/?state=x&code=good" }), /Sign in again/);
+  const page = await server.startSignIn("drive");
+  assert.match(page, /^https:\/\/accounts\.example\/drive\/auth\?/, "the service's own sign-in page");
+  const destination = plain(await server.finishSignIn({ type: "drive", name: "My Drive", folder: "Backups", address: returned(page, { code: "good", scope: "https://www.googleapis.com/auth/drive.file" }) }));
+  assert.equal(destination.name, "My Drive");
+  assert.match(readFileSync(path.join(data, "cloud-rclone.conf"), "utf8"), /scope = drive\.file\ntoken = \{"access_token":"drive-access"/);
+  await assert.rejects(server.finishSignIn({ type: "drive", address: returned(page, { code: "good" }) }), /Sign in again/, "a sign-in is used once");
+}));
+
+test("a wrong address leaves the sign-in waiting, and a refused or bad code says why", () => signingIn(async ({ server }) => {
+  const page = await server.startSignIn("drive");
+  await assert.rejects(server.finishSignIn({ type: "drive", address: "https://example.com/something" }), /whole address/);
+  await assert.rejects(server.finishSignIn({ type: "drive", address: "http://127.0.0.1:53682/?state=older&code=good" }), /older sign-in/);
+  // rclone is still waiting: the right address works.
+  await assert.rejects(server.finishSignIn({ type: "drive", name: "Drive", address: returned(page, { code: "bad" }) }), /Google Drive did not give access: failed to get token: oauth2: "invalid_grant"/);
+  const again = await server.startSignIn("drive");
+  await assert.rejects(server.finishSignIn({ type: "drive", address: returned(again, { error: "access_denied" }) }), /Access was not allowed \(access_denied\)/);
+  // A new sign-in replaces one still waiting, whose port it needs.
+  await server.startSignIn("onedrive");
+  await server.startSignIn("onedrive");
+  await assert.rejects(server.startSignIn("protondrive"), /Choose a cloud service/);
+}));
