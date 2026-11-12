@@ -53,6 +53,20 @@ test("Overview starts with the server's health, and Containers with the list", a
   await expect(page.locator(".metrics")).toHaveCount(0);
 });
 
+test("Overview shows the disks' SMART health", async ({ page }) => {
+  await page.goto("/");
+  const panel = page.locator("section.panel", { has: page.getByRole("heading", { name: "Disks", exact: true }) });
+  const ssd = panel.locator(".disk-row", { hasText: "SD Ultra 3D 4TB" });
+  await expect(ssd).toContainText("/dev/sda");
+  await expect(ssd).toContainText("SSD");
+  await expect(ssd.locator(".badge")).toHaveText("Healthy");
+  await expect(panel.locator(".disk-row", { hasText: "INTEL SSDPEKKF256G8L" })).toContainText("53 °C");
+  const checked = page.waitForResponse((response) => response.url().endsWith("/api/disks?fresh=true") && response.ok());
+  await panel.getByRole("button", { name: "Check now" }).click();
+  await checked;
+  await expect(panel.locator(".disk-row")).toHaveCount(2);
+});
+
 test("the dashboard can be added to a home screen as an app", async ({ page, playwright, baseURL }) => {
   await page.goto("/");
   const manifestUrl = await page.locator('link[rel="manifest"]').getAttribute("href");

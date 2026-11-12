@@ -106,4 +106,10 @@ export type FileBrowserData = {
   hidden?: boolean;
   hiddenRequested?: boolean;
 };
+// A disk's SMART health, as GET disks sends it: its problems already in words.
+export type Disk = {
+  id: string; device: string; model: string; serial: string; sizeBytes: number; kind: "ata" | "nvme"; rotational: boolean;
+  status: "ok" | "attention" | "failing" | "unknown"; temperatureC: number | null; powerOnHours: number | null; problems: string[]; updatedAt: number | null;
+};
+export type DiskReport = { available: boolean; reason?: "missing" | "failed"; error?: string; disks: Disk[]; at: number };
 export type PreflightCheck = { id: string; label: string; status: "ok" | "warning" | "error" | "info"; detail: string };

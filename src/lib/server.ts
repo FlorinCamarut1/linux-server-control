@@ -7,6 +7,7 @@ export * from "./host/cron";
 export * from "./host/files";
 export * from "./host/scripts";
 export * from "./host/monitor";
+export * from "./host/disks";
 export * from "./host/backup";
 export * from "./host/language";
 export * from "./host/certificate";

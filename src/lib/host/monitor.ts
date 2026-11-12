@@ -5,6 +5,7 @@ import { randomBytes } from "node:crypto";
 import { audit, emitDashboardEvent, read, save } from "./store";
 import { CommandError, ROOT_CRON_HELPER, ROOT_SCRIPT_HELPER, resolvePath, run, runAsync, serverSettings, ssh, testServerConnection } from "./ssh";
 import { type AlertRule, type MetricSample, RECORD_ID, alertRules, oneLine, scriptRuns } from "./records";
+import { checkDisks, hottestDisk } from "./disks";
 import { SCHEDULE_MARKERS_SCRIPT, collectCronRuns, keepRootStatus, knownRootStatus, scheduleLog, trimScheduleLog } from "./cron";
 import { locale, msg, t } from "../i18n";
 export function metricSamples() {
@@ -82,8 +83,8 @@ export function recordMetricSample(stats: SystemStats) {
 // Failed-run alerts count recent failures only; counting the whole history kept
 // an alert firing forever once the threshold had been reached.
 export const FAILED_RUN_WINDOW_MS = 24 * 60 * 60 * 1000;
-const ALERT_LABELS: Record<AlertRule["metric"], string> = { temperature: msg("CPU temperature"), cpu: msg("CPU use"), ram: msg("RAM use"), disk: msg("System disk use"), storage: msg("Storage use"), failedScripts: msg("Failed script runs in the last 24 hours"), stoppedContainers: msg("Stopped containers") };
-const ALERT_UNITS: Record<AlertRule["metric"], string> = { temperature: " °C", cpu: "%", ram: "%", disk: "%", storage: "%", failedScripts: "", stoppedContainers: "" };
+const ALERT_LABELS: Record<AlertRule["metric"], string> = { temperature: msg("CPU temperature"), cpu: msg("CPU use"), ram: msg("RAM use"), disk: msg("System disk use"), storage: msg("Storage use"), failedScripts: msg("Failed script runs in the last 24 hours"), stoppedContainers: msg("Stopped containers"), diskTemperature: msg("Hottest disk temperature") };
+const ALERT_UNITS: Record<AlertRule["metric"], string> = { temperature: " °C", cpu: "%", ram: "%", disk: "%", storage: "%", failedScripts: "", stoppedContainers: "", diskTemperature: " °C" };
 // What each alert metric is in a snapshot, and the fullest monitored path.
 function alertReadings(snapshot: { stats: SystemStats; containers: { State: string }[] }) {
   const since = Date.now() - FAILED_RUN_WINDOW_MS;
@@ -97,6 +98,8 @@ function alertReadings(snapshot: { stats: SystemStats; containers: { State: stri
     temperature: snapshot.stats.temperatureC ?? 0, cpu: snapshot.stats.cpuUsagePercent,
     ram: snapshot.stats.memoryTotalBytes ? snapshot.stats.memoryUsedBytes / snapshot.stats.memoryTotalBytes * 100 : 0,
     disk: snapshot.stats.diskUsedPercent, storage: fullest?.usedPercent ?? 0, failedScripts: failed, stoppedContainers: stopped,
+    // From the latest disk reading, which the background monitor takes every 5 minutes.
+    diskTemperature: hottestDisk(),
   };
   return { values, fullest };
 }
@@ -137,7 +140,7 @@ export function evaluateAlerts(snapshot: { stats: SystemStats; containers: { Sta
   if (changed) save("alerts", updated);
   return { values, triggered };
 }
-const ALERT_METRICS: AlertRule["metric"][] = ["temperature", "cpu", "ram", "disk", "storage", "failedScripts", "stoppedContainers"];
+const ALERT_METRICS: AlertRule["metric"][] = ["temperature", "cpu", "ram", "disk", "storage", "failedScripts", "stoppedContainers", "diskTemperature"];
 export function normalizeAlert(input: Record<string, unknown>): AlertRule {
   const metric = input.metric as AlertRule["metric"];
   if (!ALERT_METRICS.includes(metric)) throw Error(t("Invalid alert metric"));
@@ -177,9 +180,10 @@ const REQUIRED_TOOLS: [tool: string, level: "error" | "warning", purpose: string
   ["file", "warning", msg("The file editor needs it to recognise text files.")],
   ["crontab", "warning", msg("Schedules need it (package cron or cronie).")],
   ["docker", "warning", msg("The Containers page needs it.")],
+  ["udisksctl", "warning", msg("Disk health needs it (package udisks2).")],
 ];
 const PREFLIGHT_SCRIPT = [
-  'for tool in bash free df python3 file crontab docker; do if command -v "$tool" >/dev/null 2>&1; then echo "tool:$tool=ok"; else echo "tool:$tool=missing"; fi; done',
+  'for tool in bash free df python3 file crontab docker udisksctl; do if command -v "$tool" >/dev/null 2>&1; then echo "tool:$tool=ok"; else echo "tool:$tool=missing"; fi; done',
   'if realpath -e -- / >/dev/null 2>&1 && df -B1 -P / >/dev/null 2>&1; then echo gnu=ok; else echo gnu=missing; fi',
   'if command -v docker >/dev/null 2>&1; then if out=$(docker ps -q 2>&1); then echo docker=ok; else echo "docker=$(printf "%s" "$out" | tail -n 1)"; fi; fi',
   'logs=$1; shift',
@@ -513,6 +517,8 @@ export function startBackgroundMonitor() {
     try {
       const snapshot = await hostSnapshot();
       recordMetricSample(snapshot.stats);
+      // Disk health first, so that the disk temperature rule sees this reading.
+      await checkDisks().catch(() => {});
       evaluateAlerts(snapshot);
       await collectCronRuns(snapshot.cronLog);
       if (Date.now() - lastTrim > 60 * 60 * 1000) {

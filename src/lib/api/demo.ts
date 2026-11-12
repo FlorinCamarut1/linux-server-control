@@ -1,3 +1,12 @@
+// The disks of the demo server: an SSD in good health and an older disk with
+// a few bad sectors.
+export const demoDisks = () => ({
+  available: true, at: Date.now(),
+  disks: [
+    { id: "demo-nvme", device: "/dev/nvme0n1", model: "Example NVMe SSD 1TB", serial: "DEMO0001", sizeBytes: 1000204886016, kind: "nvme" as const, rotational: false, status: "ok" as const, temperatureC: 41, powerOnHours: 9120, problems: [], updatedAt: Date.now() - 4 * 60000 },
+    { id: "demo-hdd", device: "/dev/sda", model: "Example HDD 8TB", serial: "DEMO0002", sizeBytes: 8001563222016, kind: "ata" as const, rotational: true, status: "attention" as const, temperatureC: 36, powerOnHours: 31800, problems: [{ text: "sectors", count: 8 }], updatedAt: Date.now() - 4 * 60000 },
+  ],
+});
 // Returned by the development-only demo login instead of reading a real host.
 export const demoState = {
   host: "demo@media-server",
