@@ -44,7 +44,7 @@ type Objects = Map<string, Map<string, Record<string, string>>>;
 export function parseUdisksDump(output: string): Objects {
   const objects: Objects = new Map();
   let object: Map<string, Record<string, string>> | undefined, properties: Record<string, string> | undefined, key = "";
-  for (const line of output.split("\n")) {
+  for (const line of output.split(/\r?\n/)) {
     const path = /^(\/org\/freedesktop\/UDisks2\/\S+):$/.exec(line);
     if (path) {
       object = new Map();
