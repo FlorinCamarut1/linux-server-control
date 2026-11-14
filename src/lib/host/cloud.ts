@@ -349,21 +349,33 @@ export async function encrypt(data: Buffer, passphrase: string) {
   const body = Buffer.concat([cipher.update(data), cipher.final()]);
   return Buffer.concat([MAGIC, salt, iv, body, cipher.getAuthTag()]);
 }
-export async function decrypt(file: Buffer, passphrase: string) {
+// The backup cannot be opened with the passphrase at hand: another is asked for.
+export class WrongPassphrase extends Error {}
+export async function decrypt(file: Buffer, passphrase?: string) {
   if (file.length < MAGIC.length + 44 || !file.subarray(0, MAGIC.length).equals(MAGIC)) throw Error(t("This file is not a backup of the dashboard"));
+  if (!passphrase) throw new WrongPassphrase(t("Enter the passphrase this backup was encrypted with"));
   const salt = file.subarray(MAGIC.length, MAGIC.length + 16), iv = file.subarray(MAGIC.length + 16, MAGIC.length + 28);
   const decipher = createDecipheriv("aes-256-gcm", await key(passphrase, salt), iv);
   decipher.setAuthTag(file.subarray(file.length - 16));
   try {
     return Buffer.concat([decipher.update(file.subarray(MAGIC.length + 28, file.length - 16)), decipher.final()]);
   } catch {
-    throw Error(t("Wrong passphrase, or the backup is damaged"));
+    throw new WrongPassphrase(t("Wrong passphrase, or the backup is damaged"));
   }
 }
 // DATA_DIR as a gzip-compressed tar archive; the container has tar but no gzip.
 async function archive() {
   const files = readdirSync(DATA).filter((name) => !leftOut(name));
   return gzipSync(await local("tar", ["-cf", "-", "-C", DATA, "--exclude=*.tmp", "--", ...files]));
+}
+const backupName = () => `lsc-backup-${new Date().toISOString().replace(/[:.]/g, "-")}.lscb`;
+// The backup as a file to keep elsewhere: what the cloud is sent.
+export async function downloadBackup() {
+  const { passphrase } = settings();
+  if (!passphrase) throw Error(t("Set an encryption passphrase first"));
+  const file = backupName(), sealed = await encrypt(await archive(), passphrase);
+  audit(`backup ${file} downloaded`);
+  return { file, sealed };
 }
 const busy = globalThis as { lscBackup?: Promise<LastBackup[]> };
 // Makes one backup and uploads it to every destination in use, or to one;
@@ -375,7 +387,7 @@ export function backupNow(only?: string) {
   const targets = all.destinations.filter((item) => (only ? item.id === only : item.enabled));
   if (!targets.length) throw Error(t("Add a cloud destination first"));
   const work = (async () => {
-    const file = `lsc-backup-${new Date().toISOString().replace(/[:.]/g, "-")}.lscb`;
+    const file = backupName();
     const sealed = await encrypt(await archive(), all.passphrase!);
     const results: LastBackup[] = [];
     for (const destination of targets) {
@@ -461,9 +473,15 @@ const filesIn = (folder: string, base = folder): string[] => readdirSync(folder)
 export async function restoreBackup(id: unknown, name: unknown, passphrase?: string) {
   const destination = findDestination(id);
   if (typeof name !== "string" || !BACKUP_NAME.test(name)) throw Error(t("Backup not found"));
-  const secret = passphrase || settings().passphrase;
-  if (!secret) throw Error(t("Set an encryption passphrase first"));
-  const contents = gunzipSync(await decrypt(await rclone(["cat", remote(destination, name)]), secret));
+  await restore(await rclone(["cat", remote(destination, name)]), passphrase, `cloud backup ${name} restored from ${destination.name}`);
+}
+// The same from a downloaded backup, which the browser sends in base64.
+export async function restoreBackupFile(encoded: unknown, passphrase?: string) {
+  if (typeof encoded !== "string") throw Error(t("This file is not a backup of the dashboard"));
+  await restore(Buffer.from(encoded, "base64"), passphrase, "backup restored from a file");
+}
+async function restore(sealed: Buffer, passphrase: string | undefined, record: string) {
+  const contents = gunzipSync(await decrypt(sealed, passphrase || settings().passphrase));
   const staging = path.join(DATA, `.restore-${randomBytes(6).toString("hex")}`);
   mkdirSync(staging, { mode: 0o700 });
   try {
@@ -481,7 +499,7 @@ export async function restoreBackup(id: unknown, name: unknown, passphrase?: str
       renameSync(path.join(staging, ...relative.split("/")), target);
     }
     save("devices", { ...read<Record<string, unknown>>("devices", {}), ...devices });
-    audit(`cloud backup ${name} restored from ${destination.name}`);
+    audit(record);
     // The crontabs follow the restored schedules, and lose those it does not have.
     await syncCron(previousUsers as ("user" | "root")[]).catch((error) => {
       throw Error(t("The data was restored, but the schedules could not be written to the server: {error}", { error: error instanceof Error ? error.message : "" }));

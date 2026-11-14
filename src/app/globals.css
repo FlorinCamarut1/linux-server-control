@@ -1373,7 +1373,7 @@ a.button {
 .badge svg {
   flex: 0 0 auto;
 }
-/* Cloud backup: the schedule's fields side by side, and the steps to connect. */
+/* Backup: the schedule's fields side by side, and the steps to connect. */
 .cloud-schedule .form-row {
   display: flex;
   flex-wrap: wrap;
@@ -1654,11 +1654,6 @@ body:has(.clipboard-bar) {
   color: var(--muted);
   margin-top: 4px;
   overflow-wrap: anywhere;
-}
-.configuration-actions > .button,
-.configuration-actions > label.button {
-  box-sizing: border-box;
-  height: var(--control-h);
 }
 .panel-feedback {
   margin-top: 16px;

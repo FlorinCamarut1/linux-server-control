@@ -20,6 +20,7 @@ export type DialogRequest = {
   message: string;
   confirmLabel: string;
   defaultValue?: string;
+  secret?: boolean;
   danger?: boolean;
   resolve: (value: boolean | string | null) => void;
 };
@@ -31,8 +32,8 @@ export function requestDialog(request: Omit<DialogRequest, "resolve">) {
 export async function appConfirm(message: string, title = t("Confirm action"), confirmLabel = t("Confirm"), danger = false) {
   return (await requestDialog({ kind: "confirm", title, message, confirmLabel, danger })) === true;
 }
-export async function appPrompt(message: string, defaultValue = "", title = t("Enter a value"), confirmLabel = t("Continue")) {
-  const result = await requestDialog({ kind: "prompt", title, message, confirmLabel, defaultValue });
+export async function appPrompt(message: string, defaultValue = "", title = t("Enter a value"), confirmLabel = t("Continue"), secret = false) {
+  const result = await requestDialog({ kind: "prompt", title, message, confirmLabel, defaultValue, secret });
   return typeof result === "string" ? result : null;
 }
 // A translated text with elements in it: rich(translated, { command: <code>…</code> }), where
@@ -536,7 +537,7 @@ export function PromptDialog({ request, finish }: { request: DialogRequest; fini
   const [value, setValue] = useState(request.defaultValue || "");
   return <Modal title={request.title} close={() => finish(null)}>
     <form onSubmit={(event) => { event.preventDefault(); if (value.trim()) finish(value); }}>
-      <label>{request.message}<input autoFocus value={value} onChange={(event) => setValue(event.target.value)} /></label>
+      <label>{request.message}<input autoFocus type={request.secret ? "password" : "text"} autoComplete={request.secret ? "off" : undefined} value={value} onChange={(event) => setValue(event.target.value)} /></label>
       <ModalActions cancel={() => finish(null)}><Btn className="primary" disabled={!value.trim()}>{request.confirmLabel}</Btn></ModalActions>
     </form>
   </Modal>;

@@ -63,7 +63,6 @@ const NotificationsPanel = dynamic(() => pages.settings().then((module) => modul
 const PasswordForm = dynamic(() => pages.settings().then((module) => module.PasswordForm), { ssr: false });
 const DevicePanel = dynamic(() => pages.settings().then((module) => module.DevicePanel), { ssr: false });
 const ServerSettings = dynamic(() => pages.settings().then((module) => module.ServerSettings), { ssr: false });
-const ConfigurationPanel = dynamic(() => pages.settings().then((module) => module.ConfigurationPanel), { ssr: false });
 const StorageManager = dynamic(() => pages.settings().then((module) => module.StorageManager), { ssr: false });
 const UsersPanel = dynamic(() => pages.settings().then((module) => module.UsersPanel), { ssr: false });
 const CloudBackupPanel = dynamic(() => pages.cloud().then((module) => module.CloudBackupPanel), { ssr: false });
@@ -94,8 +93,7 @@ const SETTINGS_SECTIONS = [
   ["settings-browsers", msg("Authorized browsers")],
   ["settings-accounts", msg("Accounts")],
   ["settings-password", msg("Change password")],
-  ["settings-backup", msg("Dashboard settings backup")],
-  ["settings-cloud", msg("Cloud backup")],
+  ["settings-cloud", msg("Backup")],
 ] as const;
 // Lists longer than this get a search field.
 const SEARCHABLE = 6;
@@ -887,7 +885,6 @@ export default function Home() {
           <div id="settings-browsers" className="settings-section"><DevicePanel devices={state.devices} current={state.device} revoke={(id) => action(id, "device/revoke", { id })} rename={(id, name) => action(id, "device/rename", { id, name })} createCode={async () => { try { setEnrollment(await api("enrollment/create", { minutes: "15" })); setCopied("idle"); } catch (e) { notify(e instanceof Error ? e.message : t("Error")); } }} /></div>
           <div id="settings-accounts" className="settings-section"><UsersPanel current={state.user?.name || ""} /></div>
           <div id="settings-password" className="settings-section"><PasswordForm /></div>
-          <div id="settings-backup" className="settings-section"><ConfigurationPanel refresh={refresh} /></div>
           <div id="settings-cloud" className="settings-section"><CloudBackupPanel /></div>
         </>}
       </main>

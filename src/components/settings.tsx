@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { api } from "@/lib/client-api";
 import { appConfirm, appPrompt, Btn, Panel, Modal, ModalActions, PreflightList, RowMenu } from "@/components/ui";
 import { THEMES, applyTheme, savedTheme, type ThemeId } from "@/lib/theme";
@@ -160,28 +160,6 @@ export function ServerSettings() {
     </ServerSettingsForm>
     {error && <div className="panel-body"><div className="alert">{error}</div></div>}
     {checks && <div className="panel-body"><PreflightList checks={checks} /></div>}
-  </Panel>;
-}
-export function ConfigurationPanel({ refresh }: { refresh: () => Promise<void> }) {
-  const [message, setMessage] = useState(""); const [error, setError] = useState("");
-  // A real button opens the file chooser, so the keyboard reaches it.
-  const restoreFile = useRef<HTMLInputElement>(null);
-  return <Panel title={t("Dashboard settings backup")} note={t("Exports dashboard scripts, schedules, folders, alerts, storage paths, the server connection and authorized devices. It does not contain server files, Docker data, accounts, passwords, notification channels, power devices, SSH keys, or sessions.")}>
-    <div className="panel-body">
-      <div className="actions configuration-actions"><Btn onClick={async () => { setMessage(""); setError(""); const data = await api("config/export"); const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }); const link = document.createElement("a"); link.href = URL.createObjectURL(blob); link.download = "linux-server-control-settings.json"; link.click(); URL.revokeObjectURL(link.href); setMessage(t("Settings export downloaded.")); }}>{t("Export dashboard settings")}</Btn>
-        <Btn onClick={() => restoreFile.current?.click()}>{t("Restore dashboard settings")}</Btn>
-        <input ref={restoreFile} type="file" accept="application/json" hidden onChange={async (event) => {
-          const input = event.currentTarget, file = input.files?.[0];
-          if (!file) return;
-          const content = await file.text();
-          // Emptied, so that choosing the same file again is noticed.
-          input.value = "";
-          setMessage(""); setError("");
-          if (!await appConfirm(t("Restore dashboard settings and overwrite scripts, folders, schedules, devices, alerts and storage paths?"), t("Restore dashboard settings"), t("Restore"), true)) return;
-          try { await api("config/restore", { payload: content }); await refresh(); setMessage(t("Dashboard settings restored.")); } catch (reason) { setError(reason instanceof Error ? reason.message : t("Restore failed")); }
-        }} /></div>
-      {message && <div className="success panel-feedback">{message}</div>}{error && <div className="alert panel-feedback">{error}</div>}
-    </div>
   </Panel>;
 }
 export function StorageManager({ paths, close, done }: { paths: string[]; close: () => void; done: () => Promise<void> }) {

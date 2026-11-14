@@ -1,9 +1,9 @@
 "use client";
-import { useCallback, useEffect, useState } from "react";
-import { Cloud, CloudUpload, Copy, History, Loader2, LogIn, Pencil, RotateCcw, Trash2 } from "lucide-react";
-import { api } from "@/lib/client-api";
-import { appConfirm, Btn, copyText, formatBytes, Modal, ModalActions, notify, Panel, RowMenu, rich } from "@/components/ui";
-import { locale, t, tn } from "@/lib/i18n";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Cloud, CloudUpload, Copy, Download, FileUp, History, Loader2, LogIn, Pencil, RotateCcw, Trash2 } from "lucide-react";
+import { api, apiFile, ApiError } from "@/lib/client-api";
+import { appConfirm, appPrompt, Btn, copyText, formatBytes, Modal, ModalActions, notify, Panel, RowMenu, rich } from "@/components/ui";
+import { locale, msg, t, tn } from "@/lib/i18n";
 
 type DestinationType = "onedrive" | "drive" | "protondrive";
 type Destination = { id: string; type: DestinationType; name: string; folder: string; enabled: boolean; account?: string; last?: { at: number; ok: boolean; file?: string; bytes?: number; error?: string } };
@@ -19,14 +19,36 @@ const AUTHORIZE: Record<"onedrive" | "drive", string> = {
 };
 const weekdayName = (day: number) => new Date(Date.UTC(2026, 10, 8 + day)).toLocaleDateString(locale(), { weekday: "long", timeZone: "UTC" });
 const when = (at: number) => new Date(at).toLocaleString(locale(), { dateStyle: "medium", timeStyle: "short" });
+const RESTORE_WARNING = msg("Scripts, schedules, accounts, alerts and history become as they were then; you may have to sign in again.");
+// Restores from the cloud or from a file. A backup that the saved passphrase
+// does not open, or a dashboard that has none yet, asks for the backup's own.
+async function restore(path: string, body: Record<string, unknown>) {
+  for (let passphrase = "";;) {
+    try { await api(path, { ...body, passphrase }); break; } catch (reason) {
+      if (!(reason instanceof ApiError) || reason.code !== "passphrase") throw reason;
+      const entered = await appPrompt(reason.message, "", t("Backup passphrase"), t("Restore"), true);
+      if (!entered) return;
+      passphrase = entered;
+    }
+  }
+  notify(t("Backup restored. The page reloads."), "success");
+  window.setTimeout(() => window.location.reload(), 1500);
+}
+const base64 = (file: File) => new Promise<string>((resolve, reject) => {
+  const reader = new FileReader();
+  reader.onload = () => resolve(String(reader.result).replace(/^[^,]*,/, ""));
+  reader.onerror = () => reject(reader.error);
+  reader.readAsDataURL(file);
+});
 
-// Cloud backup: where to, when, how many to keep, and the passphrase that
-// encrypts them. Shown to administrators.
+// Backup: where to, when, how many to keep, and the passphrase that encrypts
+// them; and the way back, from the cloud or a file. Shown to administrators.
 export function CloudBackupPanel() {
   const [data, setData] = useState<CloudData | null>(null);
   const [error, setError] = useState("");
   const [adding, setAdding] = useState<Destination | null | undefined>();
   const [browsing, setBrowsing] = useState<Destination | null>(null);
+  const [restoring, setRestoring] = useState(false);
   const [backingUp, setBackingUp] = useState<string | null>(null);
   const load = useCallback(() => api("cloud", undefined, true).then(setData).catch((reason) => setError(reason instanceof Error ? reason.message : t("Error"))), []);
   useEffect(() => { void load(); }, [load]);
@@ -43,11 +65,23 @@ export function CloudBackupPanel() {
       await load();
     }
   }
+  // The same encrypted file the cloud gets, to keep anywhere.
+  async function download() {
+    try {
+      const { blob, name } = await apiFile("cloud/download");
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob); link.download = name; link.click();
+      URL.revokeObjectURL(link.href);
+      notify(t("Backup downloaded."), "success");
+    } catch (reason) { notify(reason instanceof Error ? reason.message : t("Error")); }
+  }
   const ready = !!data?.passphraseSet && !!data.destinations.some((item) => item.enabled);
   return (
-    <Panel title={t("Cloud backup")} note={t("Backs up the whole dashboard, encrypted, to OneDrive, Google Drive or Proton Drive, and deletes the oldest backups.")}
+    <Panel title={t("Backup")} note={t("Backs up the whole dashboard, encrypted, to OneDrive, Google Drive or Proton Drive, by hand or on a schedule, or to a file you download. Any of these backups restores it.")}
       extra={<div className="actions">
         <Btn onClick={() => setAdding(null)} disabled={!data}><Cloud size={16} />{t("Add destination")}</Btn>
+        <Btn onClick={() => setRestoring(true)} disabled={!data}><RotateCcw size={16} />{t("Restore")}</Btn>
+        <Btn onClick={download} disabled={!data?.passphraseSet}><Download size={16} />{t("Download backup")}</Btn>
         <Btn className="primary" onClick={() => backUp()} disabled={!ready || !!backingUp}><CloudUpload size={16} />{t("Back up now")}</Btn>
       </div>}>
       {error && <div className="panel-body"><div className="alert">{error}</div></div>}
@@ -82,6 +116,7 @@ export function CloudBackupPanel() {
       ))}
       {adding !== undefined && <DestinationForm destination={adding} close={() => setAdding(undefined)} saved={async () => { setAdding(undefined); await load(); }} />}
       {browsing && <BackupList destination={browsing} close={() => setBrowsing(null)} />}
+      {restoring && data && <RestoreDialog destinations={data.destinations} close={() => setRestoring(false)} />}
     </Panel>
   );
 }
@@ -213,9 +248,9 @@ function BackupList({ destination, close }: { destination: Destination; close: (
             {
               label: t("Restore"), icon: <RotateCcw size={15} />, danger: true,
               onSelect: async () => {
-                if (!await appConfirm(t("Replace everything in the dashboard with this backup from {time}? Scripts, schedules, accounts, alerts and history become as they were then; you may have to sign in again.", { time: when(backup.at) }), t("Restore backup"), t("Restore"), true)) return;
+                if (!await appConfirm(`${t("Replace everything in the dashboard with this backup from {time}?", { time: when(backup.at) })} ${t(RESTORE_WARNING)}`, t("Restore backup"), t("Restore"), true)) return;
                 setWorking(backup.name); setError("");
-                try { await api("cloud/restore", { id: destination.id, name: backup.name }); notify(t("Backup restored. The page reloads."), "success"); window.setTimeout(() => window.location.reload(), 1500); }
+                try { await restore("cloud/restore", { id: destination.id, name: backup.name }); }
                 catch (reason) { setError(reason instanceof Error ? reason.message : t("Restore failed")); } finally { setWorking(""); }
               },
             },
@@ -232,6 +267,57 @@ function BackupList({ destination, close }: { destination: Destination; close: (
         </div>
       ))}
       <div className="modal-actions"><Btn type="button" onClick={close}>{t("Close")}</Btn></div>
+    </Modal>
+  );
+}
+
+// Every backup there is to restore: those in the cloud, newest first, and a
+// file that was downloaded. A settings export of an older version, which was
+// JSON, is still taken.
+function RestoreDialog({ destinations, close }: { destinations: Destination[]; close: () => void }) {
+  const [backups, setBackups] = useState<(Backup & { destination: Destination })[] | null>(null);
+  const [error, setError] = useState(""), [working, setWorking] = useState(false);
+  const chooser = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    let shown = true;
+    void Promise.all(destinations.map((destination) => api("cloud/backups", { id: destination.id }, true)
+      .then((data) => (data.backups as Backup[]).map((backup) => ({ ...backup, destination })))
+      .catch((reason) => { if (shown) setError(reason instanceof Error ? reason.message : t("Error")); return []; })))
+      .then((found) => { if (shown) setBackups(found.flat().sort((a, b) => b.name.localeCompare(a.name))); });
+    return () => { shown = false; };
+  }, [destinations]);
+  async function run(question: string, title: string, path: string, body: () => Record<string, unknown> | Promise<Record<string, unknown>>) {
+    if (!await appConfirm(question, title, t("Restore"), true)) return;
+    setWorking(true); setError("");
+    try { await restore(path, await body()); } catch (reason) { setError(reason instanceof Error ? reason.message : t("Restore failed")); } finally { setWorking(false); }
+  }
+  return (
+    <Modal title={t("Restore backup")} close={close}>
+      {error && <div className="alert">{error}</div>}
+      <div className="schedule-row">
+        <span className="service-icon"><FileUp size={18} /></span>
+        <div className="grow"><b>{t("From a file")}</b><small>{t("A backup downloaded from here or from the cloud folder (.lscb).")}</small></div>
+        <Btn type="button" disabled={working} onClick={() => chooser.current?.click()}>{t("Choose a file")}</Btn>
+        <input ref={chooser} type="file" accept=".lscb,.json,application/json" hidden onChange={async (event) => {
+          const input = event.currentTarget, file = input.files?.[0];
+          if (!file) return;
+          // Emptied, so that choosing the same file again is noticed.
+          input.value = "";
+          const json = new Uint8Array(await file.slice(0, 1).arrayBuffer())[0] === 0x7b;
+          if (json) await run(t("Restore dashboard settings and overwrite scripts, folders, schedules, devices, alerts and storage paths?"), t("Restore dashboard settings"), "config/restore", async () => ({ payload: await file.text() }));
+          else await run(`${t("Replace everything in the dashboard with the backup in {file}?", { file: file.name })} ${t(RESTORE_WARNING)}`, t("Restore backup"), "cloud/restore/file", async () => ({ file: await base64(file) }));
+        }} />
+      </div>
+      {!backups && !!destinations.length && <div className="empty-state" role="status"><Loader2 className="spin" size={22} /></div>}
+      {backups?.map((backup) => (
+        <div className="schedule-row" key={backup.destination.id + backup.name}>
+          <span className="service-icon"><Cloud size={18} /></span>
+          <div className="grow"><b>{when(backup.at)}</b><small>{backup.destination.name} · {formatBytes(backup.bytes)}</small></div>
+          <Btn type="button" disabled={working} onClick={() => run(`${t("Replace everything in the dashboard with this backup from {time}?", { time: when(backup.at) })} ${t(RESTORE_WARNING)}`, t("Restore backup"), "cloud/restore", () => ({ id: backup.destination.id, name: backup.name }))}>
+            <RotateCcw size={15} />{t("Restore")}
+          </Btn>
+        </div>
+      ))}
     </Modal>
   );
 }

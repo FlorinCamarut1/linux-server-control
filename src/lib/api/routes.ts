@@ -25,8 +25,11 @@ import {
   cloudState,
   deleteBackup,
   deleteDestination,
+  downloadBackup,
   listBackups,
   restoreBackup,
+  restoreBackupFile,
+  WrongPassphrase,
   saveBackupSettings,
   saveDestination,
   finishSignIn,
@@ -403,7 +406,17 @@ const scriptRoutes: Routes<Context> = {
   "POST schedule/toggle": ({ body }) => changeSchedule(body, "toggle"),
 };
 
-// Cloud backup, for administrators only: it reads and replaces everything.
+// A restore that needs another passphrase says so, and the page asks for it.
+async function restored(work: Promise<void>) {
+  try {
+    await work;
+    return ok();
+  } catch (error) {
+    if (error instanceof WrongPassphrase) return NextResponse.json({ error: error.message, code: "passphrase" }, { status: 400 });
+    throw error;
+  }
+}
+// Backup, for administrators only: it reads and replaces everything.
 const cloudRoutes: Routes<Context> = {
   "GET cloud": () => NextResponse.json(cloudState()),
   "POST cloud/settings": ({ body }) => {
@@ -425,10 +438,12 @@ const cloudRoutes: Routes<Context> = {
     await deleteBackup(body.id, body.name);
     return ok();
   },
-  "POST cloud/restore": async ({ body }) => {
-    await restoreBackup(body.id, body.name, body.passphrase || undefined);
-    return ok();
+  "GET cloud/download": async () => {
+    const { file, sealed } = await downloadBackup();
+    return new NextResponse(new Uint8Array(sealed), { headers: { "content-type": "application/octet-stream", "content-disposition": `attachment; filename="${file}"`, "cache-control": "no-store" } });
   },
+  "POST cloud/restore": ({ body }) => restored(restoreBackup(body.id, body.name, body.passphrase || undefined)),
+  "POST cloud/restore/file": ({ body }) => restored(restoreBackupFile(body.file, body.passphrase || undefined)),
 };
 
 const historyRoutes: Routes<Context> = {
