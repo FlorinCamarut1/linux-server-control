@@ -728,7 +728,7 @@ test("a container's log is followed as it is written, until it is closed", async
 
 test("the dashboard is backed up to the cloud, restored from there, and old backups deleted", async ({ page }) => {
   await page.goto("/#settings");
-  const panel = page.locator("section.panel", { has: page.getByRole("heading", { name: "Cloud backup", exact: true }) });
+  const panel = page.locator("section.panel", { has: page.getByRole("heading", { name: "Backup", exact: true }) });
   await expect(panel.getByText("Set an encryption passphrase first.", { exact: false })).toBeVisible();
   await panel.getByLabel("Encryption passphrase").fill("browser test passphrase");
   await panel.getByRole("button", { name: "Save backup settings" }).click();
@@ -761,6 +761,24 @@ test("the dashboard is backed up to the cloud, restored from there, and old back
   await expect(panel.locator(".spin:visible")).toHaveCount(1);
   releaseBackup();
   await expect(row).toContainText("Last backup", { timeout: 30000 });
+  // The same backup as a file, which restores the dashboard as well.
+  const downloading = page.waitForEvent("download");
+  await panel.getByRole("button", { name: "Download backup" }).click();
+  const download = await downloading;
+  expect(download.suggestedFilename()).toMatch(/^lsc-backup-.*\.lscb$/);
+  const chunks: Buffer[] = [];
+  for await (const chunk of await download.createReadStream()) chunks.push(chunk as Buffer);
+  await panel.getByRole("button", { name: "Restore", exact: true }).click();
+  const restore = page.getByRole("dialog", { name: "Restore backup" });
+  // The cloud's backups are offered there too.
+  await expect(restore.locator(".schedule-row", { hasText: "Google Drive" })).toHaveCount(1);
+  await restore.locator("input[type=file]").setInputFiles({ name: download.suggestedFilename(), mimeType: "application/octet-stream", buffer: Buffer.concat(chunks) });
+  await expect(modal(page)).toContainText(download.suggestedFilename());
+  await modal(page).getByRole("button", { name: "Restore", exact: true }).click();
+  await expect(page.getByText("Backup restored. The page reloads.")).toBeVisible({ timeout: 30000 });
+  // The page reloads, which closes the dialog; the destination is still there.
+  await expect(restore).toBeHidden({ timeout: 30000 });
+  await expect(row).toContainText("Last backup", { timeout: 30000 });
   // Restoring brings back what was backed up, and the browser stays signed in.
   await row.getByRole("button", { name: /^Actions for/ }).click();
   await page.getByRole("menu").getByRole("menuitem", { name: "Backups" }).click();
@@ -774,7 +792,7 @@ test("the dashboard is backed up to the cloud, restored from there, and old back
   await page.waitForLoadState("load");
   await expect(heading(page, "Settings")).toBeVisible({ timeout: 30000 });
   // Deleting a backup leaves none.
-  const again = page.locator("section.panel", { has: page.getByRole("heading", { name: "Cloud backup", exact: true }) }).locator(".schedule-row", { hasText: "Google Drive" });
+  const again = page.locator("section.panel", { has: page.getByRole("heading", { name: "Backup", exact: true }) }).locator(".schedule-row", { hasText: "Google Drive" });
   await again.getByRole("button", { name: /^Actions for/ }).click();
   await page.getByRole("menu").getByRole("menuitem", { name: "Backups" }).click();
   const reopened = page.getByRole("dialog", { name: "Backups in Google Drive" });

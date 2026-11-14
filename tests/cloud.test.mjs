@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { gunzipSync } from "node:zlib";
-import { loadServer, plain } from "./harness.mjs";
+import { loadRoutes, loadServer, plain } from "./harness.mjs";
 
 // An rclone whose remotes are folders here: "lscabc:Backups/file" is
 // <cloud>/lscabc/Backups/file. Every call is recorded; `fail` makes the
@@ -210,6 +210,32 @@ test("restoring brings the data back as it was, and keeps the browsers and cloud
   assert.deepEqual(readJson("sessions"), { s: { device: "b".repeat(64) } });
   assert.equal(plain(server.cloudState()).destinations.length, 1, "the cloud settings stay");
   assert.ok(!readdirSync(data).some((name) => name.startsWith(".restore-")), "nothing is left behind");
+});
+
+test("a downloaded backup restores the dashboard, also one that has no passphrase yet", async () => {
+  const { server, readJson, calls } = await withDrive();
+  const { file, sealed } = await server.downloadBackup();
+  assert.match(file, /^lsc-backup-.*\.lscb$/);
+  assert.ok(!calls.some((call) => call.command === "rcat"), "nothing is uploaded");
+  const encoded = sealed.toString("base64");
+  server.save("scripts", [{ id: "b", name: "Changed", path: "/srv/scripts/b.sh", cron: "" }]);
+  await assert.rejects(server.restoreBackupFile(Buffer.from('{"version":1}').toString("base64")), /not a backup/);
+  await assert.rejects(server.restoreBackupFile(encoded, "wrong horse battery"), /Wrong passphrase/);
+  assert.equal(readJson("scripts")[0].name, "Changed", "a failed restore changes nothing");
+  await server.restoreBackupFile(encoded);
+  assert.equal(readJson("scripts")[0].name, "Backup");
+  // A new installation: the page is told to ask for the backup's passphrase.
+  const fresh = loadServer({ host: fakeCloud().host });
+  await assert.rejects(fresh.server.downloadBackup(), /passphrase first/);
+  const { routes } = loadRoutes(fresh.server);
+  const restore = (body) => routes["POST cloud/restore/file"]({ body });
+  for (const passphrase of ["", "wrong horse battery"]) {
+    const asked = await restore({ file: encoded, passphrase });
+    assert.equal(asked.status, 400);
+    assert.equal((await asked.json()).code, "passphrase");
+  }
+  assert.equal((await restore({ file: encoded, passphrase: "correct horse battery" })).status, 200);
+  assert.equal(fresh.readJson("scripts")[0].name, "Backup");
 });
 
 test("the schedule makes a backup once per time it names, in its time zone", async () => {

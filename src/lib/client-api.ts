@@ -47,6 +47,14 @@ async function answer(response: Response) {
 async function send(path: string, body?: unknown) {
   return answer(await ask(path, body));
 }
+// A file the server makes, with the name it gives it.
+export function apiFile(path: string) {
+  return shown((async () => {
+    const response = await ask(path);
+    if (!response.ok) await answer(response);
+    return { blob: await response.blob(), name: /filename="([^"]+)"/.exec(response.headers.get("content-disposition") ?? "")?.[1] ?? "download" };
+  })(), false);
+}
 // Reads an answer that arrives as it is written, such as a log being followed,
 // and gives each piece of text to `piece`. Ends when the server ends the answer
 // or `signal` is aborted.
