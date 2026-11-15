@@ -55,6 +55,28 @@ export function apiFile(path: string) {
     return { blob: await response.blob(), name: /filename="([^"]+)"/.exec(response.headers.get("content-disposition") ?? "")?.[1] ?? "download" };
   })(), false);
 }
+// Sends a file as the body of a request, as it is read from the disk, and
+// says how much of it has been sent. fetch cannot say that, so this one
+// request is an XMLHttpRequest. Ends early when `signal` is aborted.
+export function apiUpload(path: string, file: Blob, sent: (bytes: number) => void, signal: AbortSignal) {
+  return new Promise<void>((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    request.open("POST", `/api/${path}`);
+    request.setRequestHeader("x-lsc-language", language());
+    request.setRequestHeader("content-type", "application/octet-stream");
+    request.upload.onprogress = (event) => sent(event.loaded);
+    request.onload = () => {
+      let data: { error?: string } = {};
+      try { data = JSON.parse(request.responseText); } catch {}
+      if (request.status >= 200 && request.status < 300) resolve();
+      else reject(new ApiError(data.error || t("Request failed"), request.status));
+    };
+    request.onerror = () => reject(new ApiError(t("Request failed"), 0));
+    request.onabort = () => reject(new DOMException("The upload was cancelled", "AbortError"));
+    signal.addEventListener("abort", () => request.abort());
+    request.send(file);
+  });
+}
 // Reads an answer that arrives as it is written, such as a log being followed,
 // and gives each piece of text to `piece`. Ends when the server ends the answer
 // or `signal` is aborted.

@@ -54,13 +54,22 @@ export type ScriptRun = {
   stoppedBy?: string; timedOut?: boolean;
 };
 // active: the rule has announced that its value reached the threshold, and
-// has not yet announced that it is back below.
+// has not yet announced that it is back below. forMinutes: how long the value
+// must stay at or above the threshold before the rule announces it (absent
+// for at once), and aboveSince: since when it has, for such a rule.
 export type AlertRule = {
   id: string; name: string; metric: "temperature" | "cpu" | "ram" | "disk" | "storage" | "failedScripts" | "stoppedContainers" | "diskTemperature";
   threshold: number; enabled: boolean; cooldownMinutes: number; lastTriggeredAt?: number; active?: boolean;
+  forMinutes?: number; aboveSince?: number;
 };
-// storage maps each monitored path to its used percentage (absent in older samples).
-export type MetricSample = { at: number; cpu: number; ram: number; temperature: number | null; disk: number; storage?: Record<string, number> };
+// storage maps each monitored path to its used percentage. load is the load
+// average of the last minute, swap the used percentage (null without swap),
+// netRx and netTx the bytes received and sent per second since the sample
+// before. These are absent in older samples.
+export type MetricSample = {
+  at: number; cpu: number; ram: number; temperature: number | null; disk: number; storage?: Record<string, number>;
+  load?: number | null; swap?: number | null; netRx?: number | null; netTx?: number | null;
+};
 export type CronRun = { scheduleId: string; label: string; startedAt: string; completedAt?: string; exitCode?: number; status: "running" | "success" | "failed" };
 export function scriptRuns() { return read<ScriptRun[]>("script-runs", []); }
 // A run as the browser sees it: without the log's location on the dashboard.

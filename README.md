@@ -6,16 +6,19 @@ It is intended for people comfortable administering their own server. It runs en
 
 ## What it does
 
-- See, start, stop, restart, and inspect Docker containers, and open their web interfaces in one click.
+- See, start, stop, restart, and inspect Docker containers, grouped by Compose project, with each one's CPU and memory use; update a Compose container to its newest image, and open their web interfaces in one click.
 - Run approved shell scripts, follow the exact run log live, and stop a run, by hand or with a time limit.
 - Create and manage guided cron schedules.
-- Browse and edit files only inside paths you explicitly allow.
-- Chart CPU, RAM, temperature, and storage over the last day, week, or month.
+- Browse, edit, upload and download files only inside paths you explicitly allow.
+- Chart CPU, RAM, swap, temperature, network traffic, load, and storage over the last day, week, or month.
+- See which processes use the most CPU and memory, how many package updates wait, whether the server needs a restart, and which services failed.
 - Record power use and cost from Tapo, Shelly, Tasmota, or Home Assistant smart plugs.
 - See the SMART health of the server's disks, and get told when one starts to fail.
 - Back up the whole dashboard, encrypted, to OneDrive, Google Drive or Proton Drive on a schedule, keeping the latest few.
-- Set alert rules for temperature, CPU, RAM, disks and failed runs, and see on one page what needs attention.
-- Get alerts, failed runs, and power device changes on Discord, Slack, ntfy, or any webhook.
+- Set alert rules for temperature, CPU, RAM, disks and failed runs, which can wait out short peaks, and see on one page what needs attention.
+- Get alerts, failed runs, power device changes, and a server that stops answering on Discord, Slack, Telegram, ntfy, or any webhook.
+- Let a monitoring service (healthchecks.io, Uptime Kuma) tell you when the server itself is down, with a heartbeat.
+- Read who did what in the activity log.
 - Add it to a phone's home screen, or install it on a computer, to open it as an app.
 - Use it in English, Romanian, Chinese, Hindi, Spanish, Arabic, French, Bengali, Portuguese, Russian or Urdu, chosen per device; notifications have a language of their own.
 - Choose a theme per device: Dark, Light, Nord, Dracula, Solarized, Gruvbox, Catppuccin, Tokyo Night, Rosé Pine, Black, Latte, or System.

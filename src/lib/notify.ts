@@ -6,23 +6,37 @@ import { msg, t } from "./i18n";
 // Notification channels: webhooks that receive dashboard events. Each type
 // formats the same event for its service.
 
-type ChannelType = "discord" | "slack" | "ntfy" | "webhook";
-export type Channel = { id: string; name: string; type: ChannelType; url: string; events: EventType[]; enabled: boolean; lastSentAt?: number; lastError?: string };
+type ChannelType = "discord" | "slack" | "ntfy" | "telegram" | "webhook";
+// chat: for Telegram, the chat the bot writes to; its url is the bot's address.
+export type Channel = { id: string; name: string; type: ChannelType; url: string; chat?: string; events: EventType[]; enabled: boolean; lastSentAt?: number; lastError?: string };
 
-export const CHANNEL_TYPES: { id: ChannelType; name: string; placeholder: string; help: string }[] = [
+// secret: what the channel asks for instead of a webhook URL; chat: a second
+// field, for where the messages go.
+type ChannelField = { label: string; placeholder: string; help: string };
+export const CHANNEL_TYPES: { id: ChannelType; name: string; placeholder: string; help: string; secret?: string; chat?: ChannelField }[] = [
   { id: "discord", name: "Discord", placeholder: "https://discord.com/api/webhooks/…", help: msg("Channel settings > Integrations > Webhooks > New webhook > Copy URL.") },
   { id: "slack", name: msg("Slack, Mattermost or Rocket.Chat"), placeholder: "https://hooks.slack.com/services/…", help: msg("An incoming webhook URL; the Slack message format is also accepted by Mattermost and Rocket.Chat.") },
   { id: "ntfy", name: "ntfy", placeholder: "https://ntfy.sh/your-topic", help: msg("The topic URL on ntfy.sh or your own ntfy server; subscribe to the topic in the ntfy app.") },
+  {
+    id: "telegram", name: "Telegram", placeholder: "123456789:AAH…", secret: msg("Bot token"),
+    help: msg("In Telegram, write to @BotFather, send /newbot and copy the token it gives you."),
+    chat: { label: msg("Chat ID"), placeholder: "-1001234567890", help: msg("The number of the chat or group the bot writes to, or @name for a public channel. Write to your bot first; @userinfobot tells you your own number.") },
+  },
   { id: "webhook", name: msg("Generic JSON webhook"), placeholder: "https://example.com/hooks/dashboard", help: msg("Receives a JSON POST with event, severity, title, message, host and time; for Home Assistant, n8n or your own scripts.") },
 ];
 
 const COLORS = { info: 0x2a78d6, warning: 0xfab219, critical: 0xd03b3b, success: 0x0ca30c };
 const NTFY = { info: ["3", "information_source"], warning: ["4", "warning"], critical: ["5", "rotating_light"], success: ["3", "white_check_mark"] };
 
+// Telegram reads a message as HTML: its own characters are written as entities.
+const html = (text: string) => text.replace(/[&<>]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[character]!);
+const TELEGRAM_TOKEN = /^\d+:[\w-]{20,}$/;
+const telegramUrl = (token: string) => `https://api.telegram.org/bot${token}/sendMessage`;
+
 const channels = () => read<Channel[]>("notification-channels", []);
 const host = () => serverSettings().sshTarget.split("@").pop() || "local server";
 
-async function send(channel: Pick<Channel, "type" | "url">, event: DashboardEvent) {
+async function send(channel: Pick<Channel, "type" | "url" | "chat">, event: DashboardEvent) {
   const origin = host();
   let init: RequestInit;
   if (channel.type === "discord")
@@ -33,7 +47,9 @@ async function send(channel: Pick<Channel, "type" | "url">, event: DashboardEven
     const [priority, tag] = NTFY[event.severity];
     // Header values must be plain ASCII; the full title is repeated in the body.
     init = { headers: { Title: event.title.replace(/[^\x20-\x7e]/g, "?"), Priority: priority, Tags: tag }, body: `${event.message}\n${origin}` };
-  } else
+  } else if (channel.type === "telegram")
+    init = { headers: { "content-type": "application/json" }, body: JSON.stringify({ chat_id: channel.chat, text: `<b>${html(event.title)}</b>\n${html(event.message)}\n<i>${html(origin)}</i>`, parse_mode: "HTML", disable_web_page_preview: true }) };
+  else
     init = { headers: { "content-type": "application/json" }, body: JSON.stringify({ source: "linux-server-control", host: origin, event: event.type, severity: event.severity, title: event.title, message: event.message, at: new Date().toISOString() }) };
   let response: Response;
   try {
@@ -41,7 +57,10 @@ async function send(channel: Pick<Channel, "type" | "url">, event: DashboardEven
   } catch (error) {
     throw connectionError(error, new URL(channel.url).host);
   }
-  if (!response.ok) throw Error(t("The webhook answered HTTP {status}", { status: response.status }));
+  if (response.ok) return;
+  // Telegram says what is wrong, such as a chat the bot was not added to.
+  const reason = channel.type === "telegram" ? await response.json().then((answer: { description?: unknown }) => (typeof answer.description === "string" ? answer.description : ""), () => "") : "";
+  throw Error(reason ? t("Telegram answered: {error}", { error: reason }) : t("The webhook answered HTTP {status}", { status: response.status }));
 }
 
 function record(id: string, result: { error?: string }) {
@@ -92,12 +111,19 @@ export function saveChannel(input: Record<string, unknown>) {
   const all = channels();
   const previous = all.find((channel) => channel.id === input.id);
   const rawUrl = String(input.url || "").trim();
-  // Editing without a new URL keeps the stored one.
-  const url = rawUrl ? validUrl(type, rawUrl) : previous?.type === type ? previous.url : validUrl(type, "");
+  // Editing without a new URL, or a new token, keeps the stored one.
+  let url: string, chat: string | undefined;
+  if (type === "telegram") {
+    if (rawUrl && !TELEGRAM_TOKEN.test(rawUrl)) throw Error(t("A bot token looks like 123456789:AAH…, as @BotFather gives it"));
+    if (!rawUrl && previous?.type !== type) throw Error(t("Enter the bot token"));
+    url = rawUrl ? telegramUrl(rawUrl) : previous!.url;
+    chat = String(input.chat || "").trim();
+    if (!/^(-?\d{1,20}|@\w{3,64})$/.test(chat)) throw Error(t("Enter the chat ID: a number, or @name for a public channel"));
+  } else url = rawUrl ? validUrl(type, rawUrl) : previous?.type === type ? previous.url : validUrl(type, "");
   const requested = Array.isArray(input.events) ? input.events : String(input.events || "").split(",");
   const events = (Object.keys(EVENT_TYPES) as EventType[]).filter((event) => requested.includes(event));
   if (!events.length) throw Error(t("Choose at least one event"));
-  const channel: Channel = { id: previous?.id ?? randomUUID(), name, type, url, events, enabled: input.enabled !== false && input.enabled !== "false", lastSentAt: previous?.lastSentAt, lastError: previous?.lastError };
+  const channel: Channel = { id: previous?.id ?? randomUUID(), name, type, url, ...(chat ? { chat } : {}), events, enabled: input.enabled !== false && input.enabled !== "false", lastSentAt: previous?.lastSentAt, lastError: previous?.lastError };
   save("notification-channels", [...all.filter((item) => item.id !== channel.id), channel]);
   audit(`notification channel saved ${name} (${type})`);
 }

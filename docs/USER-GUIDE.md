@@ -46,11 +46,23 @@ If no authorized browser is left, or the password is forgotten, see [Locked out]
 
 ## Overview
 
-The landing page: the server's health at the top (temperature, RAM, system disk and each monitored storage path, CPU, uptime and containers, with **Manage storage paths**), anything that needs attention, and charts for the last 24 hours, 7 days or 30 days. Once you add smart plugs, their power and energy appear here too.
+The landing page: the server's health at the top (temperature, RAM with swap, system disk and each monitored storage path, CPU with the load average, network traffic, uptime and containers, with **Manage storage paths**), anything that needs attention, and charts for the last 24 hours, 7 days or 30 days. Once you add smart plugs, their power and energy appear here too.
 
-**Attention needed** lists what is wrong now, not everything that ever went wrong: stopped containers, alert rules whose value is above their threshold, disks that report a problem, and scripts and schedules whose latest run failed. A failed script or schedule leaves the list once it runs successfully again; the failure itself stays under **History**.
+**Network** is what the server's network interfaces received and sent per second since the refresh before, so it shows a dash until the page has refreshed once. Bridges, tunnels and the containers' own interfaces are left out, since they carry the same traffic again.
+
+**Attention needed** lists what is wrong now, not everything that ever went wrong: stopped containers, containers that are unhealthy or keep restarting, alert rules whose value is above their threshold, disks that report a problem, failed services, a restart the server needs, and scripts and schedules whose latest run failed. A failed script or schedule leaves the list once it runs successfully again; the failure itself stays under **History**.
 
 **Disks** shows the SMART health of each disk that has it: its model, device, size and type, its temperature, how many hours it has been powered on, and whether it is **Healthy**, **Needs attention** (bad sectors, SMART attributes below their threshold, a failed self-test, little spare capacity left on an NVMe disk) or **Failing** (the disk itself says it is about to fail, or an NVMe disk became read-only). The dashboard reads what udisks found, which it reads every 10 minutes without waking a disk that sleeps; it needs no root, only the `udisks2` package on the server. **Check now** reads it again. The dashboard checks every 5 minutes, also while no browser is open, and a disk that starts to report a problem, a worse one, or none any more is announced on the notification channels that have **Disk reports a problem, or is healthy again** ticked.
+
+**System** shows what the server is waiting for, read when Overview opens and kept for 15 minutes; **Check now** reads it again.
+
+- **Updates**: how many packages can be updated, and on Debian and Ubuntu how many of them are security updates. apt is asked what it already knows, so the number is as recent as the package lists the server last downloaded (Debian and Ubuntu refresh them daily); dnf, pacman (with `checkupdates`) and zypper ask their mirrors.
+- **Restart**: whether the server needs one for an updated kernel or library to be used. Debian and Ubuntu say so when `unattended-upgrades` or `update-notifier-common` is installed, Fedora and its relatives with `needs-restarting`, Arch when the running kernel's modules are gone; elsewhere it is not known, and the page says that rather than "no".
+- **Services**: the systemd services that failed, by name.
+
+Nothing here changes the server: updates are installed, and the server restarted, from a terminal or a script.
+
+**Processes** lists what uses the most CPU and memory right now. The server is measured for one second; CPU is a process's share of all cores, so the figures add up to the **CPU usage** tile rather than to 100% per core. The processes of containers are listed too, under their own names.
 
 ![Overview with health tiles and charts](screenshots/overview.jpg)
 
@@ -58,10 +70,11 @@ Every chart has a **Table** button that shows the same numbers as a table. Hover
 
 ## Containers
 
-All Docker containers on the server, running and stopped, with filters and a search.
+All Docker containers on the server, running and stopped, with filters and a search. The containers of a Compose project are listed together under its name. A running container shows its CPU and memory use, read every half minute while the page is open, and one whose health check fails, or that keeps restarting, is marked **Unhealthy** or **Restarting** instead of **Up**.
 
 - The buttons next to a container open its web interface, for example `8096` for Jellyfin. Apps that share a VPN container's network, like Radarr or Sonarr behind Gluetun, link to their usual port when the VPN container publishes it.
 - Open a row for its details, logs, and **Start**, **Stop** or **Restart**. The disk size is read when you open the details. **Logs** shows the last 300 lines of both the output and the error stream, then each new line as the container writes it, while live updates are on.
+- **Update**, for containers started by Docker Compose, pulls the newest image of the container's service and starts it again with it: the dashboard runs `docker compose pull` and `docker compose up -d --no-deps` for that one service, with the project, folder and files the container was started with. With no newer image the container is left running as it is. A large image takes a few minutes; the row's buttons wait meanwhile. The dashboard's own container is updated with the [installer](../INSTALL.md#update) instead.
 
 ![Containers with links to their web interfaces](screenshots/containers.jpg)
 
@@ -94,7 +107,9 @@ Shell scripts you approve can be run from the dashboard and followed live.
 
 ## Files
 
-Browse, search, sort (by name, size or date), edit, copy, move, rename and delete files inside the allowed folders only. Every row shows the whole name, however long, with the size and the date it last changed under it; the links above the list show the current folder and lead back up. Text files up to 512 KB open in the built-in editor, which asks before closing with changes that were not saved. Any other file, such as a video, opens its **Details**: full name, path (with **Copy path**), size, date and what can be done with it. Folder sizes appear one by one after the listing, as the server measures the folders, several at a time. Sizes measured in the last few minutes show at once, also for the folders one level down; an older size shows faded until it is measured again, as do all of them after **Refresh**. Sorting by size measures the folders first, so it takes longer in large folders.
+Browse, search, sort (by name, size or date), edit, upload, download, copy, move, rename and delete files inside the allowed folders only. Every row shows the whole name, however long, with the size and the date it last changed under it; the links above the list show the current folder and lead back up. Text files up to 512 KB open in the built-in editor, which asks before closing with changes that were not saved. Any other file, such as a video, opens its **Details**: full name, path (with **Copy path**), size, date and what can be done with it. Folder sizes appear one by one after the listing, as the server measures the folders, several at a time. Sizes measured in the last few minutes show at once, also for the folders one level down; an older size shows faded until it is measured again, as do all of them after **Refresh**. Sorting by size measures the folders first, so it takes longer in large folders.
+
+**Upload** sends files from your device into the folder shown, one after the other, with a bar for how far each is and **Cancel**. A file never replaces one of the same name, and one that did not arrive whole (the connection broke, or you cancelled) leaves nothing behind. **Download**, in a file's **⋯** menu or its details, saves it on your device as the server reads it, so a film of any size works. Folders are not downloaded.
 
 **Copy** or **Cut** in a row's **⋯** menu shows a bar along the bottom of the screen; open the destination folder and press **Paste here** in it.
 
@@ -133,11 +148,13 @@ A plug that is away for a while can be paused instead of deleted: edit it and cl
 
 Every script run from the dashboard, with its status (running, success, failed or stopped), duration, arguments and full log, and every run of a schedule. Search and filter by status. A run that is still going can be stopped from its log.
 
+Below it, administrators have the **Activity log**: who did what in the dashboard, newest first, with a search. Sign-ins, runs, container actions, uploads, downloads and every change to files, schedules, alerts, accounts and settings are recorded with the account that made them; what the dashboard does on its own, such as an alert that triggers, is recorded without one. The entries are in English, and the log keeps about 10 MB.
+
 ![History of script and scheduled runs](screenshots/history.jpg)
 
 ## Alerts
 
-Rules that fire when a value reaches a threshold: CPU temperature, CPU, RAM or system disk use, the use of the monitored storage paths, failed script runs in the last 24 hours, stopped containers, or the temperature of the hottest disk. The storage rule watches all the monitored paths at once and fires for the fullest. The cooldown stops an alert from repeating too often, and a rule that announced its threshold also announces, once, when the value is back below it. Rules are checked every 5 minutes, also while no browser is open; triggered alerts go to your notification channels, and a rule that is above its threshold is listed on Overview.
+Rules that fire when a value reaches a threshold: CPU temperature, CPU, RAM or system disk use, the use of the monitored storage paths, failed script runs in the last 24 hours, stopped containers, or the temperature of the hottest disk. The storage rule watches all the monitored paths at once and fires for the fullest. The cooldown stops an alert from repeating too often, and a rule that announced its threshold also announces, once, when the value is back below it. **Only after it has stayed there for** makes a rule wait: with 10 minutes, a CPU peak during one reading is ignored, and the alert comes only once every reading for 10 minutes was at or above the threshold. A single reading below it starts the wait again. Rules are checked every 5 minutes, also while no browser is open; triggered alerts go to your notification channels, and a rule that is above its threshold is listed on Overview.
 
 ![Alert rules](screenshots/alerts.jpg)
 
@@ -146,7 +163,8 @@ Rules that fire when a value reaches a threshold: CPU temperature, CPU, RAM or s
 **Language.** Under **Settings → Appearance**, or on the sign-in page, choose English, Română, 中文, हिन्दी, Español, العربية, Français, বাংলা, Português, Русский or اردو. The choice is kept in that browser; a new browser starts in its own language when the dashboard has it, otherwise in English. Pages, buttons, dates, numbers and the server's messages follow it; Arabic and Urdu are written right to left. Notifications go out in the language chosen under **Settings → Notifications → Language of notifications**, whoever caused them. Names you give (scripts, folders, schedules) and what the server prints (logs, Docker status) are shown as they are.
 
 - **Appearance**: choose a theme (Dark, Light, Nord, Dracula, Solarized, Gruvbox, Catppuccin, Tokyo Night, Rosé Pine, Black, Latte, or System to follow the device). Each browser keeps its own choice.
-- **Notifications**: send alerts (and their return to normal), failed runs, successful runs of the scripts set to announce them, and power device changes to Discord, Slack (also Mattermost and Rocket.Chat), ntfy, or any webhook that accepts JSON. Choose the events per channel and use **Test** to check it.
+- **Notifications**: send alerts (and their return to normal), failed runs, successful runs of the scripts set to announce them, power device changes and a server that stops answering to Discord, Slack (also Mattermost and Rocket.Chat), Telegram, ntfy, or any webhook that accepts JSON. Choose the events per channel and use **Test** to check it. For Telegram, create a bot with @BotFather, paste its token, and enter the ID of the chat it writes to; write to the bot once first, or add it to the group. **Server stopped answering, or answers again** is sent when the dashboard could not read the server twice in a row, five minutes apart, and once more when it can again; channels added before this event existed get it once you tick it.
+- **Heartbeat**: when the server goes down, the dashboard on it goes down too and cannot send anything. A heartbeat turns that around: the dashboard calls an address every 5 minutes while the server answers it, and a monitoring service that expects those calls tells you when they stop. Create a check at [healthchecks.io](https://healthchecks.io) (period 5 minutes, a few minutes of grace) or a **Push** monitor in Uptime Kuma, and paste its address. **Call it now** tries it at once; the page shows when it was last called and whether that worked. Only the address's host is shown again after saving.
 - **Server connection**: the SSH target and port, the allowed folders and how long metrics are kept. Saving tests the connection first and keeps the previous settings if the server does not answer. **Check server requirements** tests what the server provides and names anything missing.
 - **HTTPS certificate**: with [HTTPS](../INSTALL.md#optional-https) on, download the certificate and follow the steps for the device's system (Windows, macOS, iPhone and iPad, Android, Linux, ChromeOS) to trust it once. The HTTPS address then opens without a warning, and the browser offers to save the password. The sign-in page offers the same under **Save the password in this browser**.
 - **Storage monitoring**: the mounted folders shown as storage cards.
@@ -186,6 +204,8 @@ Android and computers install it as an app only over [HTTPS](../INSTALL.md#optio
 **A plug "refused the connection".** Check its IP address in the plug's own app, give it a fixed address in the router, and, for Tapo, turn on Third-Party Compatibility in the Tapo app. If it still refuses, unplug it for ten seconds.
 
 **A plug "did not answer" or "cannot be reached".** It is off, out of Wi-Fi range, or on another network (a guest or IoT network) than the server.
+
+**A Telegram channel says "chat not found".** The bot can only write to someone who wrote to it first, or to a group it was added to. Open the bot in Telegram, press **Start**, and use **Send test** again.
 
 **A notification channel shows "Last delivery failed".** Use **Test** to see the exact error. A removed Discord webhook answers HTTP 404: create a new one and paste its URL when editing the channel.
 

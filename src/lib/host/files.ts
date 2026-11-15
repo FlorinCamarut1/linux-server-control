@@ -739,6 +739,133 @@ export async function changeFile(
     forgetListings([action === "copy" ? "" : source, output]);
   }
 }
+// Downloading a file: its size, on a line of its own, then that many bytes of
+// it, as they are read on the server. A file that grows meanwhile, such as a
+// log, is cut at the size announced.
+const DOWNLOAD_SCRIPT = 'size=$(stat -c %s -- "$1") || exit 1; printf "%s\\n" "$size"; exec head -c "$size" -- "$1"';
+export async function downloadFile(requested: string, hidden = false, signal?: AbortSignal) {
+  const resolved = await resolveSelectedFile(requested, hidden);
+  // A connection of its own: a film takes long, and the shared connection has
+  // a limited number of sessions.
+  const [command, args] = ssh(["sh", "-c", DOWNLOAD_SCRIPT, "download", resolved], false);
+  const child = spawn(command, args, { stdio: ["ignore", "pipe", "pipe"] });
+  const stop = () => { child.kill(); };
+  const timeout = setTimeout(stop, FILE_TRANSFER_MS);
+  signal?.addEventListener("abort", stop);
+  return new Promise<{ name: string; size: number; stream: ReadableStream<Uint8Array> }>((resolve, reject) => {
+    let head: Buffer | null = Buffer.alloc(0), error = "", ended = false;
+    let controller: ReadableStreamDefaultController<Uint8Array> | undefined;
+    const stream = new ReadableStream<Uint8Array>({
+      start(created) { controller = created; },
+      // The file is read as fast as the browser takes it.
+      pull() { child.stdout.resume(); },
+      cancel: stop,
+    });
+    const send = (chunk: Buffer) => {
+      if (ended || !chunk.length) return;
+      try { controller?.enqueue(chunk); } catch {}
+      if ((controller?.desiredSize ?? 1) <= 0) child.stdout.pause();
+    };
+    const end = (failure?: Error) => {
+      if (ended) return;
+      ended = true;
+      clearTimeout(timeout);
+      signal?.removeEventListener("abort", stop);
+      // Before the size was read the download did not start; after, it broke off.
+      if (head) reject(failure ?? Error(t("File operation failed")));
+      else try { if (failure) controller?.error(failure); else controller?.close(); } catch {}
+    };
+    child.stdout.on("data", (chunk: Buffer) => {
+      if (!head) return send(chunk);
+      head = Buffer.concat([head, chunk]);
+      const line = head.indexOf(10);
+      if (line < 0) return;
+      const size = Number(head.subarray(0, line).toString());
+      const rest = head.subarray(line + 1);
+      head = null;
+      audit("downloaded file " + resolved);
+      resolve({ name: path.posix.basename(resolved), size, stream });
+      send(rest);
+    });
+    child.stderr.on("data", (chunk) => { error += chunk; });
+    child.on("error", (reason) => end(reason instanceof Error ? reason : Error(String(reason))));
+    child.on("close", (code) => end(code === 0 ? undefined : Error(error.trim().split("\n").pop() || t("File operation failed"))));
+  });
+}
+// Uploading a file: what the browser sends is written to a temporary file in
+// the folder it is for, and takes the file's name only once all of it is
+// there, so a connection lost on the way leaves nothing behind. A file with
+// that name is never replaced. The script says what it refuses as a word
+// after "lsc:".
+const UPLOAD_SCRIPT = [
+  'folder=$1 name=$2 size=$3',
+  'target=$folder/$name',
+  '[ -e "$target" ] || [ -L "$target" ] && { echo lsc:exists >&2; exit 3; }',
+  'temporary=$folder/.lsc-upload.$$',
+  // Before the temporary file exists, so that a script ended early leaves none.
+  'trap \'rm -f -- "$temporary"\' EXIT HUP INT TERM',
+  '( set -C; : > "$temporary" ) 2>/dev/null || { echo lsc:denied >&2; exit 4; }',
+  'cat > "$temporary" || exit 1',
+  '[ "$(($(wc -c < "$temporary")))" -eq "$size" ] || { echo lsc:incomplete >&2; exit 5; }',
+  '[ -e "$target" ] || [ -L "$target" ] && { echo lsc:exists >&2; exit 3; }',
+  'mv -- "$temporary" "$target"',
+].join("; ");
+const UPLOAD_PROBLEMS: Record<string, string> = {
+  "lsc:exists": msg("A file or folder with this name already exists"),
+  "lsc:denied": msg("The server account may not write in this folder"),
+  "lsc:incomplete": msg("The upload was interrupted; nothing was saved"),
+};
+export async function uploadFile(directory: string, name: string, size: number, content: AsyncIterable<Uint8Array>, hidden = false, signal?: AbortSignal) {
+  if (!name || name === "." || name === ".." || /[/\\\0\r\n]/.test(name) || Buffer.byteLength(name, "utf8") > 255) throw Error(t("Enter a valid name"));
+  if (!Number.isInteger(size) || size < 0) throw Error(t("The upload did not say how large the file is"));
+  if (!hidden && name.startsWith(".")) throw Error(t("Hidden files are shown only after Show hidden files"));
+  const folder = await resolveAllowedDirectory(directory, hidden);
+  const target = path.posix.join(folder, name);
+  const [command, args] = ssh(["sh", "-c", UPLOAD_SCRIPT, "upload", folder, name, String(size)], false);
+  const child = spawn(command, args, { stdio: ["pipe", "ignore", "pipe"] });
+  let error = "", closed = false, wake: (() => void) | undefined;
+  const ended = new Promise<number | null>((resolve, reject) => {
+    child.on("error", reject);
+    child.on("close", (code) => { closed = true; wake?.(); resolve(code); });
+  });
+  child.stderr.on("data", (chunk) => { error += chunk; });
+  // The script may end before it has read everything, as for a name in use.
+  child.stdin.on("error", () => {});
+  // Ended with its input closed: the script waits for what reads it.
+  const stop = () => { child.kill(); child.stdin.destroy(); };
+  const timeout = setTimeout(stop, FILE_TRANSFER_MS);
+  signal?.addEventListener("abort", stop);
+  try {
+    try {
+      for await (const chunk of content) {
+        if (closed) break;
+        // Sent as fast as the server writes it, not held in memory.
+        if (!child.stdin.write(chunk)) await new Promise<void>((resolve) => {
+          wake = resolve;
+          child.stdin.once("drain", resolve);
+        });
+      }
+    } catch (reason) {
+      // The browser stopped sending: the script finds that what arrived is not
+      // the whole file, and removes it before this answers.
+      child.stdin.end();
+      await ended.catch(() => null);
+      throw reason;
+    } finally {
+      child.stdin.end();
+    }
+    if (await ended !== 0) {
+      const last = error.trim().split("\n").pop() || "";
+      throw Error(t(UPLOAD_PROBLEMS[last] ?? (last || "File operation failed")));
+    }
+  } finally {
+    clearTimeout(timeout);
+    signal?.removeEventListener("abort", stop);
+    forgetListings([target]);
+  }
+  audit("uploaded file " + target);
+  return { ok: true, path: target };
+}
 export async function createFileOrFolder(directory: string, name: string, kind: "file" | "folder", hidden = false) {
   const result = await remoteFileOperation<FileChange>({ path: directory, action: "create", name, kind, hidden });
   // Empty, it leaves the sizes of the folders it is in as they were.

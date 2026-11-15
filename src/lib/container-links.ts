@@ -43,7 +43,9 @@ export function publishedPorts(ports: string): Published[] {
   return result;
 }
 
-function label(labels: string | undefined, name: string) {
+// A label's value in the list `docker ps` prints ("a=1,b=2"); a value that
+// holds a comma is cut there, which names and addresses do not.
+export function label(labels: string | undefined, name: string) {
   for (const pair of (labels || "").split(",")) {
     const index = pair.indexOf("=");
     if (index > 0 && pair.slice(0, index).trim() === name) return pair.slice(index + 1).trim();

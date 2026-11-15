@@ -7,6 +7,17 @@ export const demoDisks = () => ({
     { id: "demo-hdd", device: "/dev/sda", model: "Example HDD 8TB", serial: "DEMO0002", sizeBytes: 8001563222016, kind: "ata" as const, rotational: true, status: "attention" as const, temperatureC: 36, powerOnHours: 31800, problems: [{ text: "sectors", count: 8 }], updatedAt: Date.now() - 4 * 60000 },
   ],
 });
+// What the demo server waits for, and what it is busy with.
+export const demoSystem = () => ({ os: "Ubuntu 24.04.3 LTS", kernel: "6.8.0-60-generic", manager: "apt", updates: 14, security: 3, restartNeeded: true, failedUnits: [], at: Date.now() });
+export const demoProcesses = () => ({
+  at: Date.now(),
+  processes: [
+    { pid: 2114, name: "ffmpeg", cpuPercent: 11.2, memoryBytes: 412 * 1048576 },
+    { pid: 1780, name: "jellyfin", cpuPercent: 3.4, memoryBytes: 1310 * 1048576 },
+    { pid: 1422, name: "dockerd", cpuPercent: 0.9, memoryBytes: 160 * 1048576 },
+    { pid: 2301, name: "Sonarr", cpuPercent: 0.4, memoryBytes: 520 * 1048576 },
+  ],
+});
 // Returned by the development-only demo login instead of reading a real host.
 export const demoState = {
   host: "demo@media-server",
@@ -50,6 +61,15 @@ export const demoState = {
     uptimeSeconds: 196560,
     cpuUsagePercent: 18.4,
     cpuCores: 8,
+    swapUsedBytes: 268435456,
+    swapTotalBytes: 4294967296,
+    load1: 1.42,
+    load5: 1.1,
+    load15: 0.86,
+    netRxBytes: null,
+    netTxBytes: null,
+    netRxBytesPerSecond: 1843200,
+    netTxBytesPerSecond: 412000,
   },
   containers: [
     {
@@ -63,6 +83,7 @@ export const demoState = {
       Networks: "media",
       Mounts: "/mnt/storage,/config",
       Size: "1.2GB",
+      Labels: "com.docker.compose.project=media,com.docker.compose.service=jellyfin",
     },
     {
       ID: "b82c3d4e5f6a",
@@ -75,6 +96,7 @@ export const demoState = {
       Networks: "media",
       Mounts: "/mnt/storage,/config",
       Size: "428MB",
+      Labels: "com.docker.compose.project=media,com.docker.compose.service=sonarr",
     },
     {
       ID: "c73d4e5f6a7b",

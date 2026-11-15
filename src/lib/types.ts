@@ -72,11 +72,24 @@ export type St = {
     uptimeSeconds: number;
     cpuUsagePercent: number;
     cpuCores: number;
+    swapUsedBytes: number;
+    swapTotalBytes: number;
+    // The load averages of the last 1, 5 and 15 minutes.
+    load1: number;
+    load5: number;
+    load15: number;
+    // Network traffic since the refresh before; null until two were read.
+    netRxBytesPerSecond: number | null;
+    netTxBytesPerSecond: number | null;
   };
   // The latest run of each script; the History page loads the run history
   // itself, a page at a time.
   recentRuns: Run[];
-  alerts: { id: string; name: string; metric: string; threshold: number; enabled: boolean; cooldownMinutes: number; lastTriggeredAt?: number }[];
+  // forMinutes: how long the value must stay at or above the threshold before
+  // the rule announces it; aboveSince: since when it has.
+  alerts: { id: string; name: string; metric: string; threshold: number; enabled: boolean; cooldownMinutes: number; lastTriggeredAt?: number; forMinutes?: number; aboveSince?: number }[];
+  // The rules that wait before they announce their value, and still do.
+  alertsWaiting?: string[];
   // The value each alert metric had at the last full refresh.
   alertState?: { values: Record<string, number> };
   // When the snapshot shown was read, if it is one the dashboard kept rather
@@ -112,4 +125,12 @@ export type Disk = {
   status: "ok" | "attention" | "failing" | "unknown"; temperatureC: number | null; powerOnHours: number | null; problems: string[]; updatedAt: number | null;
 };
 export type DiskReport = { available: boolean; reason?: "missing" | "failed"; error?: string; disks: Disk[]; at: number };
+// What the server waits for, as GET system sends it: null where it is not known.
+export type SystemReport = {
+  os: string; kernel: string; manager: string; updates: number | null; security: number | null;
+  restartNeeded: boolean | null; failedUnits: string[] | null; at: number;
+};
+// cpuPercent: its share of what all the cores have.
+export type Process = { pid: number; name: string; cpuPercent: number; memoryBytes: number };
+export type ContainerUse = { cpuPercent: number | null; memory: string; memoryPercent: number | null };
 export type PreflightCheck = { id: string; label: string; status: "ok" | "warning" | "error" | "info"; detail: string };

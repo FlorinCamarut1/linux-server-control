@@ -13,6 +13,7 @@ import {
   UserPlus,
   Trash2,
   Bell,
+  HeartPulse,
   Plus,
   Send,
 } from "lucide-react";
@@ -187,8 +188,10 @@ export function StorageManager({ paths, close, done }: { paths: string[]; close:
   </div></Modal>;
 }
 
-type ChannelType = { id: string; name: string; placeholder: string; help: string };
-type Channel = { id: string; name: string; type: string; url: string; events: string[]; enabled: boolean; lastSentAt?: number; lastError?: string };
+// secret: what the service asks for instead of a webhook URL (a bot token);
+// chat: a second field, for where its messages go.
+type ChannelType = { id: string; name: string; placeholder: string; help: string; secret?: string; chat?: { label: string; placeholder: string; help: string } };
+type Channel = { id: string; name: string; type: string; url: string; chat?: string; events: string[]; enabled: boolean; lastSentAt?: number; lastError?: string };
 type NotificationData = { channels: Channel[]; types: ChannelType[]; events: Record<string, string>; language: string };
 const TEST_SENT = "sent";
 // Webhooks that receive alerts, failed runs and power device changes.
@@ -199,7 +202,7 @@ export function NotificationsPanel() {
   const [error, setError] = useState("");
   const load = () => api("notifications", undefined, true).then(setData).catch((reason) => setError(reason instanceof Error ? reason.message : t("Could not load notification channels")));
   useEffect(() => { void load(); }, []);
-  return <Panel title={t("Notifications")} note={t("Send alerts, failed runs and power device changes to Discord, Slack, ntfy or any webhook.")} extra={<Btn className="primary" onClick={() => setEditing(null)} disabled={!data}><Plus size={16} />{t("Add channel")}</Btn>}>
+  return <Panel title={t("Notifications")} note={t("Send alerts, failed runs and power device changes to Discord, Slack, Telegram, ntfy or any webhook.")} extra={<Btn className="primary" onClick={() => setEditing(null)} disabled={!data}><Plus size={16} />{t("Add channel")}</Btn>}>
     {error && <div className="panel-body"><div className="alert">{error}</div></div>}
     {data && <div className="panel-body notification-language"><label>{t("Language of notifications")}<select value={data.language} onChange={async (event) => { const language = event.target.value; setError(""); try { await api("notifications/language", { language }); await load(); } catch (reason) { setError(reason instanceof Error ? reason.message : t("Error")); } }}>{LANGUAGES.map((item) => <option key={item.id} value={item.id} lang={item.id}>{item.name}</option>)}</select><small>{t("For every channel, and for alerts the server finds on its own.")}</small></label></div>}
     {data && !data.channels.length && <div className="empty-state"><Bell size={22} /><b>{t("No notification channels")}</b><p>{t("Add a webhook to be told when an alert triggers or a run fails.")}</p></div>}
@@ -244,13 +247,16 @@ function ChannelForm({ channel, data, close, saved }: { channel: Channel | null;
       event.preventDefault(); setError("");
       const form = new FormData(event.currentTarget);
       try {
-        await api("notifications/save", { id: channel?.id, type, name: form.get("name"), url: form.get("url"), events: form.getAll("events"), enabled: form.get("enabled") === "true" });
+        await api("notifications/save", { id: channel?.id, type, name: form.get("name"), url: form.get("url"), chat: form.get("chat") ?? "", events: form.getAll("events"), enabled: form.get("enabled") === "true" });
         saved();
       } catch (reason) { setError(reason instanceof Error ? reason.message : t("Could not save the channel")); }
     }}>
       <label>{t("Service")}<select value={type} onChange={(event) => setType(event.target.value)} disabled={!!channel}>{data.types.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
       <label>{t("Name")}<input name="name" defaultValue={channel?.name} required maxLength={60} placeholder={t("Server alerts")} /></label>
-      <label>{t("Webhook URL")}<input name="url" type="url" required={!channel} spellCheck={false} autoComplete="off" placeholder={channel ? t("Leave blank to keep the saved URL ({url})", { url: channel.url }) : info?.placeholder} />{info && <small>{info.help}</small>}</label>
+      {info?.secret
+        ? <label>{info.secret}<input name="url" type="text" required={!channel} spellCheck={false} autoComplete="off" placeholder={channel ? t("Leave blank to keep the saved one") : info.placeholder} /><small>{info.help}</small></label>
+        : <label>{t("Webhook URL")}<input name="url" type="url" required={!channel} spellCheck={false} autoComplete="off" placeholder={channel ? t("Leave blank to keep the saved URL ({url})", { url: channel.url }) : info?.placeholder} />{info && <small>{info.help}</small>}</label>}
+      {info?.chat && <label>{info.chat.label}<input name="chat" required spellCheck={false} autoComplete="off" defaultValue={channel?.chat} placeholder={info.chat.placeholder} /><small>{info.chat.help}</small></label>}
       <fieldset className="event-choices">
         <legend>{t("Send these events")}</legend>
         {Object.entries(data.events).map(([id, label]) => (
@@ -262,6 +268,38 @@ function ChannelForm({ channel, data, close, saved }: { channel: Channel | null;
       <ModalActions cancel={close}><Btn className="primary">{channel ? t("Save channel") : t("Add channel")}</Btn></ModalActions>
     </form>
   </Modal>;
+}
+
+type Heartbeat = { set: boolean; host: string; lastPingAt: number | null; lastError: string | null };
+// The heartbeat: an address the dashboard calls while the server answers, for
+// a monitoring service that raises the alarm when the calls stop coming.
+export function HeartbeatPanel() {
+  const [data, setData] = useState<Heartbeat | null>(null);
+  const [message, setMessage] = useState(""); const [error, setError] = useState("");
+  const load = () => api("heartbeat", undefined, true).then(setData).catch((reason) => setError(reason instanceof Error ? reason.message : t("Could not load the heartbeat")));
+  useEffect(() => { void load(); }, []);
+  const act = async (work: () => Promise<unknown>, done: string) => {
+    setMessage(""); setError("");
+    try { await work(); setMessage(done); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : t("Error")); }
+    finally { await load(); }
+  };
+  return <Panel title={t("Heartbeat")} note={t("The dashboard calls this address every 5 minutes while the server answers it. A monitoring service such as healthchecks.io or Uptime Kuma tells you when the calls stop: when the server, or the dashboard on it, is down and cannot say so itself.")}>
+    <form className="account-form" onSubmit={(event) => {
+      event.preventDefault();
+      const form = event.currentTarget;
+      void act(async () => { await api("heartbeat/save", { url: String(new FormData(form).get("url") || "") }); form.reset(); }, t("Address saved. It is called at the next reading of the server."));
+    }}>
+      <label>{t("Address to call")}<input name="url" type="url" required spellCheck={false} autoComplete="off" placeholder={data?.set ? t("Saved: {host}. Enter a new address to replace it.", { host: data.host }) : "https://hc-ping.com/…"} /><small>{t("The check's ping address, or the Push URL of an Uptime Kuma monitor. Set the service to expect a call every 5 minutes, with a few minutes of grace.")}</small></label>
+      {data?.set && <div className="notice heartbeat-status"><HeartPulse size={16} />{data.lastError ? t("The last call failed: {error}", { error: data.lastError }) : data.lastPingAt ? t("Last called {time}", { time: new Date(data.lastPingAt).toLocaleString(locale()) }) : t("Not called yet")}</div>}
+      {message && <div className="success">{message}</div>}{error && <div className="alert">{error}</div>}
+      <div className="actions">
+        <Btn className="primary" disabled={!data}>{t("Save address")}</Btn>
+        {data?.set && <Btn type="button" onClick={() => act(() => api("heartbeat/test", {}), t("The address answered."))}><Send size={15} />{t("Call it now")}</Btn>}
+        {data?.set && <Btn type="button" className="danger" onClick={async () => { if (await appConfirm(t("Stop calling the heartbeat address? The monitoring service will report the server as down until its check is paused or removed there."), t("Remove heartbeat"), t("Remove"), true)) await act(() => api("heartbeat/save", { url: "" }), t("The heartbeat was removed.")); }}><Trash2 size={15} />{t("Remove")}</Btn>}
+      </div>
+    </form>
+  </Panel>;
 }
 
 type Account = { username: string; role: "admin" | "viewer"; owner: boolean; created?: string };

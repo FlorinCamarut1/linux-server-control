@@ -1308,6 +1308,67 @@ header p,
 .service-main .service-status {
   display: none;
 }
+/* The containers of a Compose project, under its name and their number. */
+.container-group:not(:last-child) {
+  border-bottom: 1px solid var(--line);
+}
+.container-group-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 8px var(--panel-space-x);
+  border-bottom: 1px solid var(--line);
+  background: var(--sunken);
+  color: var(--text-soft);
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+.container-group-name span {
+  color: var(--muted);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+/* A container's CPU and memory use, and a process's, in columns of figures. */
+.service-main .container-use,
+.process-use {
+  font-variant-numeric: tabular-nums;
+}
+.process-use {
+  flex-wrap: nowrap;
+  gap: 16px;
+  color: var(--text-soft);
+  font-size: var(--text-sm);
+  white-space: nowrap;
+}
+.process-use span {
+  min-width: 6.5em;
+  text-align: end;
+}
+/* An activity log entry is a line of text, not a title. */
+.audit-text {
+  font-weight: 500;
+}
+/* A file on its way to the server. */
+.upload-progress {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--line);
+  background: var(--sunken);
+}
+.upload-progress b {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.heartbeat-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
 .containers-page {
   display: flex;
   flex-direction: column;

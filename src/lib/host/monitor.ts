@@ -6,6 +6,7 @@ import { audit, emitDashboardEvent, read, save } from "./store";
 import { CommandError, ROOT_CRON_HELPER, ROOT_SCRIPT_HELPER, resolvePath, run, runAsync, serverSettings, ssh, testServerConnection } from "./ssh";
 import { type AlertRule, type MetricSample, RECORD_ID, alertRules, oneLine, scriptRuns } from "./records";
 import { checkDisks, hottestDisk } from "./disks";
+import { hostReachable, hostUnreachable, sendHeartbeat } from "./heartbeat";
 import { SCHEDULE_MARKERS_SCRIPT, collectCronRuns, keepRootStatus, knownRootStatus, scheduleLog, trimScheduleLog } from "./cron";
 import { locale, msg, t } from "../i18n";
 export function metricSamples() {
@@ -38,6 +39,10 @@ export function metricHistory(range: HistoryRange, points = 288, now = Date.now(
       ram: average(items.map((item) => item.ram)),
       temperature: average(items.map((item) => item.temperature)),
       disk: average(items.map((item) => item.disk)),
+      load: average(items.map((item) => item.load)),
+      swap: average(items.map((item) => item.swap)),
+      netRx: average(items.map((item) => item.netRx)),
+      netTx: average(items.map((item) => item.netTx)),
       storage: Object.fromEntries(paths.map((storagePath) => [storagePath, average(items.map((item) => item.storage?.[storagePath]))])),
     })),
   };
@@ -70,13 +75,30 @@ export function removeMonitoredPath(input: string) {
 // One sample per interval, regardless of how many browsers are polling, so the
 // configured retention is what actually limits the history.
 export const METRIC_INTERVAL_MS = 5 * 60 * 1000;
+// The network counters at the last sample, so that a sample holds the average
+// traffic since the one before rather than that of the last few seconds. On
+// globalThis: the API and the background monitor both record samples.
+const sampled = globalThis as { lscNetSample?: { target: string; at: number; rx: number; tx: number } };
+function sampledTraffic(stats: SystemStats, now: number) {
+  const target = serverSettings().sshTarget, last = sampled.lscNetSample;
+  const rx = stats.netRxBytes, tx = stats.netTxBytes;
+  if (typeof rx !== "number" || typeof tx !== "number") return { netRx: null, netTx: null };
+  sampled.lscNetSample = { target, at: now, rx, tx };
+  // Counters that went down were reset, by a restart of the server.
+  if (last && last.target === target && now > last.at && now - last.at < 3 * METRIC_INTERVAL_MS && rx >= last.rx && tx >= last.tx)
+    return { netRx: (rx - last.rx) / ((now - last.at) / 1000), netTx: (tx - last.tx) / ((now - last.at) / 1000) };
+  return { netRx: stats.netRxBytesPerSecond ?? null, netTx: stats.netTxBytesPerSecond ?? null };
+}
 export function recordMetricSample(stats: SystemStats) {
   const now = Date.now();
   const existing = metricSamples();
   if (existing.length && now - existing[existing.length - 1].at < METRIC_INTERVAL_MS - 5000) return false;
   const cutoff = now - serverSettings().metricsRetentionDays * 86400000;
   const storage = Object.fromEntries((stats.storage || []).filter((item) => item.usedPercent !== null).map((item) => [item.path, item.usedPercent as number]));
-  const sample: MetricSample = { at: now, cpu: stats.cpuUsagePercent, ram: stats.memoryTotalBytes ? (stats.memoryUsedBytes / stats.memoryTotalBytes) * 100 : 0, temperature: stats.temperatureC, disk: stats.diskUsedPercent, storage };
+  const sample: MetricSample = {
+    at: now, cpu: stats.cpuUsagePercent, ram: stats.memoryTotalBytes ? (stats.memoryUsedBytes / stats.memoryTotalBytes) * 100 : 0, temperature: stats.temperatureC, disk: stats.diskUsedPercent, storage,
+    load: stats.load1 ?? null, swap: stats.swapTotalBytes ? (stats.swapUsedBytes / stats.swapTotalBytes) * 100 : null, ...sampledTraffic(stats, now),
+  };
   save("metrics", [...existing.filter((item) => item.at > cutoff), sample], false);
   return true;
 }
@@ -114,16 +136,30 @@ export function evaluateAlerts(snapshot: { stats: SystemStats; containers: { Sta
   let changed = false;
   // A rule that announced its threshold also announces, once, that the value
   // is back below it; the cooldown only spaces out the first kind.
-  const updated = alertRules().map((rule) => {
+  const updated = alertRules().map((stored) => {
+    let rule = stored;
     const cool = rule.cooldownMinutes * 60000;
     const value = values[rule.metric], above = value >= rule.threshold, unit = ALERT_UNITS[rule.metric];
+    // A rule that waits remembers since when its value has been at or above
+    // the threshold; one reading below it starts the wait again.
+    if (rule.forMinutes && rule.enabled && above && rule.aboveSince === undefined) {
+      rule = { ...rule, aboveSince: now };
+      changed = true;
+    } else if (rule.aboveSince !== undefined && !(rule.forMinutes && rule.enabled && above)) {
+      rule = { ...rule };
+      delete rule.aboveSince;
+      changed = true;
+    }
+    const waited = !rule.forMinutes || now - (rule.aboveSince ?? now) >= rule.forMinutes * 60000;
     // Written in the notification language, when the event is built.
     const label = () => rule.metric === "storage" && fullest ? t("Storage use of {path}", { path: fullest.path }) : t(ALERT_LABELS[rule.metric]);
     const shown = Math.round(value * 10) / 10;
-    if (rule.enabled && above && (!rule.lastTriggeredAt || now - rule.lastTriggeredAt >= cool)) {
+    if (rule.enabled && above && waited && (!rule.lastTriggeredAt || now - rule.lastTriggeredAt >= cool)) {
       const next = { ...rule, lastTriggeredAt: now, active: true };
       triggered.push(next); audit(`alert triggered ${rule.name}: ${value}`);
-      emitDashboardEvent(() => ({ type: "alert", severity: "warning", title: t("Alert: {name}", { name: rule.name }), message: t("{label} is {value}, at or above the threshold of {threshold}.", { label: label(), value: `${shown.toLocaleString(locale())}${unit}`, threshold: `${rule.threshold.toLocaleString(locale())}${unit}` }) }));
+      emitDashboardEvent(() => ({ type: "alert", severity: "warning", title: t("Alert: {name}", { name: rule.name }), message: rule.forMinutes
+        ? t("{label} is {value}, and has stayed at or above the threshold of {threshold} for {minutes} min.", { label: label(), value: `${shown.toLocaleString(locale())}${unit}`, threshold: `${rule.threshold.toLocaleString(locale())}${unit}`, minutes: rule.forMinutes })
+        : t("{label} is {value}, at or above the threshold of {threshold}.", { label: label(), value: `${shown.toLocaleString(locale())}${unit}`, threshold: `${rule.threshold.toLocaleString(locale())}${unit}` }) }));
       changed = true;
       return next;
     }
@@ -140,6 +176,11 @@ export function evaluateAlerts(snapshot: { stats: SystemStats; containers: { Sta
   if (changed) save("alerts", updated);
   return { values, triggered };
 }
+// The rules that wait and whose value has not stayed at or above the threshold
+// long enough yet: Overview lists a rule only once it has.
+export function waitingAlerts(now = Date.now()) {
+  return alertRules().filter((rule) => rule.forMinutes && (rule.aboveSince === undefined || now - rule.aboveSince < rule.forMinutes * 60000)).map((rule) => rule.id);
+}
 const ALERT_METRICS: AlertRule["metric"][] = ["temperature", "cpu", "ram", "disk", "storage", "failedScripts", "stoppedContainers", "diskTemperature"];
 export function normalizeAlert(input: Record<string, unknown>): AlertRule {
   const metric = input.metric as AlertRule["metric"];
@@ -148,6 +189,9 @@ export function normalizeAlert(input: Record<string, unknown>): AlertRule {
   if (!Number.isFinite(threshold) || threshold < 0 || !Number.isFinite(cooldownMinutes) || cooldownMinutes < 1 || cooldownMinutes > 10080)
     throw Error(t("Invalid alert values"));
   const lastTriggeredAt = Number(input.lastTriggeredAt);
+  // Empty or 0: the rule announces the first reading at or above its threshold.
+  const forMinutes = Number(input.forMinutes || 0);
+  if (!Number.isInteger(forMinutes) || forMinutes < 0 || forMinutes > 1440) throw Error(t("Invalid alert values"));
   return {
     id: typeof input.id === "string" && RECORD_ID.test(input.id) ? input.id : randomBytes(16).toString("hex"),
     name: oneLine(input.name, 80) || "Alert",
@@ -155,6 +199,7 @@ export function normalizeAlert(input: Record<string, unknown>): AlertRule {
     // An unchecked form checkbox is omitted, so only an explicit true enables the rule.
     enabled: input.enabled === true || input.enabled === "true",
     ...(Number.isFinite(lastTriggeredAt) && lastTriggeredAt > 0 ? { lastTriggeredAt } : {}),
+    ...(forMinutes ? { forMinutes } : {}),
   };
 }
 export function saveAlert(input: Record<string, unknown>) {
@@ -167,6 +212,7 @@ export function saveAlert(input: Record<string, unknown>) {
   if (stored && stored.metric === rule.metric) {
     if (stored.active) rule.active = true;
     if (stored.lastTriggeredAt && !rule.lastTriggeredAt) rule.lastTriggeredAt = stored.lastTriggeredAt;
+    if (stored.aboveSince && rule.forMinutes) rule.aboveSince = stored.aboveSince;
   }
   save("alerts", [...alertRules().filter((item) => item.id !== rule.id), rule]);
   audit("alert saved " + rule.id);
@@ -250,6 +296,18 @@ export type SystemStats = {
   uptimeSeconds: number;
   cpuUsagePercent: number;
   cpuCores: number;
+  swapUsedBytes: number;
+  swapTotalBytes: number;
+  // The load averages of the last 1, 5 and 15 minutes.
+  load1: number;
+  load5: number;
+  load15: number;
+  // What the network interfaces received and sent since the server started,
+  // and per second since the refresh before; null where it is not known.
+  netRxBytes: number | null;
+  netTxBytes: number | null;
+  netRxBytesPerSecond: number | null;
+  netTxBytesPerSecond: number | null;
 };
 // Everything the statistics need, in one host command: the server's clock and
 // the monitored storage paths ($2 onwards) are read by the same script, so a
@@ -273,6 +331,15 @@ const STATS_SCRIPT = [
       'if [ -z "$temp" ]; then temp=$(find -L /sys/class/thermal /sys/class/hwmon -mindepth 2 -maxdepth 2 -type f \\( -name temp -o -name "temp*_input" \\) -readable -exec cat {} + 2>/dev/null | awk \'$1 ~ /^[0-9]+([.][0-9]+)?$/ {v=$1; if (v > 1000) v=v/1000; if (v > 0 && v < 150 && v > max) max=v} END {if (max) printf "%.1f", max}\'); fi',
       'printf "temperatureC=%s\\nmemoryUsedBytes=%s\\nmemoryTotalBytes=%s\\nmemoryAvailableBytes=%s\\ndiskUsedBytes=%s\\ndiskTotalBytes=%s\\ndiskUsedPercent=%s\\nuptimeSeconds=%s\\ncpuUsagePercent=%s\\ncpuCores=%s\\ncpuTotal=%s\\ncpuIdle=%s\\n" "$temp" "$mem_used" "$mem_total" "$mem_available" "$disk_used" "$disk_total" "$disk_pct" "$uptime_s" "$cpu_pct" "$cores" "$cpu_total" "$cpu_idle_total"',
       'printf "time=%s\\n" "$(date "+%d.%m.%Y %H:%M:%S %Z")"',
+      'read -r swap_total swap_used < <(free -b | awk \'/^Swap:/ {print $2, $3}\')',
+      'read -r load1 load5 load15 _ < /proc/loadavg',
+      // Network traffic is counted on the interfaces with a device behind them:
+      // the bridges, tunnels and containers' interfaces carry the same bytes
+      // again. A server without such an interface (a container) counts them all.
+      'net_rx=0; net_tx=0; net_seen=',
+      'net_sum() { for net_dev in /sys/class/net/*; do [ "${net_dev##*/}" = lo ] && continue; [ "$1" = any ] || [ -e "$net_dev/device" ] || continue; read -r net_r < "$net_dev/statistics/rx_bytes" && read -r net_t < "$net_dev/statistics/tx_bytes" || continue; net_rx=$((net_rx + net_r)); net_tx=$((net_tx + net_t)); net_seen=1; done 2>/dev/null; }',
+      'net_sum device; [ -n "$net_seen" ] || net_sum any',
+      'printf "swapTotalBytes=%s\\nswapUsedBytes=%s\\nload1=%s\\nload5=%s\\nload15=%s\\nnetRxBytes=%s\\nnetTxBytes=%s\\n" "$swap_total" "$swap_used" "$load1" "$load5" "$load15" "${net_seen:+$net_rx}" "${net_seen:+$net_tx}"',
       // One line per path, in the order given; empty where df cannot read it.
       // A path on a mount that stopped answering must not stall the refresh.
       'storage_df() { if command -v timeout >/dev/null 2>&1; then timeout 10 df -B1 -P -- "$1"; else df -B1 -P -- "$1"; fi; }',
@@ -282,6 +349,8 @@ const STATS_SCRIPT = [
 // are not used, so a long pause does not produce a long average.
 const CPU_READING_MAX_AGE_MS = 10 * 60 * 1000;
 let cpuReading: { target: string; at: number; total: number; idle: number } | undefined;
+// And the previous reading of the network counters, for the traffic per second.
+let netReading: { target: string; at: number; rx: number; tx: number } | undefined;
 // A refresh is one host command. Over SSH each command is a process here and a
 // session and a login shell on the server, so the four reads a refresh needs,
 // and the root helpers' status when it is due ($3 is "root"), share one. Docker
@@ -348,6 +417,16 @@ function systemStats(output: string, paths: string[], target: string, previous: 
     }
     cpuReading = { target, at: Date.now(), total, idle };
   }
+  if (stats.netRxBytes !== null && stats.netTxBytes !== null) {
+    const now = Date.now(), before = netReading;
+    // Counters that went down were reset, by a restart of the server.
+    if (before && before.target === target && now > before.at && now - before.at < CPU_READING_MAX_AGE_MS && stats.netRxBytes >= before.rx && stats.netTxBytes >= before.tx) {
+      const seconds = (now - before.at) / 1000;
+      stats.netRxBytesPerSecond = (stats.netRxBytes - before.rx) / seconds;
+      stats.netTxBytesPerSecond = (stats.netTxBytes - before.tx) / seconds;
+    }
+    netReading = { target, at: now, rx: stats.netRxBytes, tx: stats.netTxBytes };
+  }
   return { stats, time: values.time || "" };
 }
 function parseValues(lines: string[]): Record<string, string> {
@@ -373,6 +452,15 @@ function parseStats(values: Record<string, string>, storage: SystemStats["storag
     uptimeSeconds: number("uptimeSeconds"),
     cpuUsagePercent: number("cpuUsagePercent"),
     cpuCores: number("cpuCores"),
+    swapUsedBytes: number("swapUsedBytes"),
+    swapTotalBytes: number("swapTotalBytes"),
+    load1: number("load1"),
+    load5: number("load5"),
+    load15: number("load15"),
+    netRxBytes: values.netRxBytes ? number("netRxBytes") : null,
+    netTxBytes: values.netTxBytes ? number("netTxBytes") : null,
+    netRxBytesPerSecond: null,
+    netTxBytesPerSecond: null,
   };
 }
 function parseStorage(storagePath: string, line: string) {
@@ -515,7 +603,14 @@ export function startBackgroundMonitor() {
     if (running || !read<{ password?: string }>("config", {}).password) return;
     running = true;
     try {
-      const snapshot = await hostSnapshot();
+      // Only a server that did not answer counts as unreachable, not a
+      // failure of what follows.
+      const snapshot = await hostSnapshot().catch((error) => {
+        hostUnreachable(error instanceof Error ? error.message : String(error));
+        throw error;
+      });
+      hostReachable();
+      void sendHeartbeat();
       recordMetricSample(snapshot.stats);
       // Disk health first, so that the disk temperature rule sees this reading.
       await checkDisks().catch(() => {});
