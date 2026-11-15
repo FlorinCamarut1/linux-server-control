@@ -6,6 +6,17 @@ import {
   alertRules,
   alertValues,
   audit,
+  auditPage,
+  containerStats,
+  downloadFile,
+  heartbeatState,
+  pingHeartbeat,
+  saveHeartbeat,
+  systemReport,
+  topProcesses,
+  updateContainer,
+  uploadFile,
+  waitingAlerts,
   browseFiles,
   browseScripts,
   changeFile,
@@ -78,7 +89,7 @@ import { DRIVERS, deletePowerDevice, powerHistory, publicDevices, savePowerDevic
 import { CHANNEL_TYPES, deleteChannel, publicChannels, saveChannel, testChannel } from "@/lib/notify";
 import { EVENT_TYPES } from "@/lib/server";
 import { accountRoutes } from "./auth";
-import { demoDisks, demoState } from "./demo";
+import { demoDisks, demoProcesses, demoState, demoSystem } from "./demo";
 import { type Body, type Context, type Routes, ok } from "./http";
 import { digest, isLanguage, t } from "@/lib/server";
 
@@ -97,6 +108,7 @@ function records({ devices, user, session }: Context) {
     host: serverSettings().sshTarget || "local server",
     recentRuns: recentRuns(),
     alerts: alertRules(),
+    alertsWaiting: waitingAlerts(),
     metrics: metricsSummary(),
     monitoredPaths: monitoredPaths(),
   };
@@ -232,12 +244,21 @@ const hostRoutes: Routes<Context> = {
       !CONTAINER_NAME.test(body.name || "")
     )
       throw Error(t("Invalid action"));
-    const output =
-      body.action === "logs"
-        ? await containerLogs(body.name)
-        : await run(["docker", body.action, body.name], 45000);
+    if (body.action === "logs") return NextResponse.json({ output: await containerLogs(body.name) });
+    const output = await run(["docker", body.action, body.name], 45000);
+    audit(`container ${body.action} ${body.name}`);
     return NextResponse.json({ output });
   },
+  // Each running container's CPU and memory use, read while Containers is shown.
+  "GET container/stats": async ({ session }) =>
+    NextResponse.json({ stats: session.device === "demo" ? {} : await containerStats() }),
+  // Pulls the image of a Compose container and starts it again with it.
+  "POST container/update": async ({ body }) => ok(await updateContainer(body.name || "")),
+  // What the server waits for (updates, a restart, failed services), from the
+  // latest report or, with ?fresh=true, read now.
+  "GET system": async ({ req, session }) =>
+    NextResponse.json(session.device === "demo" ? demoSystem() : await systemReport(req.nextUrl.searchParams.get("fresh") === "true")),
+  "GET processes": async ({ session }) => NextResponse.json(session.device === "demo" ? demoProcesses() : await topProcesses()),
   // The log as it is written, until the page stops reading. Sent as it comes:
   // "no-transform" keeps the answer from being held back to be compressed.
   "GET container/logs": ({ req }) =>
@@ -329,6 +350,26 @@ const fileRoutes: Routes<Context> = {
   "POST file/create": async (context) => {
     const { body } = context, kind = body.kind === "folder" ? "folder" : "file";
     return NextResponse.json(await createFileOrFolder(body.path || "", body.name || "", kind, showsHidden(context)));
+  },
+  // The file as it is read on the server, for the browser to save. A link
+  // cannot send a body, so the path is in the address.
+  "GET file/download": async (context) => {
+    const query = context.req.nextUrl.searchParams;
+    const file = await downloadFile(query.get("path") || "", showsHidden({ ...context, body: { hidden: query.get("hidden") || "" } }), context.req.signal);
+    // A name that is not plain ASCII is given both ways (RFC 6266).
+    const plainName = file.name.replace(/[^\x20-\x7e]|["\\]/g, "_");
+    return new Response(file.stream, { headers: {
+      "content-type": "application/octet-stream", "content-length": String(file.size), "cache-control": "no-store",
+      "content-disposition": `attachment; filename="${plainName}"; filename*=UTF-8''${encodeURIComponent(file.name).replace(/['()*]/g, (character) => "%" + character.charCodeAt(0).toString(16).toUpperCase())}`,
+    } });
+  },
+  // The request's body is the file; the folder and the name are in its address.
+  "POST file/upload": async (context) => {
+    const { body, req } = context;
+    const size = req.headers.get("content-length");
+    const nothing: AsyncIterable<Uint8Array> = { async *[Symbol.asyncIterator]() {} };
+    return NextResponse.json(await uploadFile(body.path || "", body.name || "", size === null ? NaN : Number(size),
+      (req.body as unknown as AsyncIterable<Uint8Array> | null) ?? nothing, showsHidden(context), req.signal));
   },
   "POST file/read": async (context) => NextResponse.json(await readEditableFile(context.body.path || "", showsHidden(context))),
   "POST file/save": async (context) => {
@@ -462,6 +503,11 @@ const historyRoutes: Routes<Context> = {
     audit("alert deleted " + body.id);
     return ok();
   },
+  // Who did what in the dashboard, newest first; for administrators only.
+  "GET audit": ({ req }) => {
+    const query = req.nextUrl.searchParams;
+    return NextResponse.json(auditPage({ search: query.get("search") || "", offset: Number(query.get("offset")), limit: Number(query.get("limit")) }));
+  },
   "GET config/export": () => NextResponse.json(exportConfiguration()),
   "POST config/restore": async ({ body }) => {
     await restoreConfiguration(body.payload ? JSON.parse(body.payload) : body);
@@ -495,7 +541,10 @@ const powerRoutes: Routes<Context> = {
 const notificationRoutes: Routes<Context> = {
   "GET notifications": () => NextResponse.json({
     channels: publicChannels(),
-    types: CHANNEL_TYPES.map((type) => ({ ...type, name: t(type.name), help: t(type.help) })),
+    types: CHANNEL_TYPES.map((type) => ({
+      ...type, name: t(type.name), help: t(type.help), ...(type.secret ? { secret: t(type.secret) } : {}),
+      ...(type.chat ? { chat: { ...type.chat, label: t(type.chat.label), help: t(type.chat.help) } } : {}),
+    })),
     events: Object.fromEntries(Object.entries(EVENT_TYPES).map(([id, label]) => [id, t(label)])),
     language: notificationLanguage(),
   }),
@@ -515,6 +564,17 @@ const notificationRoutes: Routes<Context> = {
   },
   "POST notifications/test": async ({ body }) => {
     await testChannel(body.id || "");
+    return ok();
+  },
+  // The heartbeat: an address called after every reading of the server that
+  // worked, for a service that raises the alarm when the calls stop.
+  "GET heartbeat": () => NextResponse.json(heartbeatState()),
+  "POST heartbeat/save": ({ body }) => {
+    saveHeartbeat(body);
+    return ok();
+  },
+  "POST heartbeat/test": async () => {
+    await pingHeartbeat();
     return ok();
   },
 };

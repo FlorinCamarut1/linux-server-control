@@ -47,11 +47,16 @@ esac
 // Docker. A container's log has three lines and then a new one every half
 // second, for as long as it is read; `docker logs` leaves its process ID in
 // e2e/.tmp/docker-logs.pid, so a test can tell whether a log is still followed.
-const container = (ID, Names, Image, State, Status) => JSON.stringify({ ID, Names, Image, State, Status, Ports: "", Mounts: "", Networks: "bridge", Labels: "" });
+// The first container was started by Compose, from the project "media" in the
+// files folder: `docker compose` records what it is asked in
+// e2e/.tmp/compose.log, and a pull brings a new image once.
+const container = (ID, Names, Image, State, Status, Labels = "") => JSON.stringify({ ID, Names, Image, State, Status, Ports: "", Mounts: "", Networks: "bridge", Labels });
+const image = path.join(tmp, "docker-image"), composeLog = path.join(tmp, "compose.log");
+writeFileSync(image, "sha256:old");
 writeFileSync(path.join(bin, "docker"), `#!/bin/sh
 case "$1" in
   ps)
-    echo '${container("3f1c2a9b7d01", "jellyfin", "example/jellyfin:latest", "running", "Up 3 days")}'
+    echo '${container("3f1c2a9b7d01", "jellyfin", "example/jellyfin:latest", "running", "Up 3 days (healthy)", "com.docker.compose.project=media,com.docker.compose.service=jellyfin")}'
     echo '${container("a9e1c3f5d708", "backup", "example/backup:latest", "exited", "Exited (0) 5 hours ago")}'
     ;;
   logs)
@@ -59,6 +64,20 @@ case "$1" in
     for line in 1 2 3; do echo "2026-09-27T03:00:0\${line}Z earlier line \${line}"; done
     line=3
     while :; do sleep 0.5; line=$((line + 1)); echo "2026-09-27T03:00:10Z new line \${line}"; done
+    ;;
+  stats)
+    echo '{"Name":"jellyfin","CPUPerc":"12.50%","MemUsage":"310MiB / 15.5GiB","MemPerc":"2.00%"}'
+    ;;
+  inspect)
+    case "$3" in
+      *Config*) printf '%s\\n' media jellyfin '${files}' '${files}/compose.yml' 3f1c2a9b7d01aaaa "$(cat '${image}')" ;;
+      *) cat '${image}'; echo ;;
+    esac
+    ;;
+  compose)
+    [ "$2" = version ] && exit 0
+    echo "$*" >> '${composeLog}'
+    case " $* " in *" pull "*) printf sha256:new > '${image}' ;; esac
     ;;
 esac
 `, { mode: 0o755 });
@@ -93,13 +112,14 @@ createServer((req, res) => {
   res.statusCode = 404; res.end("{}");
 }).listen(3211, "127.0.0.1");
 
-// A webhook receiver that records every notification it is sent.
+// A webhook receiver that records every notification it is sent; a call
+// without a body, such as a heartbeat, is answered and not recorded.
 const webhooks = path.join(tmp, "webhooks.jsonl");
 writeFileSync(webhooks, "");
 createServer(async (req, res) => {
   const chunks = [];
   for await (const chunk of req) chunks.push(chunk);
-  appendFileSync(webhooks, Buffer.concat(chunks).toString().replaceAll("\n", " ") + "\n");
+  if (chunks.length) appendFileSync(webhooks, Buffer.concat(chunks).toString().replaceAll("\n", " ") + "\n");
   res.statusCode = 204; res.end();
 }).listen(3212, "127.0.0.1");
 

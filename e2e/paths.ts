@@ -11,6 +11,8 @@ export const CRONTAB = path.join(TMP, "crontab");
 export const PLUG = "127.0.0.1:3211";
 export const WEBHOOK = "http://127.0.0.1:3212/hook";
 export const WEBHOOKS = path.join(TMP, "webhooks.jsonl");
+// What the fake `docker compose` was asked, a line per call.
+export const COMPOSE_LOG = path.join(TMP, "compose.log");
 export const ADMIN_STATE = path.join(TMP, "admin.json");
 export const USERNAME = "admin";
 export const PASSWORD = "browser-test-password";

@@ -1,6 +1,6 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api } from "@/lib/client-api";
+import { api, apiUpload } from "@/lib/client-api";
 import { appConfirm, appPrompt, Btn, copyText, Panel, formatBytes, Modal, ModalActions, notify, PAGE_REFRESH, RowMenu, rich } from "@/components/ui";
 import { locale, t } from "@/lib/i18n";
 import type { ScriptBrowserData, FileBrowserData } from "@/lib/types";
@@ -9,6 +9,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Copy,
+  Download,
   Eye,
   FileTerminal,
   FilePenLine,
@@ -20,6 +21,7 @@ import {
   Loader2,
   Scissors,
   Trash2,
+  Upload,
   X,
 } from "lucide-react";
 type Entry = FileBrowserData["entries"][number];
@@ -139,6 +141,10 @@ export function FileExplorer() {
   }, [search, query]);
   const { data, error, loading, sizesLoading, load } = useDirectory<FileBrowserData & { total?: number; offset?: number; limit?: number }>("file/browse", directory, true, { search: query, sort, offset, limit: FILES_PAGE, hidden: showHidden });
   const listTop = useRef<HTMLDivElement>(null);
+  // The file being sent to the server, how far it is, and how many follow it.
+  const [upload, setUpload] = useState<{ name: string; sent: number; size: number; left: number } | null>(null);
+  const uploading = useRef<AbortController | null>(null);
+  const chooser = useRef<HTMLInputElement>(null);
   // The page's Refresh button reads the folder, and measures it, again too.
   useEffect(() => {
     const refresh = () => void load(true);
@@ -219,6 +225,43 @@ export function FileExplorer() {
     catch (reason) { notify(reason instanceof Error ? reason.message : t("Could not create item")); }
     finally { setOpening(""); }
   }
+  // The browser saves the file as the server reads it, so a film is not held
+  // in memory first; a link does that, a request made by the page would not.
+  function downloadEntry(entry: Entry) {
+    const link = document.createElement("a");
+    link.href = `/api/file/download?${new URLSearchParams({ path: entry.path, hidden: String(showHidden) })}`;
+    link.download = entry.name;
+    document.body.append(link);
+    link.click();
+    link.remove();
+  }
+  // Files are sent one after the other into the folder shown; one that fails,
+  // such as a name already in use, is said and the others go on.
+  async function uploadFiles(files: File[]) {
+    if (!data || !files.length || uploading.current) return;
+    const folder = data.path, control = new AbortController();
+    uploading.current = control;
+    let saved = 0;
+    try {
+      for (const [index, file] of files.entries()) {
+        if (control.signal.aborted) break;
+        setUpload({ name: file.name, sent: 0, size: file.size, left: files.length - index - 1 });
+        try {
+          await apiUpload(`file/upload?${new URLSearchParams({ path: folder, name: file.name, hidden: String(showHidden) })}`, file,
+            (sent) => setUpload((current) => current && { ...current, sent }), control.signal);
+          saved++;
+        } catch (reason) {
+          if (control.signal.aborted) break;
+          notify(`${file.name}: ${reason instanceof Error ? reason.message : t("Could not upload the file")}`);
+        }
+      }
+    } finally {
+      uploading.current = null;
+      setUpload(null);
+      if (saved) notify(saved === 1 ? t("The file was uploaded") : t("Files uploaded: {count}", { count: saved }), "success");
+      await load();
+    }
+  }
   const copyEntry = (entry: Entry) => setClipboard({ path: entry.path, action: "copy", name: entry.name });
   const cutEntry = (entry: Entry) => setClipboard({ path: entry.path, action: "move", name: entry.name });
   // The current folder as links, from its allowed location down.
@@ -271,6 +314,13 @@ export function FileExplorer() {
                 <LayoutList size={16} />
               </button>
             </div>
+            <Btn disabled={!data || !!opening || !!upload} onClick={() => chooser.current?.click()}><Upload size={16} />{t("Upload")}</Btn>
+            <input ref={chooser} type="file" multiple hidden aria-label={t("Files to upload")} onChange={(event) => {
+              const files = [...(event.target.files ?? [])];
+              // The same file can be chosen again after this.
+              event.target.value = "";
+              void uploadFiles(files);
+            }} />
             <Btn disabled={!data || !!opening} onClick={() => create("folder")}><Folder size={16} />{t("New folder")}</Btn>
             <Btn disabled={!data || !!opening} onClick={() => create("file")}><FileTerminal size={16} />{t("New file")}</Btn>
           </div>
@@ -310,6 +360,19 @@ export function FileExplorer() {
           <small>{t("Folder sizes are calculated on demand.")}</small>
         </div>
         {hiddenNote && <div className="alert">{hiddenNote}</div>}
+        {upload && (
+          <div className="upload-progress" role="status">
+            <div className="grow">
+              <b dir="auto">{t("Uploading {name}", { name: upload.name })}</b>
+              <small>
+                {t("{sent} of {size}", { sent: formatBytes(upload.sent), size: formatBytes(upload.size) })}
+                {upload.left > 0 ? ` · ${t("files still to send: {count}", { count: upload.left })}` : ""}
+              </small>
+              <span className="metric-bar" aria-hidden="true"><i style={{ width: `${upload.size ? Math.min(100, (upload.sent / upload.size) * 100) : 100}%` }} /></span>
+            </div>
+            <Btn onClick={() => uploading.current?.abort()}><X size={16} />{t("Cancel")}</Btn>
+          </div>
+        )}
         <div className="file-explorer-nav" ref={listTop}>
           {data?.parent && (
             <button type="button" className="file-explorer-up" aria-label={t("Up one folder")} onClick={() => navigate(data.parent!)}>
@@ -356,6 +419,7 @@ export function FileExplorer() {
                 items={[
                   { label: t("Details"), icon: <Info size={15} />, onSelect: () => setDetails({ entry }) },
                   editable(entry) && { label: t("Edit"), icon: <FilePenLine size={15} />, onSelect: () => void openEntry(entry) },
+                  entry.type === "file" && { label: t("Download"), icon: <Download size={15} />, onSelect: () => downloadEntry(entry) },
                   { label: t("Copy"), icon: <Copy size={15} />, onSelect: () => copyEntry(entry) },
                   { label: t("Cut"), icon: <Scissors size={15} />, onSelect: () => cutEntry(entry) },
                   { label: t("Rename"), icon: <FilePenLine size={15} />, onSelect: () => renameEntry(entry) },
@@ -387,6 +451,7 @@ export function FileExplorer() {
             const { entry } = details;
             setDetails(null);
             if (action === "open") void openEntry(entry);
+            if (action === "download") downloadEntry(entry);
             if (action === "copy") copyEntry(entry);
             if (action === "cut") cutEntry(entry);
             if (action === "rename") void renameEntry(entry);
@@ -420,7 +485,7 @@ export function FileExplorer() {
 }
 // Everything about one file or folder, readable however long its name: the
 // full name and path, size and date, and what can be done with it.
-function FileDetails({ entry, note, close, act }: { entry: Entry; note?: string; close: () => void; act: (action: "open" | "copy" | "cut" | "rename" | "delete") => void }) {
+function FileDetails({ entry, note, close, act }: { entry: Entry; note?: string; close: () => void; act: (action: "open" | "download" | "copy" | "cut" | "rename" | "delete") => void }) {
   const folder = entry.type === "directory";
   return (
     <Modal title={folder ? t("Folder details") : t("File details")} close={close}>
@@ -436,6 +501,7 @@ function FileDetails({ entry, note, close, act }: { entry: Entry; note?: string;
           {(folder || editable(entry)) && !note && (
             <Btn className="primary" onClick={() => act("open")}>{folder ? <FolderOpen size={16} /> : <FilePenLine size={16} />}{folder ? t("Open") : t("Edit")}</Btn>
           )}
+          {!folder && <Btn onClick={() => act("download")}><Download size={16} />{t("Download")}</Btn>}
           <Btn onClick={async () => { if (await copyText(entry.path)) notify(t("Path copied"), "success"); }}><Copy size={16} />{t("Copy path")}</Btn>
           <Btn onClick={() => act("copy")}><Copy size={16} />{t("Copy")}</Btn>
           <Btn onClick={() => act("cut")}><Scissors size={16} />{t("Cut")}</Btn>

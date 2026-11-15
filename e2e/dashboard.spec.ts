@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { type Browser, type Locator, type Page, expect, test } from "@playwright/test";
-import { ADMIN_STATE, CRONTAB, DATA, FILES, PASSWORD, PLUG, TMP, USERNAME, WEBHOOK, WEBHOOKS } from "./paths";
+import { ADMIN_STATE, COMPOSE_LOG, CRONTAB, DATA, FILES, PASSWORD, PLUG, TMP, USERNAME, WEBHOOK, WEBHOOKS } from "./paths";
 
 const PAGES = ["Overview", "Containers", "Scripts", "Files", "Schedules", "Power", "History", "Alerts", "Settings"];
 const heading = (page: Page, name: string) => page.getByRole("heading", { name, level: 1 });
@@ -13,6 +13,8 @@ async function open(page: Page, name: string) {
   await page.getByRole("navigation").getByRole("button", { name, exact: true }).click();
   await expect(heading(page, name)).toBeVisible();
 }
+// The panel with this title, on a page that has several.
+const panel = (page: Page, name: string) => page.locator("section.panel", { has: page.getByRole("heading", { name, exact: true }) });
 // The topmost dialog: a confirmation opens above the dialog that asked for it.
 const modal = (page: Page) => page.locator(".modal").last();
 // Keeps requests to `url` waiting until the returned function is called, to
@@ -577,7 +579,8 @@ test("Overview lists a failing script until it runs successfully again", async (
   await expect(failure).toHaveCount(0);
   await open(page, "History");
   await page.getByLabel("Filter status").selectOption("failed");
-  await expect(page.locator(".schedule-row", { hasText: "Flaky job" })).toHaveCount(1);
+  // The activity log, on the same page, names the script too.
+  await expect(panel(page, "Execution history").locator(".schedule-row", { hasText: "Flaky job" })).toHaveCount(1);
 });
 
 test("the editor asks before discarding changes that were not saved", async ({ page }) => {
@@ -724,6 +727,151 @@ test("a container's log is followed as it is written, until it is closed", async
   await viewer.getByRole("button", { name: "Close" }).click();
   await expect(viewer).toBeHidden();
   await expect.poll(following).toBe(false);
+});
+
+
+test("Overview shows the network, what the system waits for and the busiest processes", async ({ page }) => {
+  await page.goto("/");
+  const health = page.locator(".metrics").first();
+  await expect(health.getByText("Network", { exact: true })).toBeVisible();
+  await expect(health.getByText(/load \d/)).toBeVisible();
+  const system = panel(page, "System");
+  await expect(system.getByText(/kernel \S+/)).toBeVisible();
+  await expect(system.locator(".schedule-row")).toHaveCount(3);
+  const checked = page.waitForResponse((response) => response.url().endsWith("/api/system?fresh=true") && response.ok());
+  await system.getByRole("button", { name: "Check now" }).click();
+  await checked;
+  const processes = panel(page, "Processes");
+  await expect(processes.locator(".process-row").first()).toContainText(/PID \d+/);
+  await expect(processes.locator(".process-row").first()).toContainText(/CPU \d+\.\d%/);
+  for (const chart of ["Network", "Load average"]) await expect(page.getByRole("heading", { name: chart, exact: true })).toBeVisible();
+});
+
+test("containers are listed by Compose project with their use, and updated through Compose", async ({ page }) => {
+  await page.goto("/#containers");
+  await expect(heading(page, "Containers")).toBeVisible();
+  await expect(page.locator(".container-group-name")).toHaveText(["media1", "Not started by Compose1"]);
+  const row = page.locator("details", { hasText: "jellyfin" });
+  await expect(row.locator(".badge")).toHaveText("Up");
+  await expect(row.locator(".container-use")).toHaveText("CPU 12.5% · RAM 310MiB");
+  // Only Compose knows where a container's image comes from.
+  const other = page.locator("details", { hasText: "example/backup" });
+  await other.locator("summary").click();
+  await expect(other.getByRole("button", { name: "Start" })).toBeVisible();
+  await expect(other.getByRole("button", { name: "Update" })).toHaveCount(0);
+  await row.locator("summary").click();
+  await row.getByRole("button", { name: "Update" }).click();
+  await expect(modal(page).getByText("Pull the newest image of jellyfin")).toBeVisible();
+  await modal(page).getByRole("button", { name: "Update", exact: true }).click();
+  await expect(page.getByText("jellyfin now runs the newest image")).toBeVisible();
+  expect(readFileSync(COMPOSE_LOG, "utf8").trim().split("\n")).toEqual([
+    `compose -p media --project-directory ${FILES} -f ${FILES}/compose.yml pull jellyfin`,
+    `compose -p media --project-directory ${FILES} -f ${FILES}/compose.yml up -d --no-deps jellyfin`,
+  ]);
+  await row.getByRole("button", { name: "Update" }).click();
+  await modal(page).getByRole("button", { name: "Update", exact: true }).click();
+  await expect(page.getByText("jellyfin already runs the newest image")).toBeVisible();
+});
+
+test("a file is uploaded into the folder shown, never over another, and downloaded again", async ({ page }) => {
+  await page.goto("/#files");
+  await expect(page.getByText("notes.txt")).toBeVisible();
+  const content = Buffer.alloc(300 * 1024, "upload ");
+  await page.getByLabel("Files to upload").setInputFiles([{ name: "sent from the browser.bin", mimeType: "application/octet-stream", buffer: content }]);
+  await expect(page.getByText("The file was uploaded")).toBeVisible();
+  const card = page.locator(".file-explorer-card", { hasText: "sent from the browser.bin" });
+  await expect(card).toContainText("300 KB");
+  expect(readFileSync(path.join(FILES, "sent from the browser.bin")).equals(content)).toBe(true);
+  await page.getByLabel("Files to upload").setInputFiles([{ name: "sent from the browser.bin", mimeType: "application/octet-stream", buffer: Buffer.from("other") }]);
+  await expect(page.getByText("sent from the browser.bin: A file or folder with this name already exists")).toBeVisible();
+  expect(readFileSync(path.join(FILES, "sent from the browser.bin")).equals(content)).toBe(true);
+  const downloading = page.waitForEvent("download");
+  await choose(page, card, "Download");
+  const download = await downloading;
+  expect(download.suggestedFilename()).toBe("sent from the browser.bin");
+  const chunks: Buffer[] = [];
+  for await (const chunk of await download.createReadStream()) chunks.push(chunk as Buffer);
+  expect(Buffer.concat(chunks).equals(content)).toBe(true);
+  // A folder is not a file to download, and a path outside the allowed folder is refused.
+  expect((await page.request.get(`/api/file/download?path=${encodeURIComponent(FILES)}`)).status()).toBe(400);
+  expect((await page.request.get("/api/file/download?path=/etc/hostname")).status()).toBe(400);
+  await choose(page, card, "Delete");
+  await modal(page).getByRole("button", { name: "Delete", exact: true }).click();
+  await expect(card).toHaveCount(0);
+});
+
+test("the activity log says who did what, and is searched", async ({ page }) => {
+  await page.goto("/#history");
+  const log = panel(page, "Activity log");
+  const entry = log.locator(".schedule-row", { hasText: "uploaded file" }).first();
+  await expect(entry).toContainText("sent from the browser.bin");
+  await expect(entry).toContainText(USERNAME);
+  await log.getByLabel("Search the activity log").fill("container jellyfin");
+  await expect(log.locator(".schedule-row")).toHaveCount(2);
+  await expect(log.locator(".schedule-row").first()).toContainText("container jellyfin checked for a new image: none");
+  await log.getByLabel("Search the activity log").fill("nothing was ever called this");
+  await expect(log.getByText("Nothing matches")).toBeVisible();
+});
+
+test("an alert rule that waits is not listed on Overview before it has waited", async ({ page }) => {
+  await page.goto("/#alerts");
+  for (const [name, wait] of [["Patient", "30"], ["At once", "0"]]) {
+    await page.getByRole("button", { name: "New alert" }).click();
+    await modal(page).getByLabel("Name").fill(name);
+    await modal(page).getByLabel("Metric").selectOption("ram");
+    await modal(page).getByLabel("Trigger at or above").fill("0");
+    await modal(page).getByLabel("Only after it has stayed there for (minutes)").fill(wait);
+    await modal(page).getByRole("button", { name: "Save alert" }).click();
+    await expect(modal(page)).toBeHidden();
+  }
+  const patient = page.locator(".schedule-row", { hasText: "Patient" }), atOnce = page.locator(".schedule-row", { hasText: "At once" });
+  await expect(patient).toContainText("RAM use ≥ 0% · after 30 min there · cooldown 30 min");
+  await expect(atOnce).not.toContainText("min there");
+  await open(page, "Overview");
+  const attention = panel(page, "Attention needed");
+  await expect(attention.getByText("Alert: At once")).toBeVisible();
+  await expect(attention.getByText("Alert: Patient")).toHaveCount(0);
+  await open(page, "Alerts");
+  for (const row of [patient, atOnce]) {
+    await choose(page, row, "Delete");
+    await modal(page).getByRole("button", { name: "Delete", exact: true }).click();
+    await expect(row).toHaveCount(0);
+  }
+});
+
+test("a heartbeat address is saved, called and removed, and a Telegram channel asks for a token and a chat", async ({ page }) => {
+  await page.goto("/#settings");
+  const heartbeat = panel(page, "Heartbeat");
+  await heartbeat.getByLabel("Address to call").fill("http://127.0.0.1:3212/ping/secret-check");
+  await heartbeat.getByRole("button", { name: "Save address" }).click();
+  await expect(heartbeat.getByText("Address saved.")).toBeVisible();
+  await expect(heartbeat.getByText("Not called yet")).toBeVisible();
+  await expect(heartbeat.getByLabel("Address to call")).toHaveAttribute("placeholder", "Saved: 127.0.0.1:3212. Enter a new address to replace it.");
+  await heartbeat.getByRole("button", { name: "Call it now" }).click();
+  await expect(heartbeat.getByText("The address answered.")).toBeVisible();
+  await expect(heartbeat.getByText(/^Last called /)).toBeVisible();
+  await expect(heartbeat).not.toContainText("secret-check");
+  await heartbeat.getByRole("button", { name: "Remove" }).click();
+  await modal(page).getByRole("button", { name: "Remove", exact: true }).click();
+  await expect(heartbeat.getByText("The heartbeat was removed.")).toBeVisible();
+  await expect(heartbeat.getByRole("button", { name: "Call it now" })).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Add channel" }).click();
+  await modal(page).getByLabel("Service").selectOption("telegram");
+  await modal(page).locator('input[name="name"]').fill("Phone");
+  await modal(page).getByLabel("Bot token").fill("not a token");
+  await modal(page).getByLabel("Chat ID").fill("-1001234567890");
+  await modal(page).getByRole("button", { name: "Add channel" }).click();
+  await expect(modal(page).getByText("A bot token looks like")).toBeVisible();
+  await modal(page).getByLabel("Bot token").fill("123456789:AAH-abcdefghijklmnopqrstuvwxyz_12345");
+  await modal(page).getByRole("button", { name: "Add channel" }).click();
+  await expect(modal(page)).toBeHidden();
+  const row = page.locator(".schedule-row", { hasText: "Phone" });
+  await expect(row).toContainText("Telegram · api.telegram.org");
+  await expect(row).not.toContainText("AAH-");
+  await choose(page, row, "Delete");
+  await modal(page).getByRole("button", { name: "Delete", exact: true }).click();
+  await expect(row).toHaveCount(0);
 });
 
 test("the dashboard is backed up to the cloud, restored from there, and old backups deleted", async ({ page }) => {

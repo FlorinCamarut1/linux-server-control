@@ -3,16 +3,17 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { ApiError, api, stateIfChanged } from "@/lib/client-api";
 import { Login, ConnectionUnavailable, Setup, type SetupServer } from "@/components/auth";
-import { ContainerRow } from "@/components/containers";
+import { ContainerRow, composeProject, useContainerStats } from "@/components/containers";
 import { PowerPage } from "@/components/power";
 import { containerLinks } from "@/lib/container-links";
-import { Overview, HistoryPanel, AlertForm, describeAlert } from "@/components/monitoring";
+import { Overview, HistoryPanel, AlertForm, AuditPanel, describeAlert, describeWait } from "@/components/monitoring";
 import { appConfirm, appPrompt, Btn, copyText, Panel, Metric, formatBytes, formatPercent, formatUptime, Modal, DialogHost, LiveLogViewer, AppLoading, LoadingScreen, notify, PAGE_REFRESH, RowMenu, runStatusLabel, ToastHost } from "@/components/ui";
 import { applyTheme, savedTheme } from "@/lib/theme";
 import { LANGUAGE_CHANGED, applyLanguage, savedLanguage } from "@/lib/language";
 import { locale, msg, t, tn } from "@/lib/i18n";
-import type { Run, S, Schedule, St } from "@/lib/types";
+import type { C, Run, S, Schedule, St } from "@/lib/types";
 import {
+  ArrowDownUp,
   Zap,
   CalendarPlus,
   ChevronDown,
@@ -60,6 +61,7 @@ const FolderForm = dynamic(() => pages.scripts().then((module) => module.FolderF
 const AppearancePanel = dynamic(() => pages.settings().then((module) => module.AppearancePanel), { ssr: false, loading: PageLoading });
 const CertificatePanel = dynamic(() => pages.settings().then((module) => module.CertificatePanel), { ssr: false });
 const NotificationsPanel = dynamic(() => pages.settings().then((module) => module.NotificationsPanel), { ssr: false });
+const HeartbeatPanel = dynamic(() => pages.settings().then((module) => module.HeartbeatPanel), { ssr: false });
 const PasswordForm = dynamic(() => pages.settings().then((module) => module.PasswordForm), { ssr: false });
 const DevicePanel = dynamic(() => pages.settings().then((module) => module.DevicePanel), { ssr: false });
 const ServerSettings = dynamic(() => pages.settings().then((module) => module.ServerSettings), { ssr: false });
@@ -325,6 +327,19 @@ export default function Home() {
       (containerFilter === "all" || (containerFilter === "running") === (container.State === "running"))
       && matches(containerSearch, container.Names, container.Image));
   }, [containerFilter, containerSearch, state?.containers]);
+  // The containers of a Compose project are listed together, under its name;
+  // those that Compose did not start come last.
+  const containerGroups = useMemo(() => {
+    const groups = new Map<string, C[]>();
+    for (const container of visibleContainers) {
+      const project = composeProject(container);
+      const group = groups.get(project);
+      if (group) group.push(container);
+      else groups.set(project, [container]);
+    }
+    return [...groups.entries()].sort(([a], [b]) => (a === "" ? 1 : b === "" ? -1 : a.localeCompare(b)));
+  }, [visibleContainers]);
+  const containerUse = useContainerStats(tab === "containers" && state !== null);
   const scriptFolders = useMemo(() => {
     const groups = new Map<string, S[]>();
     // Folders without scripts yet, such as one just created, are listed too.
@@ -374,6 +389,21 @@ export default function Home() {
       await refresh();
     } catch (e) {
       notify(e instanceof Error ? e.message : t("Error"));
+    } finally {
+      working(key, false);
+    }
+  }
+  // A new image takes a while to arrive; the container's own buttons wait for it.
+  async function updateContainer(container: C) {
+    if (!await appConfirm(t("Pull the newest image of {name} and start it again with it? While it starts again, what it serves is unavailable; with no newer image it is left running as it is.", { name: container.Names }), t("Update container"), t("Update"))) return;
+    const key = `${container.ID}-update`;
+    try {
+      working(key, true);
+      const result = await api("container/update", { name: container.Names });
+      notify(result.updated ? t("{name} now runs the newest image", { name: container.Names }) : t("{name} already runs the newest image", { name: container.Names }), "success");
+      await refresh();
+    } catch (reason) {
+      notify(reason instanceof Error ? reason.message : t("Error"));
     } finally {
       working(key, false);
     }
@@ -428,7 +458,7 @@ export default function Home() {
         <Metric
           label={t("RAM")}
           value={`${formatBytes(state.stats.memoryUsedBytes)} / ${formatBytes(state.stats.memoryTotalBytes)}`}
-          note={formatPercent(state.stats.memoryUsedBytes, state.stats.memoryTotalBytes)}
+          note={`${formatPercent(state.stats.memoryUsedBytes, state.stats.memoryTotalBytes)}${state.stats.swapTotalBytes > 0 ? ` · ${t("swap {percent}%", { percent: Math.round((state.stats.swapUsedBytes / state.stats.swapTotalBytes) * 100) })}` : ""}`}
           percent={state.stats.memoryTotalBytes > 0 ? (state.stats.memoryUsedBytes / state.stats.memoryTotalBytes) * 100 : null}
           icon={<Gauge />}
         />
@@ -456,8 +486,16 @@ export default function Home() {
         <Metric
           label={t("CPU usage")}
           value={`${state.stats.cpuUsagePercent.toLocaleString(locale(), { maximumFractionDigits: 1, minimumFractionDigits: 1 })}%`}
-          note={tn("{count} logical core|{count} logical cores", state.stats.cpuCores)}
+          note={`${tn("{count} logical core|{count} logical cores", state.stats.cpuCores)}${typeof state.stats.load1 === "number" ? ` · ${t("load {load}", { load: state.stats.load1.toLocaleString(locale(), { minimumFractionDigits: 2, maximumFractionDigits: 2 }) })}` : ""}`}
           icon={<Gauge />}
+        />
+        <Metric
+          label={t("Network")}
+          value={typeof state.stats.netRxBytesPerSecond === "number" && typeof state.stats.netTxBytesPerSecond === "number"
+            ? `↓ ${formatBytes(state.stats.netRxBytesPerSecond)}/s`
+            : "—"}
+          note={typeof state.stats.netTxBytesPerSecond === "number" ? `↑ ${formatBytes(state.stats.netTxBytesPerSecond)}/s` : t("Measured between two refreshes")}
+          icon={<ArrowDownUp />}
         />
         <Metric label={t("Uptime")} value={formatUptime(state.stats.uptimeSeconds)} icon={<Clock3 />} />
         <Metric
@@ -552,6 +590,7 @@ export default function Home() {
         {page === "overview" && <Overview health={health} state={state} stopped={stopped} openLogs={openLogs} show={(target) => {
           if (target === "stopped") setContainerFilter("stopped");
           if (target === "cron") setHistoryKind("cron");
+          if (target === "containers") setContainerFilter("all");
           go(target === "stopped" ? "containers" : target === "cron" ? "history" : target);
         }} />}
         {page === "containers" && (
@@ -584,16 +623,29 @@ export default function Home() {
                   <input type="search" aria-label={t("Search containers")} placeholder={t("Search by name or image")} value={containerSearch} onChange={(event) => setContainerSearch(event.target.value)} />
                 </div>
               )}
-              {visibleContainers.map((c) => (
-                <ContainerRow
-                  key={c.ID}
-                  c={c}
-                  links={links.get(c.ID) || []}
-                  busy={busy}
-                  act={action}
-                  logs={openLogs}
-                  readOnly={readOnly}
-                />
+              {containerGroups.map(([project, containers]) => (
+                <div className="container-group" key={project}>
+                  {/* Named only where Compose started some of the containers. */}
+                  {(containerGroups.length > 1 || project) && (
+                    <h3 className="container-group-name">
+                      <bdi>{project || t("Not started by Compose")}</bdi>
+                      <span>{containers.length}</span>
+                    </h3>
+                  )}
+                  {containers.map((c) => (
+                    <ContainerRow
+                      key={c.ID}
+                      c={c}
+                      links={links.get(c.ID) || []}
+                      busy={busy}
+                      act={action}
+                      logs={openLogs}
+                      update={updateContainer}
+                      use={containerUse[c.Names]}
+                      readOnly={readOnly}
+                    />
+                  ))}
+                </div>
               ))}
               {!visibleContainers.length && (
                 <div className="empty-state">
@@ -853,6 +905,7 @@ export default function Home() {
           </Panel>
         )}
         {page === "history" && <HistoryPanel metrics={state.metrics} initialKind={historyKind} openLog={(run) => openLogs(t("{name} run", { name: run.scriptName }), "script/log", { id: run.scriptId, runId: run.id })} />}
+        {page === "history" && !readOnly && <AuditPanel />}
         {page === "power" && <PowerPage readOnly={readOnly} />}
         {page === "alerts" && (
           <Panel title={t("Alert rules")} note={t("Rules are checked every 5 minutes and on each dashboard refresh; cooldowns prevent repeated notifications.")} extra={readOnly ? undefined : <Btn className="primary" onClick={() => setAlertEditor(null)}>{t("New alert")}</Btn>}>
@@ -861,7 +914,7 @@ export default function Home() {
                 <input type="search" aria-label={t("Search alerts")} placeholder={t("Search by name")} value={alertSearch} onChange={(event) => setAlertSearch(event.target.value)} />
               </div>
             )}
-            {(state.alerts || []).filter((rule) => matches(alertSearch, rule.name, describeAlert(rule.metric, rule.threshold))).map((rule) => <div className="schedule-row" key={rule.id}><div className="grow"><b>{rule.name}</b><small>{describeAlert(rule.metric, rule.threshold)} · {t("cooldown {minutes} min", { minutes: rule.cooldownMinutes })}{rule.lastTriggeredAt ? ` · ${t("last triggered {time}", { time: new Date(rule.lastTriggeredAt).toLocaleString(locale()) })}` : ""}</small></div><div className="row-side"><span className={`badge ${rule.enabled ? "up" : "neutral"}`}>{rule.enabled ? t("Enabled") : t("Paused")}</span></div>{!readOnly && <RowMenu label={t("Actions for the alert {name}", { name: rule.name })} disabled={busy.has(rule.id)} items={[
+            {(state.alerts || []).filter((rule) => matches(alertSearch, rule.name, describeAlert(rule.metric, rule.threshold))).map((rule) => <div className="schedule-row" key={rule.id}><div className="grow"><b>{rule.name}</b><small>{describeAlert(rule.metric, rule.threshold)}{describeWait(rule)} · {t("cooldown {minutes} min", { minutes: rule.cooldownMinutes })}{rule.lastTriggeredAt ? ` · ${t("last triggered {time}", { time: new Date(rule.lastTriggeredAt).toLocaleString(locale()) })}` : ""}</small></div><div className="row-side"><span className={`badge ${rule.enabled ? "up" : "neutral"}`}>{rule.enabled ? t("Enabled") : t("Paused")}</span></div>{!readOnly && <RowMenu label={t("Actions for the alert {name}", { name: rule.name })} disabled={busy.has(rule.id)} items={[
               { label: t("Edit"), icon: <Pencil size={15} />, onSelect: () => setAlertEditor(rule) },
               { label: t("Delete"), icon: <Trash2 size={15} />, danger: true, onSelect: async () => { if (await appConfirm(t("Delete the alert rule “{name}”?", { name: rule.name }), t("Delete alert"), t("Delete"), true)) await action(rule.id, "alerts/delete", { id: rule.id }); } },
             ]} />}</div>)}
@@ -878,7 +931,7 @@ export default function Home() {
             ))}
           </div>
           <div id="settings-appearance" className="settings-section"><AppearancePanel /></div>
-          <div id="settings-notifications" className="settings-section"><NotificationsPanel /></div>
+          <div id="settings-notifications" className="settings-section"><NotificationsPanel /><HeartbeatPanel /></div>
           <div id="settings-server" className="settings-section"><ServerSettings /></div>
           <div id="settings-certificate" className="settings-section"><CertificatePanel /></div>
           <div id="settings-storage" className="settings-section"><Panel title={t("Storage monitoring")} note={t("Choose which mounted paths appear in capacity cards.")}><div className="panel-body"><Btn onClick={() => setStorageManager(true)}><HardDrive size={16}/>{t("Manage storage paths")}</Btn></div></Panel></div>

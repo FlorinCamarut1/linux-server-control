@@ -71,6 +71,7 @@ export const EVENT_TYPES = {
   "power-online": msg("Power device responding again"),
   "disk-health": msg("Disk reports a problem, or is healthy again"),
   "backup-failed": msg("Cloud backup failed"),
+  "server-unreachable": msg("Server stopped answering, or answers again"),
 };
 export type EventType = keyof typeof EVENT_TYPES;
 export type DashboardEvent = { type: EventType; title: string; message: string; severity: "info" | "warning" | "critical" | "success" };
@@ -140,6 +141,29 @@ export function audit(x: string) {
     file,
     new Date().toISOString() + " " + (account ? `[${account}] ` : "") + x + "\n",
   );
+}
+// The audit trail for the Activity log, newest first and a page at a time: the
+// lines whose account or text contains the search text.
+export type AuditEntry = { at: string; account: string; text: string };
+export function auditPage(query: { search?: string; offset?: number; limit?: number }) {
+  const lines: string[] = [];
+  for (const name of ["audit.log.1", "audit.log"]) {
+    try { lines.push(...readFileSync(path.join(/* turbopackIgnore: true */ DATA, name), "utf8").split("\n")); } catch {}
+  }
+  const search = (query.search || "").trim().toLowerCase();
+  const limit = Math.min(200, Math.max(1, Math.floor(Number(query.limit) || 50)));
+  const offset = Math.max(0, Math.floor(Number(query.offset) || 0));
+  const entries: AuditEntry[] = [];
+  let total = 0;
+  for (let index = lines.length - 1; index >= 0; index--) {
+    const line = /^(\d{4}-\d\d-\d\dT\S+) (?:\[([\w.-]{1,40})\] )?(.+)$/.exec(lines[index]);
+    if (!line) continue;
+    const account = line[2] ?? "", text = line[3];
+    if (search && !`${account} ${text}`.toLowerCase().includes(search)) continue;
+    if (total >= offset && entries.length < limit) entries.push({ at: line[1], account, text });
+    total++;
+  }
+  return { entries, total, offset, limit };
 }
 // Sessions are intentionally persisted without credentials so routine restarts do not sign out every browser.
 loadSessions();

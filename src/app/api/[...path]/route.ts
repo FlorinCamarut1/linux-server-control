@@ -13,12 +13,16 @@ export async function GET(req: NextRequest, { params }: Params) {
 }
 export async function POST(req: NextRequest, { params }: Params) {
   if (!sameOrigin(req)) return inLanguage(req.headers.get("x-lsc-language"), () => fail(t("Invalid request origin"), 403));
+  const route = `POST ${(await params).path.join("/")}`;
+  // An upload's body is the file itself, read as it arrives; where it goes
+  // and what it is called are in its address.
+  if (route === "POST file/upload") return handle(req, route, Object.fromEntries(req.nextUrl.searchParams));
   let body: Body = {};
   try {
     const parsed = await req.json();
     if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) body = parsed;
   } catch {}
-  return handle(req, `POST ${(await params).path.join("/")}`, body);
+  return handle(req, route, body);
 }
 
 // How long the answer took and, of that, each command on the server; the
@@ -43,9 +47,9 @@ async function answer(req: NextRequest, route: string, body: Body) {
     if (!permitted(route, signedIn.user.role, body)) return fail(t("This account is read-only."), 403);
     const started = Date.now(), timings: HostTiming[] = [];
     const response = await withHostTimings(timings, () => asActor(signedIn.user.name, () => handler({ req, body, ...signedIn })));
-    // What only an administrator may call changes something, which the next
-    // refresh must show. Work on files changes nothing a snapshot holds.
-    if (!permitted(route, "viewer", body)) {
+    // What only an administrator may ask to be done changes something, which
+    // the next refresh must show. Work on files changes nothing a snapshot holds.
+    if (req.method === "POST" && !permitted(route, "viewer", body)) {
       forgetPendingSnapshot();
       if (!route.startsWith("POST file/")) forgetKeptSnapshot();
     }
