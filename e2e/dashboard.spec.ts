@@ -757,6 +757,8 @@ test("containers are listed by Compose project with their use, and updated throu
   // Only Compose knows where a container's image comes from.
   const other = page.locator("details", { hasText: "example/backup" });
   await other.locator("summary").click();
+  // Its size is read once it is opened.
+  await expect(other.getByText("12.3MB (virtual 410MB)")).toBeVisible();
   await expect(other.getByRole("button", { name: "Start" })).toBeVisible();
   await expect(other.getByRole("button", { name: "Update" })).toHaveCount(0);
   await row.locator("summary").click();
