@@ -56,6 +56,9 @@ writeFileSync(image, "sha256:old");
 writeFileSync(path.join(bin, "docker"), `#!/bin/sh
 case "$1" in
   ps)
+    # A container's size, read when its row is opened (docker ps --size
+    # --filter name=... --format {{.Size}}), is that size alone, not the list.
+    case "$*" in *--size*) echo "12.3MB (virtual 410MB)"; exit 0 ;; esac
     echo '${container("3f1c2a9b7d01", "jellyfin", "example/jellyfin:latest", "running", "Up 3 days (healthy)", "com.docker.compose.project=media,com.docker.compose.service=jellyfin")}'
     echo '${container("a9e1c3f5d708", "backup", "example/backup:latest", "exited", "Exited (0) 5 hours ago")}'
     ;;
